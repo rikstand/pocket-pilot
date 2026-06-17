@@ -11,7 +11,7 @@ export interface AmountVersion {
 export interface IncomeSource {
   id: string
   name: string
-  frequency: string
+  frequency: Frequency
   anchorDate: string
   amountCents: number   // fallback if no versions supplied
   isPotential: boolean
