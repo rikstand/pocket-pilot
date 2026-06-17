@@ -20,7 +20,7 @@ export interface IncomeSource {
 export interface Expense {
   id: string
   name: string
-  frequency: string
+  frequency: Frequency
   anchorDate: string
   amountCents: number          // fallback if amountVersions is empty
   amountVersions: AmountVersion[]
