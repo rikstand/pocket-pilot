@@ -1,6 +1,8 @@
 // AmountVersion — a dated amount record. The engine picks the latest
 // version whose effectiveFrom <= the cycle start date, so you can have
 // per-cycle overrides and permanent changes on the same expense.
+export type Frequency = 'once' | 'weekly' | 'fortnightly' | 'monthly' | 'annually'
+
 export interface AmountVersion {
   amountCents: number
   effectiveFrom: string
