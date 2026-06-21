@@ -1,7 +1,5 @@
 import { supabase } from './supabase'
-
 // --- PROFILE ---
-
 export async function getProfile(userId: string) {
   const { data, error } = await supabase
     .from('profiles')
@@ -11,7 +9,6 @@ export async function getProfile(userId: string) {
   if (error) throw error
   return data
 }
-
 export async function upsertProfile(userId: string, displayName: string, safetyFloorCents = 0) {
   const { data, error } = await supabase
     .from('profiles')
@@ -21,9 +18,7 @@ export async function upsertProfile(userId: string, displayName: string, safetyF
   if (error) throw error
   return data
 }
-
 // --- INCOME SOURCES ---
-
 export async function getIncomeSources(profileId: string) {
   const { data, error } = await supabase
     .from('income_sources')
@@ -34,9 +29,7 @@ export async function getIncomeSources(profileId: string) {
   if (error) throw error
   return data
 }
-
 // --- EXPENSES ---
-
 export async function getExpenses(profileId: string) {
   const { data, error } = await supabase
     .from('expenses')
@@ -47,9 +40,18 @@ export async function getExpenses(profileId: string) {
   if (error) throw error
   return data
 }
-
+// --- LAY-BYS ---
+export async function getLayBys(profileId: string) {
+  const { data, error } = await supabase
+    .from('lay_bys')
+    .select('*')
+    .eq('profile_id', profileId)
+    .eq('is_active', true)
+    .order('created_at')
+  if (error) throw error
+  return data
+}
 // --- CYCLES ---
-
 export async function getCycles(profileId: string) {
   const { data, error } = await supabase
     .from('cycles')
@@ -59,7 +61,6 @@ export async function getCycles(profileId: string) {
   if (error) throw error
   return data
 }
-
 export async function upsertCycle(
   profileId: string,
   startDate: string,
@@ -79,9 +80,7 @@ export async function upsertCycle(
   if (error) throw error
   return data
 }
-
 // --- WISHLIST ---
-
 export async function getWishlistItems(profileId: string) {
   const { data, error } = await supabase
     .from('wishlist_items')
@@ -91,7 +90,6 @@ export async function getWishlistItems(profileId: string) {
   if (error) throw error
   return data
 }
-
 export async function addWishlistItem(
   profileId: string,
   name: string,
