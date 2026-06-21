@@ -75,6 +75,16 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
   const [closeSaving,        setCloseSaving]        = useState(false)
   const [closeFrozen,        setCloseFrozen]        = useState(false)
 
+  // ── add-to-cycle overlay state (type picker → one-off / income-stub / layby-stub) ──
+  const [addOpen,     setAddOpen]     = useState(false)
+  const [addStep,     setAddStep]     = useState(0) // 0 = type picker, 1 = form
+  const [addType,     setAddType]     = useState<'oneoff' | 'income' | 'layby' | null>(null)
+  const [oneoffName,   setOneoffName]   = useState('')
+  const [oneoffAmount, setOneoffAmount] = useState('')
+  const [oneoffDate,   setOneoffDate]   = useState('')
+  const [addSaving,   setAddSaving]   = useState(false)
+  const [addError,    setAddError]    = useState('')
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light')
   }, [darkMode])
@@ -112,6 +122,7 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
             amountCents: latest?.amountCents ?? 0,
             amountVersions: versions,
             mode: exp.mode ?? 'fixed',
+            endDate: exp.end_date ?? undefined,
           }
         })
 
@@ -317,6 +328,39 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
     for (const s of incomeInCycle)      initIncome[s.id] = String(s.expectedCents / 100)
     setCloseVarActuals(initVars); setCloseIncomeActuals(initIncome)
     setCloseRealBalance(''); setCloseStep(0); setCloseOpen(true)
+  }
+
+  // ── add-to-cycle handlers ──────────────────────────────────────────
+  function openAddToCycle() {
+    setAddType(null); setAddStep(0)
+    setOneoffName(''); setOneoffAmount(''); setOneoffDate(activeCycle.startDate)
+    setAddError(''); setAddOpen(true)
+  }
+  function closeAddSheet() {
+    setAddOpen(false); setAddType(null); setAddStep(0); setAddError('')
+  }
+  function selectAddType(t: 'oneoff' | 'income' | 'layby') {
+    setAddType(t); setAddStep(1)
+  }
+  async function saveOneOff() {
+    const amountCents = Math.round(parseFloat(oneoffAmount || '0') * 100)
+    if (!oneoffName.trim() || !amountCents || !oneoffDate) {
+      setAddError('Name, amount and date are required.'); return
+    }
+    setAddSaving(true); setAddError('')
+    try {
+      const { data: exp, error: e1 } = await supabase
+        .from('expenses')
+        .insert({ profile_id: userId, name: oneoffName.trim(), frequency: 'once', anchor_date: oneoffDate, mode: 'fixed' })
+        .select().single()
+      if (e1) throw e1
+      const { error: e2 } = await supabase
+        .from('expense_amount_versions')
+        .insert({ expense_id: exp.id, amount_cents: amountCents, effective_from: oneoffDate })
+      if (e2) throw e2
+      closeAddSheet(); reload()
+    } catch (e: any) { setAddError(e.message) }
+    finally { setAddSaving(false) }
   }
 
   // ── SAVE: edit scope overlay ──────────────────────────────────────
@@ -558,6 +602,12 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
           ))}
         </div>
 
+        {status !== 'past' && (
+          <div style={{ padding:'14px 16px 0' }}>
+            <button className="addbtn" onClick={openAddToCycle}>+ Add to this cycle</button>
+          </div>
+        )}
+
         {status === 'now' && (
           <>
             <button className="closebtn" onClick={openClose}>Close this cycle →</button>
@@ -785,6 +835,94 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
                 </div>
               )
             }
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════
+          OVERLAY 4 — Add to this cycle (type picker → one-off form)
+          Income and lay-by branches are stubbed pending Phase 2.
+          ═══════════════════════════════════════════════════════════ */}
+      {addOpen && (
+        <div className="ov" onClick={closeAddSheet}>
+          <div className="sheet" onClick={e => e.stopPropagation()}>
+            <button className="xbtn" onClick={closeAddSheet}>×</button>
+            <div className="grab" />
+
+            {addStep === 0 && <>
+              <h3>Add to this cycle</h3>
+              <p className="sd">{fmtDate(activeCycle.startDate)} – {fmtDate(activeCycle.endDate)}. Pick the kind of thing — the form adapts.</p>
+
+              <div className="typeopt" onClick={() => selectAddType('oneoff')}>
+                <div className="ti ic fix">−</div>
+                <div className="tx2"><div className="tt2">One-off expense</div><div className="ts2">A single cost on a date.</div></div>
+              </div>
+              <div className="typeopt" onClick={() => selectAddType('income')}>
+                <div className="ti ic inc">+</div>
+                <div className="tx2"><div className="tt2">Money coming in</div><div className="ts2">A bonus, refund, tax return.</div></div>
+              </div>
+              <div className="typeopt" onClick={() => selectAddType('layby')}>
+                <div className="ti ic evt">◫</div>
+                <div className="tx2"><div className="tt2">Lay-by or instalment</div><div className="ts2">A fixed total, paid off over time. Self-retires when done.</div></div>
+              </div>
+            </>}
+
+            {addStep === 1 && addType === 'oneoff' && <>
+              <h3>One-off expense</h3>
+              <p className="sd">A single cost on a date — doesn't repeat.</p>
+
+              <div className="field">
+                <label>What's it for?</label>
+                <div className="inrow">
+                  <input type="text" value={oneoffName} onChange={e => setOneoffName(e.target.value)} placeholder="e.g. Car registration" />
+                </div>
+              </div>
+
+              <div className="field">
+                <label>Amount</label>
+                <div className="inrow">
+                  <span className="pre">$</span>
+                  <input type="number" inputMode="decimal" value={oneoffAmount} onChange={e => setOneoffAmount(e.target.value)} placeholder="0" />
+                </div>
+              </div>
+
+              <div className="field">
+                <label>Date</label>
+                <div className="inrow">
+                  <input
+                    type="date" value={oneoffDate} onChange={e => setOneoffDate(e.target.value)}
+                    style={{ border:'none', background:'transparent', color:'var(--ink)', fontFamily:"'Space Grotesk',sans-serif", fontSize:15, fontWeight:600, width:'100%', outline:'none' }}
+                  />
+                </div>
+                <p className="hint">Defaults to the start of this cycle — change it if it actually falls in a different one.</p>
+              </div>
+
+              {addError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:10 }}>{addError}</p>}
+
+              <div className="navrow">
+                <button onClick={() => setAddStep(0)}>Back</button>
+                <button
+                  className="pri"
+                  onClick={saveOneOff}
+                  style={{ opacity: addSaving ? 0.6 : 1, cursor: addSaving ? 'default' : 'pointer' }}
+                >
+                  {addSaving ? 'Saving…' : 'Add expense'}
+                </button>
+              </div>
+            </>}
+
+            {addStep === 1 && (addType === 'income' || addType === 'layby') && <>
+              <h3>{addType === 'income' ? 'Money coming in' : 'Lay-by or instalment'}</h3>
+              <p className="sd">Coming soon — not wired up yet.</p>
+              <div className="skipnote">
+                {addType === 'income'
+                  ? "Bonuses, tax returns, and other one-off income land here next."
+                  : "Lay-by and instalment tracking is the next piece we're building."}
+              </div>
+              <div className="navrow">
+                <button onClick={() => setAddStep(0)}>Back</button>
+              </div>
+            </>}
           </div>
         </div>
       )}

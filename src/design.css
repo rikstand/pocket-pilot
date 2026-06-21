@@ -422,6 +422,7 @@ svg.proj { display:block; width:100%; height:152px; }
 }
 .typeopt .tt2 { font-weight: 600; font-size: 14px; }
 .typeopt .ts2 { font-size: 12px; color: var(--mut); margin-top: 1px; }
+.typeopt .tx2 { flex: 1; min-width: 0; text-align: left; }
 
 /* === SETUP PAGE ===================================================
    Multi-step onboarding wizard. Shares card/sheet/field styles
