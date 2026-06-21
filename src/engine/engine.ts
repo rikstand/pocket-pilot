@@ -65,7 +65,7 @@ export function projectCycles(input: CycleInput): CycleResult[] {
     let variableExpensesCents = 0
     let budgetExpensesCents   = 0
     for (const exp of expenses) {
-      const occs       = getOccurrencesInRange(exp.anchorDate, exp.frequency, cycleStart, cycleEnd)
+      const occs       = getOccurrencesInRange(exp.anchorDate, exp.frequency, cycleStart, cycleEnd, exp.endDate)
       const unitCents  = getAmountForCycle(exp.amountVersions, exp.amountCents, cycleStart)
       const total      = occs.length * unitCents
       if      (exp.mode === 'fixed')    fixedExpensesCents    += total
