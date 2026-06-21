@@ -72,6 +72,8 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
   const [closeVarActuals,    setCloseVarActuals]    = useState<Record<string, string>>({})
   const [closeIncomeActuals, setCloseIncomeActuals] = useState<Record<string, string>>({})
   const [closeRealBalance,   setCloseRealBalance]   = useState('')
+  const [closeSaving,        setCloseSaving]        = useState(false)
+  const [closeFrozen,        setCloseFrozen]        = useState(false)
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light')
@@ -113,17 +115,47 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
           }
         })
 
-        const latestCycle = storedCycles[storedCycles.length - 1]
+        // Show the latest closed cycle (if any) for historical context,
+        // then project forward from the current/next open cycle.
+        const openCycles   = storedCycles.filter((c: any) => !c.is_closed)
+        const closedCycles = storedCycles.filter((c: any) => c.is_closed)
+        const latestClosed = closedCycles[closedCycles.length - 1]
+        const projectFrom  = openCycles[0] ?? storedCycles[storedCycles.length - 1]
+
         const projected = projectCycles({
           incomeSources: engineIncome,
           expenses: engineExpenses,
-          openingBalanceCents: latestCycle?.opening_balance_cents ?? 0,
-          startDate: latestCycle?.start_date ?? today(),
+          openingBalanceCents: projectFrom?.opening_balance_cents ?? 0,
+          startDate: projectFrom?.start_date ?? today(),
           numCycles: 6,
           safetyFloorCents: prof?.safety_floor_cents ?? 0,
         })
-        setCycles(projected)
-        setActiveIdx(findCurrentIdx(projected))
+
+        // Prepend the latest closed cycle so user can see history
+        let cyclesWithHistory: any[] = projected
+        if (latestClosed) {
+          const historicalCycle = {
+            startDate: latestClosed.start_date,
+            endDate: latestClosed.end_date,
+            openingBalanceCents: latestClosed.opening_balance_cents,
+            committedClosingBalanceCents: latestClosed.closing_balance_cents ?? 0,
+            potentialClosingBalanceCents: latestClosed.closing_balance_cents ?? 0,
+            committedIncomeCents: 0,
+            potentialIncomeCents: 0,
+            fixedExpensesCents: 0,
+            variableExpensesCents: 0,
+            budgetExpensesCents: 0,
+            isHistorical: true,
+          }
+          cyclesWithHistory = [historicalCycle, ...projected]
+        }
+
+        const cyclesWithIds = cyclesWithHistory.map((p: any) => {
+          const stored = storedCycles.find((s: any) => s.start_date === p.startDate)
+          return stored ? { ...p, id: stored.id } : p
+        })
+        setCycles(cyclesWithIds)
+        setActiveIdx(findCurrentIdx(cyclesWithIds))
       } catch (e: any) { setError(e.message) }
       finally { setLoading(false) }
     }
@@ -315,7 +347,70 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
     } catch (e: any) { setEditError(e.message) }
     finally { setEditSaving(false) }
   }
+// ── SAVE: close ritual ───────────────────────────────────────────
+  async function applyFreeze() {
+    if (!closeRealCents) return
+    setCloseSaving(true)
+    try {
+      // 1. Save variable expense actuals
+      for (const e of varExpensesInCycle) {
+        const actualStr = closeVarActuals[e.id]
+        if (!actualStr) continue
+        const actualCents = Math.round(parseFloat(actualStr) * 100)
+        const { error } = await supabase.from('cycle_expense_actuals').insert({
+          cycle_id: activeCycle.id ?? null,  // may not exist if cycle was engine-projected
+          expense_id: e.id,
+          actual_amount_cents: actualCents,
+        })
+        // Soft-fail — the cycle row may be virtual (engine-projected, not in DB yet)
+        if (error) console.warn('actual insert failed:', error.message)
+      }
 
+      // 2. Freeze the current cycle (if it exists in DB)
+      if (activeCycle.id) {
+        const { error: e1 } = await supabase.from('cycles')
+          .update({
+            closing_balance_cents: closeRealCents,
+            is_closed: true,
+            closed_at: new Date().toISOString(),
+          })
+          .eq('id', activeCycle.id)
+        if (e1) throw e1
+      }
+
+      // 3. Create the next cycle with the real balance as opening
+      const nextStart = addOneDay(activeCycle.endDate)
+      const nextEndDate = new Date(nextStart + 'T00:00:00')
+      const freq = primaryIncome?.frequency ?? 'fortnightly'
+      if      (freq === 'weekly')      nextEndDate.setDate(nextEndDate.getDate() + 6)
+      else if (freq === 'fortnightly') nextEndDate.setDate(nextEndDate.getDate() + 13)
+      else if (freq === 'monthly')   { nextEndDate.setMonth(nextEndDate.getMonth() + 1); nextEndDate.setDate(nextEndDate.getDate() - 1) }
+      else                           { nextEndDate.setFullYear(nextEndDate.getFullYear() + 1); nextEndDate.setDate(nextEndDate.getDate() - 1) }
+
+      const { error: e2 } = await supabase.from('cycles').insert({
+        profile_id: userId,
+        start_date: nextStart,
+        end_date: nextEndDate.toISOString().split('T')[0],
+        opening_balance_cents: closeRealCents,
+        contingency_cents: 0,
+        is_closed: false,
+      })
+      if (e2) throw e2
+
+      // 4. Show success, then reload
+      setCloseFrozen(true)
+      setTimeout(() => {
+        setCloseOpen(false)
+        setCloseFrozen(false)
+        reload()
+      }, 1500)
+    } catch (e: any) {
+      console.error(e)
+      alert('Could not freeze cycle: ' + e.message)
+    } finally {
+      setCloseSaving(false)
+    }
+  }
   // ── SAVE: confirm variable overlay ───────────────────────────────
   async function applyConfirm() {
     if (!varAmountCents) return
@@ -664,15 +759,32 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
               </div>
             </>}
 
-            <div className="navrow">
-              {closeStep > 0 && <button onClick={() => setCloseStep(s => s - 1)}>Back</button>}
-              {closeStep < 3
-                ? <button className="pri" onClick={() => setCloseStep(s => s + 1)}>Next</button>
-                : <button className="pri" onClick={() => { /* TODO: freeze cycle in DB */ setCloseOpen(false) }}>
-                    Freeze & start next cycle
-                  </button>
-              }
-            </div>
+            {closeFrozen
+              ? (
+                <div style={{
+                  textAlign:'center', padding:'24px 0',
+                  fontFamily:"'Space Grotesk',sans-serif", fontSize:18, fontWeight:600,
+                  color:'var(--pos)',
+                }}>
+                  ✓ Cycle frozen
+                </div>
+              )
+              : (
+                <div className="navrow">
+                  {closeStep > 0 && <button onClick={() => setCloseStep(s => s - 1)}>Back</button>}
+                  {closeStep < 3
+                    ? <button className="pri" onClick={() => setCloseStep(s => s + 1)}>Next</button>
+                    : <button
+                        className="pri"
+                        style={{ opacity: closeRealCents > 0 && !closeSaving ? 1 : 0.4 }}
+                        onClick={applyFreeze}
+                      >
+                        {closeSaving ? 'Freezing…' : 'Freeze & start next cycle'}
+                      </button>
+                  }
+                </div>
+              )
+            }
           </div>
         </div>
       )}
