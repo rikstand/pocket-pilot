@@ -406,6 +406,23 @@ svg.proj { display:block; width:100%; height:152px; }
   color: var(--acc);
 }
 
+/* ── type picker (Add-to-cycle overlay, step 0) ───────────────────── */
+.typeopt {
+  display: flex; align-items: center; gap: 12px;
+  border: 1px solid var(--line); border-radius: 13px;
+  padding: 13px; margin-bottom: 9px;
+  background: var(--bg2); cursor: pointer;
+  transition: border-color .15s;
+}
+.typeopt:hover { border-color: var(--acc); }
+.typeopt .ti {
+  width: 38px; height: 38px; border-radius: 11px;
+  display: grid; place-items: center;
+  font-size: 17px; flex: 0 0 auto;
+}
+.typeopt .tt2 { font-weight: 600; font-size: 14px; }
+.typeopt .ts2 { font-size: 12px; color: var(--mut); margin-top: 1px; }
+
 /* === SETUP PAGE ===================================================
    Multi-step onboarding wizard. Shares card/sheet/field styles
    with Dashboard and ExpensesPage.
