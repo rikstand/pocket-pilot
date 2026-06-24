@@ -696,7 +696,7 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
 
         {fixedCards.length > 0 && (
           <>
-            <div className="section-hdr sh-fix"><span className="sh-label">Fixed expenses</span><span className="sh-total">−{fmt(activeCycle.fixedExpensesCents, false)}</span></div>
+            <div className="section-hdr sh-fix"><span className="sh-label">Fixed expenses</span><span className="sh-total">−{fmt(fixedTotalCents, false)}</span></div>
             <div className="cards">
               {fixedCards.map((cd, i) => (
                 <div key={'fix'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
@@ -715,7 +715,7 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
 
         {varCards.length > 0 && (
           <>
-            <div className="section-hdr sh-var"><span className="sh-label">Estimates</span><span className="sh-total">−{fmt(activeCycle.variableExpensesCents, false)}</span></div>
+            <div className="section-hdr sh-var"><span className="sh-label">Estimates</span><span className="sh-total">−{fmt(varTotalCents, false)}</span></div>
             <div className="cards">
               {varCards.map((cd, i) => (
                 <div key={'var'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
@@ -734,7 +734,7 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
 
         {budgetCards.length > 0 && (
           <>
-            <div className="section-hdr sh-bud"><span className="sh-label">Budget</span><span className="sh-total">−{fmt(activeCycle.budgetExpensesCents, false)}</span></div>
+            <div className="section-hdr sh-bud"><span className="sh-label">Budget</span><span className="sh-total">−{fmt(budgetTotalCents, false)}</span></div>
             <div className="cards">
               {budgetCards.map((cd, i) => (
                 <div key={'bud'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
