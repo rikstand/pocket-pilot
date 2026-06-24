@@ -37,6 +37,7 @@ export default function ExpensesPage({ userId, onBack }: { userId: string; onBac
   const [anchorDate, setAnchorDate] = useState('')
   const [mode,       setMode]       = useState<Mode>('fixed')
   const [formError,  setFormError]  = useState('')
+  const [laybyExp,   setLaybyExp]   = useState<any>(null)
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light')
@@ -53,7 +54,7 @@ export default function ExpensesPage({ userId, onBack }: { userId: string; onBac
 
   // ── open add sheet ──
   function openAdd() {
-    setName(''); setAmount(''); setAnchorDate(''); 
+    setName(''); setAmount(''); setAnchorDate('')
     setFrequency('monthly'); setMode('fixed'); setFormError('')
     setEditingExp(null); setSheet('add')
   }
@@ -66,7 +67,6 @@ export default function ExpensesPage({ userId, onBack }: { userId: string; onBac
     setAmount(v ? String(v.amount_cents / 100) : '')
     setFrequency(exp.frequency as Frequency)
     setAnchorDate(exp.anchor_date)
-    
     setMode((exp.mode ?? 'fixed') as Mode)
     setFormError('')
     setEditingExp(exp)
@@ -85,7 +85,7 @@ export default function ExpensesPage({ userId, onBack }: { userId: string; onBac
       if (sheet === 'add') {
         const { data: exp, error: e1 } = await supabase
           .from('expenses')
-          .insert({ profile_id: userId, name: name.trim(),frequency, anchor_date: anchorDate, mode })
+          .insert({ profile_id: userId, name: name.trim(), frequency, anchor_date: anchorDate, mode })
           .select().single()
         if (e1) throw e1
         const { error: e2 } = await supabase
@@ -115,7 +115,18 @@ export default function ExpensesPage({ userId, onBack }: { userId: string; onBac
     finally { setSaving(false) }
   }
 
-  // ── delete ──
+  // ── delete lay-by (soft-deletes both the expense AND the linked lay_bys row) ──
+  async function handleDeleteLayby(exp: any) {
+    try {
+      await supabase.from('expenses').update({ is_active: false }).eq('id', exp.id)
+      if (exp.lay_by_id) {
+        await supabase.from('lay_bys').update({ is_active: false }).eq('id', exp.lay_by_id)
+      }
+      setLaybyExp(null); await load()
+    } catch (e: any) { console.error(e) }
+  }
+
+  // ── delete regular expense ──
   async function handleDelete(id: string) {
     try {
       await supabase.from('expenses').update({ is_active: false }).eq('id', id)
@@ -154,20 +165,30 @@ export default function ExpensesPage({ userId, onBack }: { userId: string; onBac
               const v     = (exp.expense_amount_versions ?? [])
                 .sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
               const cents = v?.amount_cents ?? 0
+              const isLayby = !!exp.lay_by_id
+
               return (
                 <div key={exp.id} className={`card${exp.mode === 'variable' ? ' dashed' : ''}`}>
-                  <div className={`ic ${m.iconClass}`}>{m.icon}</div>
+                  <div className={`ic ${isLayby ? 'evt' : m.iconClass}`}>{isLayby ? '◫' : m.icon}</div>
                   <div className="tx">
                     <div className="nm">
                       {exp.name}
-                      <span className={`chip ${m.chip}`}>{m.chipLabel}</span>
+                      {isLayby
+                        ? <span className="chip" style={{ color:'var(--event)', borderColor:'var(--event)', background:'var(--event-s)' }}>lay-by</span>
+                        : <span className={`chip ${m.chip}`}>{m.chipLabel}</span>
+                      }
                     </div>
                     <div className="dt">
-                      {fmt(cents)} · {exp.frequency}
-                      {exp.category ? ` · ${exp.category}` : ''}
+                      {isLayby
+                        ? `${fmt(cents)}/payment · ${exp.frequency}${exp.end_date ? ' · ends ' + new Date(exp.end_date + 'T00:00:00').toLocaleDateString('en-NZ', { day:'numeric', month:'short' }) : ''}`
+                        : `${fmt(cents)} · ${exp.frequency}${exp.category ? ` · ${exp.category}` : ''}`
+                      }
                     </div>
                     <div className="act-row">
-                      <span className="act" onClick={() => openEdit(exp)}>edit →</span>
+                      {isLayby
+                        ? <span className="act" style={{ color:'var(--event)' }} onClick={() => setLaybyExp(exp)}>manage lay-by →</span>
+                        : <span className="act" onClick={() => openEdit(exp)}>edit →</span>
+                      }
                     </div>
                   </div>
                   <div className="vl">−{fmt(cents)}</div>
@@ -280,8 +301,6 @@ export default function ExpensesPage({ userId, onBack }: { userId: string; onBac
               <p className="hint">Any past date this expense falls on — the engine repeats from there.</p>
             </div>
 
-          
-
             {formError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:10 }}>{formError}</p>}
 
             <div className="navrow">
@@ -310,6 +329,37 @@ export default function ExpensesPage({ userId, onBack }: { userId: string; onBac
               </button>
             )}
 
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════
+          LAY-BY SHEET — view details + delete
+          ═══════════════════════════════════════════════════════════ */}
+      {laybyExp && (
+        <div className="ov" onClick={() => setLaybyExp(null)}>
+          <div className="sheet" onClick={e => e.stopPropagation()}>
+            <button className="xbtn" onClick={() => setLaybyExp(null)}>×</button>
+            <div className="grab" />
+            <h3>{laybyExp.name}</h3>
+            <p className="sd">This expense is part of a lay-by and can't be edited here. A full lay-by management view is coming.</p>
+            <div className="recline"><span>Payment amount</span><b>{fmt((laybyExp.expense_amount_versions ?? []).sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]?.amount_cents ?? 0)}</b></div>
+            <div className="recline"><span>Frequency</span><b>{laybyExp.frequency}</b></div>
+            {laybyExp.end_date && <div className="recline"><span>Ends</span><b>{new Date(laybyExp.end_date + 'T00:00:00').toLocaleDateString('en-NZ', { day:'numeric', month:'short', year:'numeric' })}</b></div>}
+            <div className="navrow">
+              <button onClick={() => setLaybyExp(null)}>Close</button>
+            </div>
+            <button
+              onClick={() => handleDeleteLayby(laybyExp)}
+              style={{
+                display:'block', width:'100%', marginTop:12, padding:'10px',
+                background:'none', border:'none', cursor:'pointer',
+                color:'var(--floor)', fontSize:13, fontWeight:600,
+                fontFamily:"'Space Grotesk',sans-serif",
+              }}
+            >
+              Delete this lay-by
+            </button>
           </div>
         </div>
       )}
