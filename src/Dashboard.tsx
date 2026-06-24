@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase'
 import { getIncomeSources, getExpenses, getCycles, getProfile } from './lib/repository'
 import { projectCycles } from './engine/index'
 import { getOccurrencesInRange } from './engine/recurrence'
+import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
 
 function fmt(cents: number, showCents = true) {
   const abs = Math.abs(cents)
@@ -41,6 +42,25 @@ function versionForCycle(versions: any[], cycleStart: string): any {
   // Fallback: use earliest version if none are effective yet for this cycle
   return [...all].sort((a: any, b: any) => a.effective_from < b.effective_from ? -1 : 1)[0]
 }
+// Step forward `count` dates starting at firstDate, at the given frequency.
+// Shared by the lay-by form preview and (next step) the actual save.
+function computeLaybySchedule(
+  firstDate: string,
+  frequency: 'weekly' | 'fortnightly' | 'monthly' | 'annually',
+  count: number
+): string[] {
+  if (!firstDate || count <= 0) return []
+  const dates: string[] = []
+  let d = parseDate(firstDate)
+  for (let i = 0; i < count; i++) {
+    dates.push(formatDate(d))
+    if (frequency === 'weekly') d = addDays(d, 7)
+    else if (frequency === 'fortnightly') d = addDays(d, 14)
+    else if (frequency === 'monthly') d = addMonths(d, 1)
+    else d = addYears(d, 1)
+  }
+  return dates
+}
 
 export default function Dashboard({ userId, onNavigate }: { userId: string, onNavigate: (page: any) => void }) {
   const [cycles,      setCycles]      = useState<any[]>([])
@@ -75,15 +95,24 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
   const [closeSaving,        setCloseSaving]        = useState(false)
   const [closeFrozen,        setCloseFrozen]        = useState(false)
 
-  // ── add-to-cycle overlay state (type picker → one-off / income-stub / layby-stub) ──
+  // ── add-to-cycle overlay state (type picker → one-off / income-stub / layby) ──
   const [addOpen,     setAddOpen]     = useState(false)
-  const [addStep,     setAddStep]     = useState(0) // 0 = type picker, 1 = form
+  const [addStep,     setAddStep]     = useState(0) // 0 = type picker, 1 = form, 2 = layby preview (stub for now)
   const [addType,     setAddType]     = useState<'oneoff' | 'income' | 'layby' | null>(null)
   const [oneoffName,   setOneoffName]   = useState('')
   const [oneoffAmount, setOneoffAmount] = useState('')
   const [oneoffDate,   setOneoffDate]   = useState('')
   const [addSaving,   setAddSaving]   = useState(false)
   const [addError,    setAddError]    = useState('')
+
+  // ── lay-by form fields ──────────────────────────────────────────────
+  const [laybyName,     setLaybyName]     = useState('')
+  const [laybyTotal,    setLaybyTotal]    = useState('')
+  const [laybyFrequency,setLaybyFrequency]= useState<'weekly'|'fortnightly'|'monthly'|'annually'>('fortnightly')
+  const [laybyPayments, setLaybyPayments] = useState('4')
+  const [laybyFirstDate,setLaybyFirstDate]= useState('')
+  const [laybySaving,   setLaybySaving]   = useState(false)
+  const [laybyResult,   setLaybyResult]   = useState<any>(null)
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light')
@@ -247,7 +276,7 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
     }
 
     for (const exp of rawExpenses) {
-      const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, cycle.startDate, cycle.endDate)
+      const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, cycle.startDate, cycle.endDate, exp.end_date ?? undefined)
       if (!occs.length) continue
 
       // Use cycle-aware version selection so edit/confirm amounts are consistent
@@ -273,7 +302,7 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
 
       cards.push({
         name: exp.name, icon, iconClass, chips, detail,
-        value: '−' + fmt(total, false), valueClass: '',
+        value: '−' + fmt(total, false), valueClass: '', totalCents: total,
         ghost: false, dashed: mode === 'variable', act,
         expenseId: exp.id,
         unitCents,           // current per-occurrence amount for this cycle
@@ -310,6 +339,14 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
   const closeRealCents   = Math.round(parseFloat(closeRealBalance || '0') * 100)
   const unaccountedCents = closeRealCents > 0 ? closeRealCents - activeCycle.committedClosingBalanceCents : 0
 
+  // ── lay-by derived preview values ──────────────────────────────────
+  const laybyTotalCents     = Math.round(parseFloat(laybyTotal || '0') * 100)
+  const laybyCountNum       = parseInt(laybyPayments || '0', 10) || 0
+  const laybyDates          = computeLaybySchedule(laybyFirstDate, laybyFrequency, laybyCountNum)
+  const laybyPerPaymentCents= laybyCountNum > 0 ? Math.floor(laybyTotalCents / laybyCountNum) : 0
+  const laybyRemainderCents = laybyTotalCents - laybyPerPaymentCents * laybyCountNum
+  const laybyEndDate        = laybyDates[laybyDates.length - 1]
+
   // ── overlay handlers ──────────────────────────────────────────────
   function openEdit(cd: any) {
     setEditCard(cd); setEditScope(null); setEditStep(0)
@@ -334,13 +371,19 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
   function openAddToCycle() {
     setAddType(null); setAddStep(0)
     setOneoffName(''); setOneoffAmount(''); setOneoffDate(activeCycle.startDate)
+    setLaybyName(''); setLaybyTotal(''); setLaybyFrequency('fortnightly')
+    setLaybyPayments('4'); setLaybyFirstDate('')
     setAddError(''); setAddOpen(true)
   }
   function closeAddSheet() {
     setAddOpen(false); setAddType(null); setAddStep(0); setAddError('')
   }
   function selectAddType(t: 'oneoff' | 'income' | 'layby') {
-    setAddType(t); setAddStep(1)
+    setAddType(t); setAddStep(1); setAddError('')
+    if (t === 'layby') {
+      setLaybyName(''); setLaybyTotal(''); setLaybyFrequency('fortnightly')
+      setLaybyPayments('4'); setLaybyFirstDate(activeCycle.startDate)
+    }
   }
   async function saveOneOff() {
     const amountCents = Math.round(parseFloat(oneoffAmount || '0') * 100)
@@ -361,6 +404,56 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
       closeAddSheet(); reload()
     } catch (e: any) { setAddError(e.message) }
     finally { setAddSaving(false) }
+  }
+  // Validates the lay-by form, writes the lay_bys row + linked expense +
+  // one amount_version per scheduled payment, then shows the confirmation step.
+  async function saveLayby() {
+    if (!laybyName.trim() || !laybyTotalCents || laybyCountNum <= 0 || !laybyFirstDate) {
+      setAddError('Name, total, payments, and first payment date are required.'); return
+    }
+    setLaybySaving(true); setAddError('')
+    try {
+      const lastPaymentCents = laybyPerPaymentCents + laybyRemainderCents
+
+      const { data: layby, error: e1 } = await supabase
+        .from('lay_bys')
+        .insert({
+          profile_id: userId,
+          name: laybyName.trim(),
+          target_amount_cents: laybyTotalCents,
+          target_date: laybyEndDate,
+          payment_amount_cents: laybyPerPaymentCents,
+          payments_total: laybyCountNum,
+        })
+        .select().single()
+      if (e1) throw e1
+
+      const { data: exp, error: e2 } = await supabase
+        .from('expenses')
+        .insert({
+          profile_id: userId,
+          name: laybyName.trim(),
+          frequency: laybyFrequency,
+          anchor_date: laybyFirstDate,
+          mode: 'fixed',
+          end_date: laybyEndDate,
+          lay_by_id: layby.id,
+        })
+        .select().single()
+      if (e2) throw e2
+
+      const versionRows = laybyDates.map((date, i) => ({
+        expense_id: exp.id,
+        amount_cents: i === laybyDates.length - 1 ? lastPaymentCents : laybyPerPaymentCents,
+        effective_from: date,
+      }))
+      const { error: e3 } = await supabase.from('expense_amount_versions').insert(versionRows)
+      if (e3) throw e3
+
+      setLaybyResult({ name: laybyName.trim(), totalCents: laybyTotalCents, perPaymentCents: laybyPerPaymentCents, count: laybyCountNum, endDate: laybyEndDate })
+      setAddStep(2)
+    } catch (e: any) { setAddError(e.message) }
+    finally { setLaybySaving(false) }
   }
 
   // ── SAVE: edit scope overlay ──────────────────────────────────────
@@ -483,6 +576,13 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
   }
 
   const cards        = buildCards()
+  const incomeCards  = cards.filter(c => c.iconClass === 'inc' || c.iconClass === 'pot')
+  const fixedCards   = cards.filter(c => c.iconClass === 'fix')
+  const varCards     = cards.filter(c => c.iconClass === 'var')
+  const budgetCards  = cards.filter(c => c.iconClass === 'base')
+  const fixedTotalCents  = fixedCards.reduce((s, c) => s + (c.totalCents ?? 0), 0)
+  const varTotalCents    = varCards.reduce((s, c) => s + (c.totalCents ?? 0), 0)
+  const budgetTotalCents = budgetCards.reduce((s, c) => s + (c.totalCents ?? 0), 0)
   const aboveFloor   = activeCycle.committedClosingBalanceCents - floorCents
   const status       = cycleStatus(activeIdx)
   const heroDollars  = Math.floor(openingCents / 100)
@@ -581,26 +681,75 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
         </div>
 
         <div className="cards">
-          {cards.map((cd, i) => (
-            <div key={i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
+          {incomeCards.map((cd, i) => (
+            <div key={'inc'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
               <div className={`ic ${cd.iconClass}`}>{cd.icon}</div>
               <div className="tx">
-                <div className="nm">
-                  {cd.name}
-                  {cd.chips.map(([cls, label]: string[], j: number) => (
-                    <span key={j} className={`chip ${cls}`}>{label}</span>
-                  ))}
-                </div>
+                <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`}>{label}</span>))}</div>
                 <div className="dt">{cd.detail}</div>
-                <div className="act-row">
-                  {cd.act === 'edit' && <span className="act" onClick={() => openEdit(cd)}>edit →</span>}
-                  {cd.act === 'var'  && <span className="act" onClick={() => openVar(cd)}>confirm →</span>}
-                </div>
+                <div className="act-row">{cd.act === 'edit' && <span className="act" onClick={() => openEdit(cd)}>edit →</span>}{cd.act === 'var' && <span className="act" onClick={() => openVar(cd)}>confirm →</span>}</div>
               </div>
               <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
             </div>
           ))}
         </div>
+
+        {fixedCards.length > 0 && (
+          <>
+            <div className="section-hdr sh-fix"><span className="sh-label">Fixed expenses</span><span className="sh-total">−{fmt(activeCycle.fixedExpensesCents, false)}</span></div>
+            <div className="cards">
+              {fixedCards.map((cd, i) => (
+                <div key={'fix'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
+                  <div className={`ic ${cd.iconClass}`}>{cd.icon}</div>
+                  <div className="tx">
+                    <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`}>{label}</span>))}</div>
+                    <div className="dt">{cd.detail}</div>
+                    <div className="act-row">{cd.act === 'edit' && <span className="act" onClick={() => openEdit(cd)}>edit →</span>}</div>
+                  </div>
+                  <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {varCards.length > 0 && (
+          <>
+            <div className="section-hdr sh-var"><span className="sh-label">Estimates</span><span className="sh-total">−{fmt(activeCycle.variableExpensesCents, false)}</span></div>
+            <div className="cards">
+              {varCards.map((cd, i) => (
+                <div key={'var'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
+                  <div className={`ic ${cd.iconClass}`}>{cd.icon}</div>
+                  <div className="tx">
+                    <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`}>{label}</span>))}</div>
+                    <div className="dt">{cd.detail}</div>
+                    <div className="act-row">{cd.act === 'var' && <span className="act" onClick={() => openVar(cd)}>confirm →</span>}</div>
+                  </div>
+                  <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {budgetCards.length > 0 && (
+          <>
+            <div className="section-hdr sh-bud"><span className="sh-label">Budget</span><span className="sh-total">−{fmt(activeCycle.budgetExpensesCents, false)}</span></div>
+            <div className="cards">
+              {budgetCards.map((cd, i) => (
+                <div key={'bud'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
+                  <div className={`ic ${cd.iconClass}`}>{cd.icon}</div>
+                  <div className="tx">
+                    <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`}>{label}</span>))}</div>
+                    <div className="dt">{cd.detail}</div>
+                    <div className="act-row" />
+                  </div>
+                  <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
         {status !== 'past' && (
           <div style={{ padding:'14px 16px 0' }}>
@@ -840,8 +989,7 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
       )}
 
       {/* ═══════════════════════════════════════════════════════════
-          OVERLAY 4 — Add to this cycle (type picker → one-off form)
-          Income and lay-by branches are stubbed pending Phase 2.
+          OVERLAY 4 — Add to this cycle (type picker → one-off / income-stub / layby form)
           ═══════════════════════════════════════════════════════════ */}
       {addOpen && (
         <div className="ov" onClick={closeAddSheet}>
@@ -911,16 +1059,99 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
               </div>
             </>}
 
-            {addStep === 1 && (addType === 'income' || addType === 'layby') && <>
-              <h3>{addType === 'income' ? 'Money coming in' : 'Lay-by or instalment'}</h3>
+            {addStep === 1 && addType === 'income' && <>
+              <h3>Money coming in</h3>
               <p className="sd">Coming soon — not wired up yet.</p>
-              <div className="skipnote">
-                {addType === 'income'
-                  ? "Bonuses, tax returns, and other one-off income land here next."
-                  : "Lay-by and instalment tracking is the next piece we're building."}
-              </div>
+              <div className="skipnote">Bonuses, tax returns, and other one-off income land here next.</div>
               <div className="navrow">
                 <button onClick={() => setAddStep(0)}>Back</button>
+              </div>
+            </>}
+
+            {addStep === 1 && addType === 'layby' && <>
+              <h3>Lay-by or instalment</h3>
+              <p className="sd">A fixed total, split into equal payments. Stops itself once paid off.</p>
+
+              <div className="field">
+                <label>What's it for?</label>
+                <div className="inrow">
+                  <input type="text" value={laybyName} onChange={e => setLaybyName(e.target.value)} placeholder="e.g. Winter coat" />
+                </div>
+              </div>
+
+              <div className="field">
+                <label>Total</label>
+                <div className="inrow">
+                  <span className="pre">$</span>
+                  <input type="number" inputMode="decimal" value={laybyTotal} onChange={e => setLaybyTotal(e.target.value)} placeholder="0" />
+                </div>
+              </div>
+
+              <div className="field">
+                <label>Pay every</label>
+                <div className="freq-picker">
+                  {(['weekly','fortnightly','monthly','annually'] as const).map(f => (
+                    <button
+                      key={f}
+                      className={`freq-opt${laybyFrequency === f ? ' sel' : ''}`}
+                      onClick={() => setLaybyFrequency(f)}
+                    >
+                      {f === 'weekly' ? 'Weekly' : f === 'fortnightly' ? 'Fortnightly' : f === 'monthly' ? 'Monthly' : 'Annually'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="field">
+                <label>Payments</label>
+                <div className="inrow">
+                  <input type="number" inputMode="numeric" value={laybyPayments} onChange={e => setLaybyPayments(e.target.value)} placeholder="4" />
+                </div>
+              </div>
+
+              <div className="field">
+                <label>First payment</label>
+                <div className="inrow">
+                  <input
+                    type="date" value={laybyFirstDate} onChange={e => setLaybyFirstDate(e.target.value)}
+                    style={{ border:'none', background:'transparent', color:'var(--ink)', fontFamily:"'Space Grotesk',sans-serif", fontSize:15, fontWeight:600, width:'100%', outline:'none' }}
+                  />
+                </div>
+              </div>
+
+              {laybyCountNum > 0 && laybyTotalCents > 0 && laybyFirstDate && (
+                <div className="skipnote">
+                  <b>{fmt(laybyPerPaymentCents, false)}</b> per payment × {laybyCountNum}
+                  {laybyRemainderCents !== 0 && <> (last payment {fmt(laybyPerPaymentCents + laybyRemainderCents, false)}, absorbs rounding)</>}
+                  <br />First payment {fmtDate(laybyDates[0])} · last payment {fmtDate(laybyEndDate)}
+                </div>
+              )}
+
+              {addError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:10 }}>{addError}</p>}
+
+              <div className="navrow">
+                <button onClick={() => setAddStep(0)}>Back</button>
+                <button
+                  className="pri"
+                  onClick={saveLayby}
+                  style={{ opacity: laybySaving ? 0.6 : 1, cursor: laybySaving ? 'default' : 'pointer' }}
+                >
+                  {laybySaving ? 'Saving…' : 'Add lay-by'}
+                </button>
+              </div>
+            </>}
+
+            {addStep === 2 && addType === 'layby' && laybyResult && <>
+              <h3>Lay-by added</h3>
+              <p className="sd">{laybyResult.name} is now tracked across {laybyResult.count} cycles.</p>
+              <div className="recline"><span>Total</span><b>{fmt(laybyResult.totalCents)}</b></div>
+              <div className="recline"><span>Per payment</span><b>{fmt(laybyResult.perPaymentCents)}</b></div>
+              <div className="recline res"><span>Paid off by</span><b>{fmtDate(laybyResult.endDate)}</b></div>
+              <div className="skipnote" style={{ marginTop:13 }}>
+                It'll show up as a card in every cycle it touches, and disappear on its own once the last payment lands.
+              </div>
+              <div className="navrow">
+                <button className="pri" onClick={() => { closeAddSheet(); reload() }}>Done</button>
               </div>
             </>}
           </div>
