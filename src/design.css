@@ -54,10 +54,17 @@ body[data-theme="dark"]  { background: #0e1016; color: #e7e9ee; }
 .hero .sub { font-size:13px; color:var(--mut); margin-top:5px; }
 .hero .sub b { color:var(--ink); }
 
-/* === GRAPH === */
+/* === GRAPH — concept D: auto-scale, axis labels, active dot label === */
 .graphwrap { margin:12px 14px 0; border:1px solid var(--line); border-radius:18px; background:var(--bg2); padding:10px 6px 4px; overflow:hidden; }
 .graph-cap { display:flex; justify-content:space-between; align-items:baseline; padding:2px 10px 4px; font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--mut); }
 svg.proj { display:block; width:100%; height:152px; }
+
+.proj .axln   { stroke:var(--line); stroke-width:0.5; }
+.proj .gridln { stroke:var(--line); stroke-width:0.5; stroke-dasharray:2 3; }
+.proj .axtx   { fill:var(--mut); font-family:'JetBrains Mono',monospace; font-size:9px; letter-spacing:.04em; }
+.proj .dotlbl     { fill:var(--ink); font-family:'Space Grotesk',sans-serif; font-size:11px; font-weight:600; }
+.proj .dotlbl.low { fill:var(--floor); }
+
 .proj .pastln { fill:none; stroke:var(--acc); stroke-width:2.6; stroke-linejoin:round; stroke-linecap:round; }
 .proj .futln  { fill:none; stroke:var(--acc); stroke-width:2.4; stroke-linejoin:round; stroke-dasharray:1 5; stroke-linecap:round; opacity:.85; }
 .proj .area   { fill:var(--acc); opacity:.07; }
@@ -400,6 +407,150 @@ svg.proj { display:block; width:100%; height:152px; }
 
 /* ── delete action (red tint) ─────────────────────────────────────── */
 .act-del { color: var(--floor) !important; }
+
+/* ── icon picker row (in add/edit sheet) ──────────────────────────── */
+.iconrow {
+  display: flex; align-items: center; gap: 12px;
+  border: 1px solid var(--line); border-radius: 13px;
+  padding: 11px 12px; background: var(--bg2); cursor: pointer;
+  transition: border-color .15s;
+}
+.iconrow:hover { border-color: var(--acc); }
+.iconrow .sw {
+  width: 40px; height: 40px; border-radius: 11px;
+  display: grid; place-items: center; flex: 0 0 auto;
+}
+.iconrow .it { font-weight: 600; font-size: 14px; }
+.iconrow .is { font-size: 11.5px; color: var(--mut); margin-top: 1px; }
+.iconrow .go {
+  margin-left: auto; color: var(--acc);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; font-weight: 600; letter-spacing: .04em;
+}
+
+/* ── icon gallery overlay ─────────────────────────────────────────── */
+.galgrp {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--faint); margin: 12px 2px 8px;
+}
+.galgrid {
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px;
+}
+.galcell {
+  aspect-ratio: 1;
+  border: 1px solid var(--line); border-radius: 12px;
+  display: grid; place-items: center; cursor: pointer;
+  color: var(--ink); background: var(--bg2);
+  transition: border-color .15s;
+}
+.galcell:hover { border-color: var(--acc); }
+.galcell.sel {
+  border-color: var(--acc); border-width: 1.6px;
+  background: var(--acc-s); color: var(--acc);
+}
+
+/* ── expenses page: summary bar ───────────────────────────────────── */
+.exp-sum {
+  display: flex; height: 6px; border-radius: 3px;
+  margin: 0 16px 4px; overflow: hidden;
+}
+.exp-sum-leg {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  padding: 2px 16px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: var(--mut);
+}
+.exp-sum-leg span {
+  display: flex; align-items: center; gap: 4px;
+}
+.exp-sum-leg .dot {
+  width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0;
+}
+
+/* ── expenses page: accordion sections ────────────────────────────── */
+.exp-sec {
+  border-top: 1px solid var(--line);
+}
+.exp-sec-hd {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.exp-sec-hd .lbl {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 13px; font-weight: 600;
+  display: flex; align-items: center; gap: 6px;
+}
+.exp-sec-hd .cnt {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: var(--mut);
+  background: var(--line2); border-radius: 10px;
+  padding: 1px 7px;
+}
+.exp-sec-hd .tot {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 13px; font-weight: 600; color: var(--ink);
+}
+.exp-sec-hd .chv {
+  font-size: 12px; color: var(--mut); margin-left: 6px;
+  transition: transform .2s ease;
+  display: inline-block;
+}
+.exp-sec-hd .chv.up {
+  transform: rotate(180deg);
+}
+
+/* ── expenses page: compact rows ──────────────────────────────────── */
+.exp-rows {
+  padding-bottom: 6px;
+}
+.exp-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 16px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background .1s;
+}
+.exp-row:active {
+  background: var(--line2);
+}
+.exp-row .ri {
+  width: 30px; height: 30px; border-radius: 8px;
+  display: grid; place-items: center; flex: 0 0 30px;
+}
+.exp-row .rm {
+  flex: 1; min-width: 0; text-align: left;
+}
+.exp-row .rn {
+  font-size: 13px; font-weight: 600; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-align: left;
+}
+.exp-row .rd {
+  font-size: 11px; color: var(--mut);
+  font-family: 'Inter', sans-serif;
+  text-align: left;
+}
+.exp-row .rv {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 13px; font-weight: 600; color: var(--ink);
+  white-space: nowrap;
+}
+.exp-row .rf {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; color: var(--mut);
+  letter-spacing: .03em; text-align: right;
+}
+
+/* ── expenses page: lay-by progress bar ───────────────────────────── */
+.exp-prog {
+  height: 3px; border-radius: 2px;
+  background: var(--line2); margin-top: 3px;
+  overflow: hidden;
+}
+.exp-prog .fill {
+  height: 100%; border-radius: 2px;
+}
 
 /* ── frequency pill picker ────────────────────────────────────────── */
 .freq-picker {

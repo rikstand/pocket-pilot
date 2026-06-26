@@ -1,9 +1,10 @@
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from './lib/supabase'
-import { getIncomeSources, getExpenses, getCycles, getProfile } from './lib/repository'
+import { getIncomeSources, getExpenses, getCycles, getProfile, getLayBys } from './lib/repository'
 import { projectCycles } from './engine/index'
 import { getOccurrencesInRange } from './engine/recurrence'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
+import { ExpenseIcon, guessIcon } from './lib/icons'
 
 function fmt(cents: number, showCents = true) {
   const abs = Math.abs(cents)
@@ -42,6 +43,12 @@ function versionForCycle(versions: any[], cycleStart: string): any {
   // Fallback: use earliest version if none are effective yet for this cycle
   return [...all].sort((a: any, b: any) => a.effective_from < b.effective_from ? -1 : 1)[0]
 }
+// Inline override for chip colour — mirrors the lay-by chip styling on ExpensesPage.
+// Returns undefined for every other chip class so normal CSS classes keep driving the look.
+function chipStyle(cls: string): { color: string, borderColor: string, background: string } | undefined {
+  if (cls === 'evt') return { color: 'var(--event)', borderColor: 'var(--event)', background: 'var(--event-s)' }
+  return undefined
+}
 // Step forward `count` dates starting at firstDate, at the given frequency.
 // Shared by the lay-by form preview and (next step) the actual save.
 function computeLaybySchedule(
@@ -66,6 +73,7 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
   const [cycles,      setCycles]      = useState<any[]>([])
   const [rawExpenses, setRawExpenses] = useState<any[]>([])
   const [rawIncome,   setRawIncome]   = useState<any[]>([])
+  const [rawLayBys,   setRawLayBys]   = useState<any[]>([])
   const [profile,     setProfile]     = useState<any>(null)
   const [activeIdx,   setActiveIdx]   = useState(0)
   const [darkMode,    setDarkMode]    = useState(() => document.documentElement.getAttribute('data-theme') === 'dark')
@@ -123,10 +131,10 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
     async function load() {
       setLoading(true)
       try {
-        const [prof, income, expenses, storedCycles] = await Promise.all([
-          getProfile(userId), getIncomeSources(userId), getExpenses(userId), getCycles(userId),
+        const [prof, income, expenses, storedCycles, layBys] = await Promise.all([
+          getProfile(userId), getIncomeSources(userId), getExpenses(userId), getCycles(userId), getLayBys(userId),
         ])
-        setProfile(prof); setRawIncome(income); setRawExpenses(expenses)
+        setProfile(prof); setRawIncome(income); setRawExpenses(expenses); setRawLayBys(layBys)
 
         const engineIncome = income.map((src: any) => {
           const v = (src.income_amount_versions ?? []).sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
@@ -232,16 +240,25 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
     }
   }
 
-  // graph
+  // graph — concept D: auto-scale, Y-axis labels, active dot label
   const closeVals    = cycles.map(c => c.committedClosingBalanceCents / 100)
   const floorDollars = floorCents / 100
-  const maxVal       = Math.max(...closeVals, floorDollars) * 1.15
-  const gTop = 18, gBot = 132, gH = gBot - gTop
-  const xPad = 16, xRange = 320 - 2 * xPad
-  const xs   = closeVals.map((_: any, i: number) => xPad + i * xRange / (closeVals.length - 1))
-  const yFor = (v: number) => gTop + (maxVal - v) * gH / maxVal
+  const dataMax      = Math.max(...closeVals, floorDollars, 100)
+  const dataMin      = Math.min(...closeVals, 0)
+  const tickStep     = dataMax > 8000 ? 2000 : dataMax > 3000 ? 1000 : 500
+  const maxTick      = Math.ceil(dataMax * 1.1 / tickStep) * tickStep
+  const minTick      = dataMin < 0 ? Math.floor(dataMin * 1.1 / tickStep) * tickStep : 0
+  const tickRange    = maxTick - minTick
+  const ticks: number[] = []
+  for (let tv = minTick; tv <= maxTick; tv += tickStep) ticks.push(tv)
+  const fmtAxis = (v: number) => v === 0 ? '$0' : v >= 1000 ? `$${v / 1000}k` : v > 0 ? `$${v}` : v <= -1000 ? `-$${Math.abs(v) / 1000}k` : `-$${Math.abs(v)}`
+  const gTop = 16, gBot = 136, gH = gBot - gTop
+  const xLeft = 40, xRight = 328, xRange = xRight - xLeft
+  const xs   = closeVals.map((_: any, i: number) => xLeft + i * xRange / Math.max(closeVals.length - 1, 1))
+  const yFor = (v: number) => gBot - ((v - minTick) / tickRange) * gH
   const pts  = closeVals.map((v: number, i: number) => [xs[i], yFor(v)])
   const fY   = yFor(floorDollars)
+  const zeroY = yFor(0)
   const splitIdx   = currentIdx >= 0 ? currentIdx : 0
   const monthStart = fmtDate(cycles[0].startDate).split(' ')[1]
   const monthEnd   = fmtDate(cycles[cycles.length - 1].endDate).split(' ')[1]
@@ -300,8 +317,38 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
         if (exp.category) detail += ' · ' + exp.category
       }
 
+      // ── lay-by visual override ──────────────────────────────────
+      // Lay-bys are saved with mode: 'fixed', so they still total correctly
+      // and sit in the Fixed expenses section above. This only swaps the
+      // icon/chip colour and replaces the date-list detail with payment
+      // progress + remaining balance, matching the ExpensesPage treatment.
+      let displayIconClass = iconClass
+      let iconSvg = exp.icon || guessIcon(exp.name)
+      const isLayby = !!exp.lay_by_id
+      if (isLayby) {
+        icon = '◫'
+        iconSvg = exp.icon || 'gift'
+        displayIconClass = 'evt'
+        chips = [['evt', 'lay-by']]
+        act = null
+
+        const layby = rawLayBys.find((l: any) => l.id === exp.lay_by_id)
+        const sortedVersions = [...(exp.expense_amount_versions ?? [])]
+          .sort((a: any, b: any) => a.effective_from < b.effective_from ? -1 : 1)
+        const lastOccDate = occs[occs.length - 1]
+        const idx = sortedVersions.findIndex((sv: any) => sv.effective_from === lastOccDate)
+        const paymentNumber  = idx >= 0 ? idx + 1 : sortedVersions.length
+        const totalPayments  = layby?.payments_total ?? sortedVersions.length
+        const paidThroughCents = sortedVersions
+          .slice(0, idx >= 0 ? idx + 1 : sortedVersions.length)
+          .reduce((s: number, sv: any) => s + sv.amount_cents, 0)
+        const remainingCents = Math.max(0, (layby?.target_amount_cents ?? 0) - paidThroughCents)
+
+        detail = `Payment ${paymentNumber} of ${totalPayments} · ${fmt(remainingCents, false)} left`
+      }
+
       cards.push({
-        name: exp.name, icon, iconClass, chips, detail,
+        name: exp.name, icon, iconClass, displayIconClass, iconSvg, chips, detail,
         value: '−' + fmt(total, false), valueClass: '', totalCents: total,
         ghost: false, dashed: mode === 'variable', act,
         expenseId: exp.id,
@@ -618,13 +665,31 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
             <span>Projected close · {cycles.length} cycles</span>
             <span>{monthStart} → {monthEnd}</span>
           </div>
-          <svg className="proj" viewBox="0 0 320 152" aria-label="Balance projection flight path">
-            <rect className="ground" x="0" y={fY} width="320" height={152 - fY} />
-            <path className="area" d={`M${pts[0][0]},${pts[0][1]} ${pts.map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} L${pts[pts.length-1][0]},${fY} L${pts[0][0]},${fY} Z`} />
-            <line className="floorln" x1="12" y1={fY} x2="308" y2={fY} />
-            <text className="floortx" x="14" y={fY - 4}>{fmt(floorCents,false)} FLOOR</text>
+          <svg className="proj" viewBox="0 0 340 152" aria-label="Balance projection">
+            {/* axis lines */}
+            <line className="axln" x1={xLeft} y1={gTop} x2={xLeft} y2={gBot} />
+            <line className="axln" x1={xLeft} y1={gBot} x2={xRight} y2={gBot} />
+            {/* gridlines + Y-axis labels */}
+            {ticks.map(tv => (
+              <g key={tv}>
+                {tv !== minTick && (
+                  <line className={tv === 0 && minTick < 0 ? 'axln' : 'gridln'}
+                    x1={xLeft} y1={yFor(tv)} x2={xRight} y2={yFor(tv)} />
+                )}
+                <text className="axtx" x={xLeft - 4} y={yFor(tv) + 3} textAnchor="end">{fmtAxis(tv)}</text>
+              </g>
+            ))}
+            {/* floor line */}
+            {floorCents > 0 && <>
+              <line className="floorln" x1={xLeft} y1={fY} x2={xRight} y2={fY} />
+              <text className="floortx" x={xLeft + 4} y={fY - 4}>{fmt(floorCents,false)} FLOOR</text>
+            </>}
+            {/* area fill — anchored to $0 line, not chart bottom */}
+            <path className="area" d={`M${pts[0][0]},${pts[0][1]} ${pts.map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} L${pts[pts.length-1][0]},${zeroY} L${pts[0][0]},${zeroY} Z`} />
+            {/* past + future lines */}
             <polyline className="pastln" points={pts.slice(0, splitIdx+1).map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
             <polyline className="futln"  points={pts.slice(splitIdx).map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
+            {/* waypoints + active dot label */}
             {pts.map((p:number[], i:number) => {
               const s = cycleStatus(i)
               const isLow = s==='low', isPast = s==='past', isActive = i===activeIdx
@@ -632,6 +697,11 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
                 <g key={i} onClick={() => setActiveIdx(i)} style={{ cursor:'pointer' }}>
                   {isActive && <circle className={`focusring${isLow?' low':''}`} cx={p[0]} cy={p[1]} r="8" />}
                   <circle className={`wp${isPast?' past':''}${isLow?' low':''}`} cx={p[0]} cy={p[1]} r="4.2" />
+                  {isActive && (
+                    <text className={`dotlbl${isLow?' low':''}`} x={p[0]} y={p[1] - 12} textAnchor="middle">
+                      {fmt(cycles[i].committedClosingBalanceCents, false)}
+                    </text>
+                  )}
                 </g>
               )
             })}
@@ -683,9 +753,9 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
         <div className="cards">
           {incomeCards.map((cd, i) => (
             <div key={'inc'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
-              <div className={`ic ${cd.iconClass}`}>{cd.icon}</div>
+              <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
               <div className="tx">
-                <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`}>{label}</span>))}</div>
+                <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
                 <div className="dt">{cd.detail}</div>
                 <div className="act-row">{cd.act === 'edit' && <span className="act" onClick={() => openEdit(cd)}>edit →</span>}{cd.act === 'var' && <span className="act" onClick={() => openVar(cd)}>confirm →</span>}</div>
               </div>
@@ -700,9 +770,9 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
             <div className="cards">
               {fixedCards.map((cd, i) => (
                 <div key={'fix'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
-                  <div className={`ic ${cd.iconClass}`}>{cd.icon}</div>
+                  <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
                   <div className="tx">
-                    <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`}>{label}</span>))}</div>
+                    <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
                     <div className="dt">{cd.detail}</div>
                     <div className="act-row">{cd.act === 'edit' && <span className="act" onClick={() => openEdit(cd)}>edit →</span>}</div>
                   </div>
@@ -719,9 +789,9 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
             <div className="cards">
               {varCards.map((cd, i) => (
                 <div key={'var'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
-                  <div className={`ic ${cd.iconClass}`}>{cd.icon}</div>
+                  <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
                   <div className="tx">
-                    <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`}>{label}</span>))}</div>
+                    <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
                     <div className="dt">{cd.detail}</div>
                     <div className="act-row">{cd.act === 'var' && <span className="act" onClick={() => openVar(cd)}>confirm →</span>}</div>
                   </div>
@@ -738,9 +808,9 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
             <div className="cards">
               {budgetCards.map((cd, i) => (
                 <div key={'bud'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
-                  <div className={`ic ${cd.iconClass}`}>{cd.icon}</div>
+                  <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
                   <div className="tx">
-                    <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`}>{label}</span>))}</div>
+                    <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
                     <div className="dt">{cd.detail}</div>
                     <div className="act-row" />
                   </div>
