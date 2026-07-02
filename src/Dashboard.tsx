@@ -69,14 +69,13 @@ function computeLaybySchedule(
   return dates
 }
 
-export default function Dashboard({ userId, onNavigate }: { userId: string, onNavigate: (page: any) => void }) {
+export default function Dashboard({ userId }: { userId: string }) {
   const [cycles,      setCycles]      = useState<any[]>([])
   const [rawExpenses, setRawExpenses] = useState<any[]>([])
   const [rawIncome,   setRawIncome]   = useState<any[]>([])
   const [rawLayBys,   setRawLayBys]   = useState<any[]>([])
   const [profile,     setProfile]     = useState<any>(null)
-  const [activeIdx,   setActiveIdx]   = useState(0)
-  const [darkMode,    setDarkMode]    = useState(() => document.documentElement.getAttribute('data-theme') === 'dark')
+  const [activeIdx,   setActiveIdx]   = useState(0)  
   const [error,       setError]       = useState('')
   const [loading,     setLoading]     = useState(true)
   const [reloadKey,   setReloadKey]   = useState(0)
@@ -122,9 +121,6 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
   const [laybySaving,   setLaybySaving]   = useState(false)
   const [laybyResult,   setLaybyResult]   = useState<any>(null)
 
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light')
-  }, [darkMode])
 
   // Reload whenever userId changes or reloadKey is bumped (after overlay saves)
   useEffect(() => {
@@ -639,16 +635,7 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
 
   // ── render ────────────────────────────────────────────────────────
   return (
-    <div className="app">
-
-      <div className="appbar">
-        <div className="nm">Pocket<b>Pilot</b></div>
-        <button className="tgl" onClick={() => setDarkMode(!darkMode)}>
-          <span>{darkMode ? '☀' : '☾'}</span>
-          <span className="lab">{darkMode ? 'LIGHT' : 'DARK'}</span>
-        </button>
-      </div>
-
+    <>
       <div className="scrollarea">
 
         <div className="hero">
@@ -834,15 +821,7 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
           </>
         )}
 
-        <div style={{ padding:'8px 16px 24px', textAlign:'center' }}>
-          <button onClick={() => onNavigate('expenses')} style={{
-            background:'none', border:'1px solid var(--line)', borderRadius:11,
-            padding:'10px 20px', cursor:'pointer',
-            fontFamily:"'Space Grotesk',sans-serif", fontWeight:600, fontSize:13, color:'var(--acc)',
-          }}>
-            Manage expenses →
-          </button>
-        </div>
+        
 
       </div>
 
@@ -1226,8 +1205,7 @@ export default function Dashboard({ userId, onNavigate }: { userId: string, onNa
             </>}
           </div>
         </div>
-      )}
-
-    </div>
+     )}
+    </>
   )
 }

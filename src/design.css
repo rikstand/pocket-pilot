@@ -35,12 +35,13 @@ body[data-theme="dark"]  { background: #0e1016; color: #e7e9ee; }
 }
 
 /* === SHELL === */
-.app { max-width:480px; margin:0 auto; background:var(--bg); color:var(--ink); min-height:100vh; display:flex; flex-direction:column; transition:background .4s ease,color .4s ease; }
+.app { max-width:480px; margin:0 auto; background:var(--bg); color:var(--ink); height:100vh; overflow:hidden; display:flex; flex-direction:column; transition:background .4s ease,color .4s ease; }
 .scrollarea { flex:1 1 auto; overflow-y:auto; overflow-x:hidden; padding-bottom:10px; }
 .scrollarea::-webkit-scrollbar { width:0; }
 
 /* === APPBAR === */
-.appbar { display:flex; align-items:center; justify-content:space-between; padding:16px 20px 2px; flex:0 0 auto; }
+.appbar { display:flex; align-items:center; gap:10px; padding:16px 20px 2px; flex:0 0 auto; }
+.appbar .tgl { margin-left:auto; }
 .appbar .nm { font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:15px; }
 .appbar .nm b { color:var(--acc); }
 .tgl { display:flex; align-items:center; gap:7px; border:1px solid var(--line); background:var(--bg2); border-radius:30px; padding:5px 7px; cursor:pointer; color:var(--ink); font-size:13px; line-height:1; }
@@ -667,3 +668,39 @@ svg.proj { display:block; width:100%; height:152px; }
   color: #fff;
   border: none;
 }
+
+/* ── App shell: hamburger, bottom nav, drawer ── */
+.hb {
+  width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--bg2); display: grid; place-items: center; cursor: pointer;
+  flex: 0 0 auto; color: var(--ink); font-size: 15px;
+}
+
+.bottom-nav { flex: 0 0 auto; display: flex; border-top: 1px solid var(--line); background: var(--bg2); }
+.nav-item {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 10px 4px 12px; border: none; background: transparent; color: var(--mut);
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 10.5px; cursor: pointer;
+}
+.nav-item.active { color: var(--acc); }
+.nav-icon { font-size: 18px; }
+
+.drawer { position: fixed; inset: 0; background: rgba(8,9,12,.5); z-index: 60; }
+.panel {
+  position: absolute; left: 0; top: 0; bottom: 0; width: min(78%, 320px);
+  background: var(--bg); padding: 22px 16px; display: flex; flex-direction: column;
+}
+.panel .pnm { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 17px; }
+.panel .pnm b { color: var(--acc); }
+.panel .psub { font-size: 11.5px; color: var(--mut); margin-bottom: 20px; }
+.drawer-item { display: flex; align-items: center; gap: 12px; padding: 11px 8px; border-radius: 11px; cursor: pointer; }
+.drawer-item.active { background: var(--acc-s); }
+.drawer-item .di { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; font-size: 15px; flex: 0 0 auto; }
+.drawer-item .dt { font-weight: 600; font-size: 13.5px; }
+.di.cyc { background: var(--acc-s); color: var(--acc); }
+.di.fc  { background: var(--pos-s); color: var(--pos); }
+.di.exp { background: var(--acc-s); color: var(--acc); }
+.di.wish{ background: #faf1de; color: #b8860b; }
+.di.set { background: var(--line2); color: var(--mut); }
+[data-theme="dark"] .di.wish { background: #2b2413; color: #e0b355; }
+.drawer-div { height: 1px; background: var(--line); margin: 10px 0; }
