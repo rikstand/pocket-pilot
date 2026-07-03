@@ -55,15 +55,13 @@ export default function App() {
   return (
     <AppShell active={page} onNavigate={setPage} darkMode={darkMode} onToggleDark={() => setDarkMode(d => !d)}>
       {page === 'cycle' && (
-        <Dashboard key={dataVersion} userId={userId} />
+        <Dashboard key={'cycle-' + dataVersion} userId={userId} variant="cycle" />
       )}
       {page === 'expenses' && (
         <ExpensesPage userId={userId} onBack={goCycleAndReload} />
       )}
       {page === 'forecast' && (
-        <div className="scrollarea" style={{ padding: 24 }}>
-          <p style={{ color: 'var(--mut)' }}>Forecast — next build session.</p>
-        </div>
+        <Dashboard key={'forecast-' + dataVersion} userId={userId} variant="forecast" />
       )}
       {page === 'wishlist' && (
         <div className="scrollarea" style={{ padding: 24 }}>

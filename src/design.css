@@ -35,8 +35,8 @@ body[data-theme="dark"]  { background: #0e1016; color: #e7e9ee; }
 }
 
 /* === SHELL === */
-.app { max-width:480px; margin:0 auto; background:var(--bg); color:var(--ink); height:100vh; overflow:hidden; display:flex; flex-direction:column; transition:background .4s ease,color .4s ease; }
-.scrollarea { flex:1 1 auto; overflow-y:auto; overflow-x:hidden; padding-bottom:10px; }
+.app { width:100%; max-width:480px; margin:0 auto; background:var(--bg); color:var(--ink); height:100vh; overflow:hidden; display:flex; flex-direction:column; transition:background .4s ease,color .4s ease; }
+.scrollarea { flex:1 1 auto; overflow-y:auto; overflow-x:hidden; padding-bottom:10px; scrollbar-gutter: stable; scrollbar-width: none; }
 .scrollarea::-webkit-scrollbar { width:0; }
 
 /* === APPBAR === */
