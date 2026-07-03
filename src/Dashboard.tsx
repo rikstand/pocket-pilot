@@ -1,11 +1,11 @@
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from './lib/supabase'
-import { getIncomeSources, getExpenses, getCycles, getProfile, getLayBys } from './lib/repository'
+import { getIncomeSources, getExpenses, getCycles, getProfile, getLayBys, getBudgetSpendEntries, addBudgetSpendEntry, updateBudgetSpendEntry, deleteBudgetSpendEntry } from './lib/repository'
 import { projectCycles } from './engine/index'
 import { getOccurrencesInRange } from './engine/recurrence'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
 import { ExpenseIcon, guessIcon } from './lib/icons'
- 
+
 function fmt(cents: number, showCents = true) {
   const abs = Math.abs(cents)
   const n = abs / 100
@@ -68,7 +68,7 @@ function computeLaybySchedule(
   }
   return dates
 }
- 
+
 export default function Dashboard({ userId, variant }: { userId: string, variant: 'cycle' | 'forecast' }) {
   const [cycles,      setCycles]      = useState<any[]>([])
   const [rawExpenses, setRawExpenses] = useState<any[]>([])
@@ -80,7 +80,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const [loading,     setLoading]     = useState(true)
   const [reloadKey,   setReloadKey]   = useState(0)
   const pillsRef = useRef<HTMLDivElement>(null)
- 
+
   // ── overlay state ──────────────────────────────────────────────────
   const [editCard,   setEditCard]   = useState<any>(null)
   const [editScope,  setEditScope]  = useState<'occurrence' | 'forward' | null>(null)
@@ -88,12 +88,12 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const [editAmount, setEditAmount] = useState('')
   const [editSaving, setEditSaving] = useState(false)
   const [editError,  setEditError]  = useState('')
- 
+
   const [varCard,   setVarCard]   = useState<any>(null)
   const [varAmount, setVarAmount] = useState('')
   const [varSaving, setVarSaving] = useState(false)
   const [varError,  setVarError]  = useState('')
- 
+
   const [closeOpen,          setCloseOpen]          = useState(false)
   const [closeStep,          setCloseStep]          = useState(0)
   const [closeVarActuals,    setCloseVarActuals]    = useState<Record<string, string>>({})
@@ -101,7 +101,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const [closeRealBalance,   setCloseRealBalance]   = useState('')
   const [closeSaving,        setCloseSaving]        = useState(false)
   const [closeFrozen,        setCloseFrozen]        = useState(false)
- 
+
   // ── add-to-cycle overlay state (type picker → one-off / income-stub / layby) ──
   const [addOpen,     setAddOpen]     = useState(false)
   const [addStep,     setAddStep]     = useState(0) // 0 = type picker, 1 = form, 2 = layby preview (stub for now)
@@ -111,7 +111,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const [oneoffDate,   setOneoffDate]   = useState('')
   const [addSaving,   setAddSaving]   = useState(false)
   const [addError,    setAddError]    = useState('')
- 
+
   // ── lay-by form fields ──────────────────────────────────────────────
   const [laybyName,     setLaybyName]     = useState('')
   const [laybyTotal,    setLaybyTotal]    = useState('')
@@ -120,18 +120,27 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const [laybyFirstDate,setLaybyFirstDate]= useState('')
   const [laybySaving,   setLaybySaving]   = useState(false)
   const [laybyResult,   setLaybyResult]   = useState<any>(null)
- 
- 
+
+  // ── budget tracking state ────────────────────────────────────────
+  const [rawBudgetEntries, setRawBudgetEntries] = useState<any[]>([])
+  const [openQuickAdd,     setOpenQuickAdd]     = useState<string | null>(null)
+  const [quickAddAmount,   setQuickAddAmount]   = useState('')
+  const [logItem,          setLogItem]          = useState<any>(null)
+  const [editingEntryId,   setEditingEntryId]   = useState<string | null>(null)
+  const [editEntryAmount,  setEditEntryAmount]  = useState('')
+  const [editEntryLabel,   setEditEntryLabel]   = useState('')
+
+
   // Reload whenever userId changes or reloadKey is bumped (after overlay saves)
   useEffect(() => {
     async function load() {
       setLoading(true)
       try {
-        const [prof, income, expenses, storedCycles, layBys] = await Promise.all([
-          getProfile(userId), getIncomeSources(userId), getExpenses(userId), getCycles(userId), getLayBys(userId),
+        const [prof, income, expenses, storedCycles, layBys, budgetEntries] = await Promise.all([
+          getProfile(userId), getIncomeSources(userId), getExpenses(userId), getCycles(userId), getLayBys(userId), getBudgetSpendEntries(userId),
         ])
-        setProfile(prof); setRawIncome(income); setRawExpenses(expenses); setRawLayBys(layBys)
- 
+        setProfile(prof); setRawIncome(income); setRawExpenses(expenses); setRawLayBys(layBys); setRawBudgetEntries(budgetEntries)
+
         const engineIncome = income.map((src: any) => {
           const v = (src.income_amount_versions ?? []).sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
           return {
@@ -141,7 +150,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
             isPotential: src.is_potential ?? false,
           }
         })
- 
+
         // Pass ALL amount versions so the engine can select per-cycle
         const engineExpenses = expenses.map((exp: any) => {
           const versions = (exp.expense_amount_versions ?? []).map((v: any) => ({
@@ -158,14 +167,14 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
             endDate: exp.end_date ?? undefined,
           }
         })
- 
+
         // Show the latest closed cycle (if any) for historical context,
         // then project forward from the current/next open cycle.
         const openCycles   = storedCycles.filter((c: any) => !c.is_closed)
         const closedCycles = storedCycles.filter((c: any) => c.is_closed)
         const latestClosed = closedCycles[closedCycles.length - 1]
         const projectFrom  = openCycles[0] ?? storedCycles[storedCycles.length - 1]
- 
+
         const projected = projectCycles({
           incomeSources: engineIncome,
           expenses: engineExpenses,
@@ -174,7 +183,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           numCycles: 6,
           safetyFloorCents: prof?.safety_floor_cents ?? 0,
         })
- 
+
         // Prepend the latest closed cycle so user can see history
         let cyclesWithHistory: any[] = projected
         if (latestClosed) {
@@ -193,7 +202,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           }
           cyclesWithHistory = [historicalCycle, ...projected]
         }
- 
+
         const cyclesWithIds = cyclesWithHistory.map((p: any) => {
           const stored = storedCycles.find((s: any) => s.start_date === p.startDate)
           return stored ? { ...p, id: stored.id } : p
@@ -205,31 +214,31 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     }
     load()
   }, [userId, reloadKey])
- 
+
   useEffect(() => {
     if (pillsRef.current) {
       const btn = pillsRef.current.children[activeIdx] as HTMLElement
       btn?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' })
     }
   }, [activeIdx])
- 
+
   useEffect(() => {
     if (variant === 'cycle' && cycles.length) {
       setActiveIdx(findCurrentIdx(cycles))
     }
   }, [variant, cycles])
- 
+
   if (loading) return <div className="app" style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh' }}><p style={{ color:'var(--mut)' }}>Loading…</p></div>
   if (error)      return <div className="app" style={{ padding:24 }}><p style={{ color:'var(--floor)' }}>{error}</p></div>
   if (!cycles.length) return <div className="app" style={{ padding:24 }}><p style={{ color:'var(--mut)' }}>No cycle data.</p></div>
- 
+
   const activeCycle  = cycles[activeIdx]
   const floorCents   = profile?.safety_floor_cents ?? 0
   const currentIdx   = findCurrentIdx(cycles)
   const openingCents = cycles[0]?.openingBalanceCents ?? 0
- 
+
   function reload() { setReloadKey(k => k + 1) }
- 
+
   // next pay
   const primaryIncome = rawIncome.find((s: any) => s.is_primary && !s.is_potential)
   let nextPayStr = ''
@@ -241,7 +250,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       nextPayStr = d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`
     }
   }
- 
+
   // graph — concept D: auto-scale, Y-axis labels, active dot label
   const closeVals    = cycles.map(c => c.committedClosingBalanceCents / 100)
   const floorDollars = floorCents / 100
@@ -264,7 +273,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const splitIdx   = currentIdx >= 0 ? currentIdx : 0
   const monthStart = fmtDate(cycles[0].startDate).split(' ')[1]
   const monthEnd   = fmtDate(cycles[cycles.length - 1].endDate).split(' ')[1]
- 
+
   function cycleStatus(i: number) {
     const t = today(), c = cycles[i]
     if (c.endDate < t) return 'past'
@@ -272,11 +281,11 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     if (floorCents > 0 && c.committedClosingBalanceCents - floorCents < floorCents * 0.5) return 'low'
     return 'future'
   }
- 
+
   function buildCards() {
     const cards: any[] = []
     const cycle = activeCycle
- 
+
     for (const src of rawIncome) {
       const occs = getOccurrencesInRange(src.anchor_date, src.frequency, cycle.startDate, cycle.endDate)
       if (!occs.length) continue
@@ -293,22 +302,22 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         expenseId: null, unitCents: 0, originalUnitCents: 0,
       })
     }
- 
+
     for (const exp of rawExpenses) {
       const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, cycle.startDate, cycle.endDate, exp.end_date ?? undefined)
       if (!occs.length) continue
- 
+
       // Use cycle-aware version selection so edit/confirm amounts are consistent
       const v        = versionForCycle(exp.expense_amount_versions, cycle.startDate)
       const unitCents = v?.amount_cents ?? 0
       const total     = unitCents * occs.length
       const mode      = exp.mode ?? 'fixed'
- 
+
       let icon = '▤', iconClass = 'fix', chips: string[][] = [['lock','fixed']], act: string | null = null
       if (mode === 'variable') { icon = '~'; iconClass = 'var'; chips = [['est','estimate']]; act = 'var' }
       else if (mode === 'budget') { icon = '≈'; iconClass = 'base'; chips = [['bl','baseline']] }
       else { act = 'edit' }
- 
+
       let detail = ''
       if (mode === 'variable') {
         detail = '~ typical ' + exp.frequency.replace('ly','')
@@ -318,7 +327,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         detail = occs.length === 1 ? `${fmtDate(occs[0])} · ${exp.frequency}` : occs.map((o: string) => fmtDate(o)).join(', ')
         if (exp.category) detail += ' · ' + exp.category
       }
- 
+
       // ── lay-by visual override ──────────────────────────────────
       // Lay-bys are saved with mode: 'fixed', so they still total correctly
       // and sit in the Fixed expenses section above. This only swaps the
@@ -333,7 +342,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         displayIconClass = 'evt'
         chips = [['evt', 'lay-by']]
         act = null
- 
+
         const layby = rawLayBys.find((l: any) => l.id === exp.lay_by_id)
         const sortedVersions = [...(exp.expense_amount_versions ?? [])]
           .sort((a: any, b: any) => a.effective_from < b.effective_from ? -1 : 1)
@@ -345,10 +354,10 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           .slice(0, idx >= 0 ? idx + 1 : sortedVersions.length)
           .reduce((s: number, sv: any) => s + sv.amount_cents, 0)
         const remainingCents = Math.max(0, (layby?.target_amount_cents ?? 0) - paidThroughCents)
- 
+
         detail = `Payment ${paymentNumber} of ${totalPayments} · ${fmt(remainingCents, false)} left`
       }
- 
+
       cards.push({
         name: exp.name, icon, iconClass, displayIconClass, iconSvg, chips, detail,
         value: '−' + fmt(total, false), valueClass: '', totalCents: total,
@@ -361,7 +370,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     }
     return cards
   }
- 
+
   // close ritual data
   const varExpensesInCycle = rawExpenses
     .filter(e => e.mode === 'variable')
@@ -372,7 +381,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       return { id: exp.id, name: exp.name, estimatedCents: (v?.amount_cents ?? 0) * occs.length }
     })
     .filter(Boolean) as { id: string, name: string, estimatedCents: number }[]
- 
+
   const incomeInCycle = rawIncome
     .filter(s => !s.is_potential)
     .map(src => {
@@ -382,12 +391,12 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       return { id: src.id, name: src.name, expectedCents: (v?.amount_cents ?? 0) * occs.length }
     })
     .filter(Boolean) as { id: string, name: string, expectedCents: number }[]
- 
+
   const confirmedVarTotalCents = varExpensesInCycle.reduce((sum, e) =>
     sum + Math.round(parseFloat(closeVarActuals[e.id] || '0') * 100), 0)
   const closeRealCents   = Math.round(parseFloat(closeRealBalance || '0') * 100)
   const unaccountedCents = closeRealCents > 0 ? closeRealCents - activeCycle.committedClosingBalanceCents : 0
- 
+
   // ── lay-by derived preview values ──────────────────────────────────
   const laybyTotalCents     = Math.round(parseFloat(laybyTotal || '0') * 100)
   const laybyCountNum       = parseInt(laybyPayments || '0', 10) || 0
@@ -395,7 +404,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const laybyPerPaymentCents= laybyCountNum > 0 ? Math.floor(laybyTotalCents / laybyCountNum) : 0
   const laybyRemainderCents = laybyTotalCents - laybyPerPaymentCents * laybyCountNum
   const laybyEndDate        = laybyDates[laybyDates.length - 1]
- 
+
   // ── overlay handlers ──────────────────────────────────────────────
   function openEdit(cd: any) {
     setEditCard(cd); setEditScope(null); setEditStep(0)
@@ -415,7 +424,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     setCloseVarActuals(initVars); setCloseIncomeActuals(initIncome)
     setCloseRealBalance(''); setCloseStep(0); setCloseOpen(true)
   }
- 
+
   // ── add-to-cycle handlers ──────────────────────────────────────────
   function openAddToCycle() {
     setAddType(null); setAddStep(0)
@@ -463,7 +472,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     setLaybySaving(true); setAddError('')
     try {
       const lastPaymentCents = laybyPerPaymentCents + laybyRemainderCents
- 
+
       const { data: layby, error: e1 } = await supabase
         .from('lay_bys')
         .insert({
@@ -476,7 +485,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         })
         .select().single()
       if (e1) throw e1
- 
+
       const { data: exp, error: e2 } = await supabase
         .from('expenses')
         .insert({
@@ -490,7 +499,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         })
         .select().single()
       if (e2) throw e2
- 
+
       const versionRows = laybyDates.map((date, i) => ({
         expense_id: exp.id,
         amount_cents: i === laybyDates.length - 1 ? lastPaymentCents : laybyPerPaymentCents,
@@ -498,13 +507,13 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       }))
       const { error: e3 } = await supabase.from('expense_amount_versions').insert(versionRows)
       if (e3) throw e3
- 
+
       setLaybyResult({ name: laybyName.trim(), totalCents: laybyTotalCents, perPaymentCents: laybyPerPaymentCents, count: laybyCountNum, endDate: laybyEndDate })
       setAddStep(2)
     } catch (e: any) { setAddError(e.message) }
     finally { setLaybySaving(false) }
   }
- 
+
   // ── SAVE: edit scope overlay ──────────────────────────────────────
   async function applyEdit() {
     if (!editScope || !editAmountCents) return
@@ -517,7 +526,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         effective_from: activeCycle.startDate,
       })
       if (e1) throw e1
- 
+
       if (editScope === 'occurrence') {
         // Revert to original at next cycle start
         const nextStart = cycles[activeIdx + 1]?.startDate ?? addOneDay(activeCycle.endDate)
@@ -528,7 +537,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         })
         if (e2) throw e2
       }
- 
+
       setEditCard(null); reload()
     } catch (e: any) { setEditError(e.message) }
     finally { setEditSaving(false) }
@@ -551,7 +560,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         // Soft-fail — the cycle row may be virtual (engine-projected, not in DB yet)
         if (error) console.warn('actual insert failed:', error.message)
       }
- 
+
       // 2. Freeze the current cycle (if it exists in DB)
       if (activeCycle.id) {
         const { error: e1 } = await supabase.from('cycles')
@@ -563,7 +572,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           .eq('id', activeCycle.id)
         if (e1) throw e1
       }
- 
+
       // 3. Create the next cycle with the real balance as opening
       const nextStart = addOneDay(activeCycle.endDate)
       const nextEndDate = new Date(nextStart + 'T00:00:00')
@@ -572,7 +581,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       else if (freq === 'fortnightly') nextEndDate.setDate(nextEndDate.getDate() + 13)
       else if (freq === 'monthly')   { nextEndDate.setMonth(nextEndDate.getMonth() + 1); nextEndDate.setDate(nextEndDate.getDate() - 1) }
       else                           { nextEndDate.setFullYear(nextEndDate.getFullYear() + 1); nextEndDate.setDate(nextEndDate.getDate() - 1) }
- 
+
       const { error: e2 } = await supabase.from('cycles').insert({
         profile_id: userId,
         start_date: nextStart,
@@ -582,7 +591,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         is_closed: false,
       })
       if (e2) throw e2
- 
+
       // 4. Show success, then reload
       setCloseFrozen(true)
       setTimeout(() => {
@@ -609,7 +618,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         effective_from: activeCycle.startDate,
       })
       if (e1) throw e1
- 
+
       // Revert to estimate at next cycle start
       const nextStart = cycles[activeIdx + 1]?.startDate ?? addOneDay(activeCycle.endDate)
       const { error: e2 } = await supabase.from('expense_amount_versions').insert({
@@ -618,12 +627,52 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         effective_from: nextStart,
       })
       if (e2) throw e2
- 
+
       setVarCard(null); reload()
     } catch (e: any) { setVarError(e.message) }
     finally { setVarSaving(false) }
   }
- 
+
+  // ── budget tracking handlers ───────────────────────────────────────
+  function entriesForExpenseInCycle(expenseId: string) {
+    return rawBudgetEntries.filter(e =>
+      e.expense_id === expenseId &&
+      e.spent_date >= activeCycle.startDate &&
+      e.spent_date <= activeCycle.endDate
+    )
+  }
+  function toggleQuickAdd(expenseId: string) {
+    setOpenQuickAdd(prev => prev === expenseId ? null : expenseId)
+    setQuickAddAmount('')
+  }
+  async function saveQuickAdd(expenseId: string) {
+    const cents = Math.round(parseFloat(quickAddAmount || '0') * 100)
+    if (!cents) return
+    try {
+      await addBudgetSpendEntry(userId, expenseId, cents, 'Quick add', today())
+      setOpenQuickAdd(null); setQuickAddAmount(''); reload()
+    } catch (e: any) { alert('Could not log spend: ' + e.message) }
+  }
+  function openLog(cd: any) { setLogItem(cd); setEditingEntryId(null) }
+  function closeLog() { setLogItem(null); setEditingEntryId(null) }
+  function startEditEntry(entry: any) {
+    setEditingEntryId(entry.id)
+    setEditEntryAmount(String(entry.amount_cents / 100))
+    setEditEntryLabel(entry.label)
+  }
+  async function saveEditEntry(entry: any) {
+    const cents = Math.round(parseFloat(editEntryAmount || '0') * 100)
+    if (!cents) return
+    try {
+      await updateBudgetSpendEntry(entry.id, cents, editEntryLabel)
+      setEditingEntryId(null); reload()
+    } catch (e: any) { alert('Could not update entry: ' + e.message) }
+  }
+  async function deleteEntry(entry: any) {
+    try { await deleteBudgetSpendEntry(entry.id); reload() }
+    catch (e: any) { alert('Could not delete entry: ' + e.message) }
+  }
+
   const cards        = buildCards()
   const incomeCards  = cards.filter(c => c.iconClass === 'inc' || c.iconClass === 'pot')
   const fixedCards   = cards.filter(c => c.iconClass === 'fix')
@@ -638,12 +687,12 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const heroCentsVal = Math.abs(openingCents % 100)
   const editAmountCents = Math.round(parseFloat(editAmount || '0') * 100)
   const varAmountCents  = Math.round(parseFloat(varAmount  || '0') * 100)
- 
+
   // ── render ────────────────────────────────────────────────────────
   return (
     <>
       <div className="scrollarea">
- 
+
         {variant === 'cycle' && (
           <div className="hero">
             <div className="k">Balance today · {fmtDate(today())}</div>
@@ -654,7 +703,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
             </div>
           </div>
         )}
- 
+
         {variant === 'forecast' && (
         <>
         <div className="graphwrap">
@@ -704,7 +753,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
             })}
           </svg>
         </div>
- 
+
         <div className="pills" ref={pillsRef}>
           {cycles.map((c, i) => {
             const s = cycleStatus(i)
@@ -722,7 +771,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         </div>
         </>
         )}
- 
+
         <div className="cyc">
           <div className="cyc-h">
             <div className="ttl">{fmtDate(activeCycle.startDate)} – {fmtDate(activeCycle.endDate)}</div>
@@ -748,7 +797,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
             </div>
           )}
         </div>
- 
+
         <div className="cards">
           {incomeCards.map((cd, i) => (
             <div key={'inc'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
@@ -762,7 +811,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
             </div>
           ))}
         </div>
- 
+
         {fixedCards.length > 0 && (
           <>
             <div className="section-hdr sh-fix"><span className="sh-label">Fixed expenses</span><span className="sh-total">−{fmt(fixedTotalCents, false)}</span></div>
@@ -781,7 +830,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
             </div>
           </>
         )}
- 
+
         {varCards.length > 0 && (
           <>
             <div className="section-hdr sh-var"><span className="sh-label">Estimates</span><span className="sh-total">−{fmt(varTotalCents, false)}</span></div>
@@ -800,43 +849,65 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
             </div>
           </>
         )}
- 
+
         {budgetCards.length > 0 && (
           <>
             <div className="section-hdr sh-bud"><span className="sh-label">Budget</span><span className="sh-total">−{fmt(budgetTotalCents, false)}</span></div>
             <div className="cards">
-              {budgetCards.map((cd, i) => (
-                <div key={'bud'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
-                  <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
-                  <div className="tx">
-                    <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
-                    <div className="dt">{cd.detail}</div>
-                    <div className="act-row" />
+              {budgetCards.map((cd, i) => {
+                const entries = entriesForExpenseInCycle(cd.expenseId)
+                const spent = entries.reduce((s, e) => s + e.amount_cents, 0)
+                const rawPct = cd.totalCents > 0 ? Math.round((spent / cd.totalCents) * 100) : 0
+                const pct = Math.min(100, rawPct)
+                const barState = rawPct >= 100 ? 'over' : rawPct >= 80 ? 'warn' : ''
+                const quickAddOpen = openQuickAdd === cd.expenseId
+                return (
+                  <div key={'bud'+i} className="budg-card">
+                    <div className="budg-top" onClick={() => openLog(cd)}>
+                      <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
+                      <div className="budg-tx">
+                        <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
+                        <div className="budg-sofar"><b>{fmt(spent, false)}</b> of {fmt(cd.totalCents, false)}</div>
+                        <div className="budg-barwrap"><div className={`budg-bar ${barState}`} style={{ width: pct + '%' }} /></div>
+                      </div>
+                      <button className={`budg-plus${quickAddOpen ? ' on' : ''}`} onClick={e => { e.stopPropagation(); toggleQuickAdd(cd.expenseId) }}>{quickAddOpen ? '×' : '+'}</button>
+                    </div>
+                    <div className={`budg-quickadd${quickAddOpen ? ' on' : ''}`}>
+                      <div className="budg-qa-inner">
+                        <span className="pre">$</span>
+                        <input
+                          type="number" inputMode="decimal" placeholder="0.00"
+                          value={quickAddAmount} onChange={e => setQuickAddAmount(e.target.value)}
+                          onClick={e => e.stopPropagation()}
+                          onKeyDown={e => { if (e.key === 'Enter') saveQuickAdd(cd.expenseId) }}
+                        />
+                        <button className="budg-qa-save" onClick={e => { e.stopPropagation(); saveQuickAdd(cd.expenseId) }}>Add</button>
+                      </div>
+                    </div>
                   </div>
-                  <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </>
         )}
- 
+
         {status !== 'past' && (
           <div style={{ padding:'14px 16px 0' }}>
             <button className="addbtn" onClick={openAddToCycle}>+ Add to this cycle</button>
           </div>
         )}
- 
+
         {status === 'now' && (
           <>
             <button className="closebtn" onClick={openClose}>Close this cycle →</button>
             <div className="closehint">Confirms the real balance that becomes next cycle's opening.</div>
           </>
         )}
- 
- 
- 
+
+
+
       </div>
- 
+
       {/* ═══════════════════════════════════════════════════════════
           OVERLAY 1 — Edit scope + amount (2-step, now saves to DB)
           ═══════════════════════════════════════════════════════════ */}
@@ -845,7 +916,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           <div className="sheet" onClick={e => e.stopPropagation()}>
             <button className="xbtn" onClick={() => setEditCard(null)}>×</button>
             <div className="grab" />
- 
+
             {editStep === 0 && <>
               <h3>Change {editCard.name.toLowerCase()}</h3>
               <p className="sd">When should the new amount apply?</p>
@@ -867,7 +938,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                 </button>
               </div>
             </>}
- 
+
             {editStep === 1 && <>
               <h3>New amount</h3>
               <p className="sd">
@@ -897,7 +968,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           </div>
         </div>
       )}
- 
+
       {/* ═══════════════════════════════════════════════════════════
           OVERLAY 2 — Confirm variable (now saves to DB)
           ═══════════════════════════════════════════════════════════ */}
@@ -932,7 +1003,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           </div>
         </div>
       )}
- 
+
       {/* ═══════════════════════════════════════════════════════════
           OVERLAY 3 — Close ritual (UI complete, DB write pending)
           ═══════════════════════════════════════════════════════════ */}
@@ -944,7 +1015,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
             <div className="steps">
               {[0,1,2,3].map(i => <div key={i} className={`s${i <= closeStep ? ' done' : ''}`} />)}
             </div>
- 
+
             {closeStep === 0 && <>
               <h3>Confirm what varied</h3>
               <p className="sd">Only the items estimated in advance — enter what actually arrived.</p>
@@ -965,7 +1036,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
               }
               <div className="skipnote"><b>Budget items skipped on purpose.</b> The real balance is the check.</div>
             </>}
- 
+
             {closeStep === 1 && <>
               <h3>Did income land?</h3>
               <p className="sd">Confirm the expected deposits — adjust if anything differed.</p>
@@ -986,7 +1057,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
               }
               <div className="skipnote"><b>Bonus or windfall?</b> Add it here — that's where a potential item becomes real.</div>
             </>}
- 
+
             {closeStep === 2 && <>
               <h3>Your real balance</h3>
               <p className="sd">Whatever your bank says wins — it becomes next cycle's opening balance.</p>
@@ -1001,7 +1072,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                 <p className="hint">We projected {fmt(activeCycle.committedClosingBalanceCents, false)}.</p>
               </div>
             </>}
- 
+
             {closeStep === 3 && <>
               <h3>Reconcile & close</h3>
               <p className="sd">The gap between forecast and reality.</p>
@@ -1018,7 +1089,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                   : 'Closing below forecast — spent a little more than projected.'}
               </div>
             </>}
- 
+
             {closeFrozen
               ? (
                 <div style={{
@@ -1048,7 +1119,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           </div>
         </div>
       )}
- 
+
       {/* ═══════════════════════════════════════════════════════════
           OVERLAY 4 — Add to this cycle (type picker → one-off / income-stub / layby form)
           ═══════════════════════════════════════════════════════════ */}
@@ -1057,11 +1128,11 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           <div className="sheet" onClick={e => e.stopPropagation()}>
             <button className="xbtn" onClick={closeAddSheet}>×</button>
             <div className="grab" />
- 
+
             {addStep === 0 && <>
               <h3>Add to this cycle</h3>
               <p className="sd">{fmtDate(activeCycle.startDate)} – {fmtDate(activeCycle.endDate)}. Pick the kind of thing — the form adapts.</p>
- 
+
               <div className="typeopt" onClick={() => selectAddType('oneoff')}>
                 <div className="ti ic fix">−</div>
                 <div className="tx2"><div className="tt2">One-off expense</div><div className="ts2">A single cost on a date.</div></div>
@@ -1075,18 +1146,18 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                 <div className="tx2"><div className="tt2">Lay-by or instalment</div><div className="ts2">A fixed total, paid off over time. Self-retires when done.</div></div>
               </div>
             </>}
- 
+
             {addStep === 1 && addType === 'oneoff' && <>
               <h3>One-off expense</h3>
               <p className="sd">A single cost on a date — doesn't repeat.</p>
- 
+
               <div className="field">
                 <label>What's it for?</label>
                 <div className="inrow">
                   <input type="text" value={oneoffName} onChange={e => setOneoffName(e.target.value)} placeholder="e.g. Car registration" />
                 </div>
               </div>
- 
+
               <div className="field">
                 <label>Amount</label>
                 <div className="inrow">
@@ -1094,7 +1165,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                   <input type="number" inputMode="decimal" value={oneoffAmount} onChange={e => setOneoffAmount(e.target.value)} placeholder="0" />
                 </div>
               </div>
- 
+
               <div className="field">
                 <label>Date</label>
                 <div className="inrow">
@@ -1105,9 +1176,9 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                 </div>
                 <p className="hint">Defaults to the start of this cycle — change it if it actually falls in a different one.</p>
               </div>
- 
+
               {addError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:10 }}>{addError}</p>}
- 
+
               <div className="navrow">
                 <button onClick={() => setAddStep(0)}>Back</button>
                 <button
@@ -1119,7 +1190,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                 </button>
               </div>
             </>}
- 
+
             {addStep === 1 && addType === 'income' && <>
               <h3>Money coming in</h3>
               <p className="sd">Coming soon — not wired up yet.</p>
@@ -1128,18 +1199,18 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                 <button onClick={() => setAddStep(0)}>Back</button>
               </div>
             </>}
- 
+
             {addStep === 1 && addType === 'layby' && <>
               <h3>Lay-by or instalment</h3>
               <p className="sd">A fixed total, split into equal payments. Stops itself once paid off.</p>
- 
+
               <div className="field">
                 <label>What's it for?</label>
                 <div className="inrow">
                   <input type="text" value={laybyName} onChange={e => setLaybyName(e.target.value)} placeholder="e.g. Winter coat" />
                 </div>
               </div>
- 
+
               <div className="field">
                 <label>Total</label>
                 <div className="inrow">
@@ -1147,7 +1218,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                   <input type="number" inputMode="decimal" value={laybyTotal} onChange={e => setLaybyTotal(e.target.value)} placeholder="0" />
                 </div>
               </div>
- 
+
               <div className="field">
                 <label>Pay every</label>
                 <div className="freq-picker">
@@ -1162,14 +1233,14 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                   ))}
                 </div>
               </div>
- 
+
               <div className="field">
                 <label>Payments</label>
                 <div className="inrow">
                   <input type="number" inputMode="numeric" value={laybyPayments} onChange={e => setLaybyPayments(e.target.value)} placeholder="4" />
                 </div>
               </div>
- 
+
               <div className="field">
                 <label>First payment</label>
                 <div className="inrow">
@@ -1179,7 +1250,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                   />
                 </div>
               </div>
- 
+
               {laybyCountNum > 0 && laybyTotalCents > 0 && laybyFirstDate && (
                 <div className="skipnote">
                   <b>{fmt(laybyPerPaymentCents, false)}</b> per payment × {laybyCountNum}
@@ -1187,9 +1258,9 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                   <br />First payment {fmtDate(laybyDates[0])} · last payment {fmtDate(laybyEndDate)}
                 </div>
               )}
- 
+
               {addError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:10 }}>{addError}</p>}
- 
+
               <div className="navrow">
                 <button onClick={() => setAddStep(0)}>Back</button>
                 <button
@@ -1201,7 +1272,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                 </button>
               </div>
             </>}
- 
+
             {addStep === 2 && addType === 'layby' && laybyResult && <>
               <h3>Lay-by added</h3>
               <p className="sd">{laybyResult.name} is now tracked across {laybyResult.count} cycles.</p>
@@ -1218,8 +1289,47 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           </div>
         </div>
       )}
- 
+
+      {/* ═══════════════════════════════════════════════════════════
+          OVERLAY 5 — Budget spend log (tap a budget card to open)
+          ═══════════════════════════════════════════════════════════ */}
+      {logItem && (
+        <div className="ov" onClick={closeLog}>
+          <div className="sheet" onClick={e => e.stopPropagation()}>
+            <button className="xbtn" onClick={closeLog}>×</button>
+            <div className="grab" />
+            <h3>{logItem.name}</h3>
+            <p className="sd">This cycle · {fmtDate(activeCycle.startDate)} – {fmtDate(activeCycle.endDate)}</p>
+
+            {entriesForExpenseInCycle(logItem.expenseId).length === 0 ? (
+              <div className="skipnote">No spend logged yet this cycle.</div>
+            ) : (
+              entriesForExpenseInCycle(logItem.expenseId).map((entry: any) =>
+                editingEntryId === entry.id ? (
+                  <div key={entry.id} className="entry-row">
+                    <input className="entry-edit-label" value={editEntryLabel} onChange={e => setEditEntryLabel(e.target.value)} />
+                    <input className="entry-edit-amount" type="number" inputMode="decimal" value={editEntryAmount} onChange={e => setEditEntryAmount(e.target.value)} />
+                    <span className="entry-save" onClick={() => saveEditEntry(entry)}>save</span>
+                  </div>
+                ) : (
+                  <div key={entry.id} className="entry-row">
+                    <div className="entry-date">{fmtDate(entry.spent_date)}</div>
+                    <div className="entry-label" onClick={() => startEditEntry(entry)}>{entry.label}</div>
+                    <div className="entry-amount" onClick={() => startEditEntry(entry)}>{fmt(entry.amount_cents, false)}</div>
+                    <span className="entry-del" onClick={() => deleteEntry(entry)}>✕</span>
+                  </div>
+                )
+              )
+            )}
+
+            <div className="recline" style={{ marginTop: 4 }}>
+              <span>Total logged</span>
+              <b>{fmt(entriesForExpenseInCycle(logItem.expenseId).reduce((s: number, e: any) => s + e.amount_cents, 0), false)}</b>
+            </div>
+          </div>
+        </div>
+      )}
+
     </>
   )
 }
- 

@@ -6,6 +6,7 @@ import SetupPage from './SetupPage'
 import Dashboard from './Dashboard'
 import ExpensesPage from './ExpensesPage'
 import AppShell, { type Page } from './AppShell'
+import WishlistPage from './WishlistPage'
 
 export default function App() {
   const [userId,      setUserId]      = useState<string | null>(null)
@@ -64,9 +65,7 @@ export default function App() {
         <Dashboard key={'forecast-' + dataVersion} userId={userId} variant="forecast" />
       )}
       {page === 'wishlist' && (
-        <div className="scrollarea" style={{ padding: 24 }}>
-          <p style={{ color: 'var(--mut)' }}>Wishlist — coming soon.</p>
-        </div>
+        <WishlistPage userId={userId} />
       )}
       {page === 'settings' && (
         <div className="scrollarea" style={{ padding: 24 }}>
