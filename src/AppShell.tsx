@@ -10,14 +10,30 @@ interface AppShellProps {
   children: ReactNode
 }
 
+// Inline SVG for the Forecast icon — replaces the ↗ character which
+// iOS was rendering as a blue emoji regardless of styling. Uses
+// stroke="currentColor" so it inherits nav-item / drawer-item colour
+// (muted grey → accent purple when active) exactly like the text did.
+function ForecastIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg
+      width={size} height={size} viewBox="0 0 24 24"
+      fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M7 17 L17 7" />
+      <path d="M9 7 L17 7 L17 15" />
+    </svg>
+  )
+}
+
 export default function AppShell({ active, onNavigate, darkMode, onToggleDark, children }: AppShellProps) {
   const [drawerOpen, setDrawerOpen] = useState(false)
-
   function go(page: Page) {
     onNavigate(page)
     setDrawerOpen(false)
   }
-
   return (
     <div className="app">
       <div className="appbar">
@@ -28,42 +44,34 @@ export default function AppShell({ active, onNavigate, darkMode, onToggleDark, c
           <span className="lab">{darkMode ? 'LIGHT' : 'DARK'}</span>
         </button>
       </div>
-
       {children}
-
       <div className="bottom-nav">
         <button className={`nav-item${active === 'cycle' ? ' active' : ''}`} onClick={() => go('cycle')}>
           <span className="nav-icon">◎</span>Cycle
         </button>
         <button className={`nav-item${active === 'forecast' ? ' active' : ''}`} onClick={() => go('forecast')}>
-          <span className="nav-icon">↗</span>Forecast
+          <span className="nav-icon"><ForecastIcon size={18} /></span>Forecast
         </button>
       </div>
-
       {drawerOpen && (
         <div className="drawer" onClick={e => { if (e.target === e.currentTarget) setDrawerOpen(false) }}>
           <div className="panel">
             <div className="pnm">Pocket<b>Pilot</b></div>
             <div className="psub">Menu</div>
-
             <div className={`drawer-item${active === 'cycle' ? ' active' : ''}`} onClick={() => go('cycle')}>
               <div className="di cyc">◎</div><div className="dt">Cycle</div>
             </div>
             <div className={`drawer-item${active === 'forecast' ? ' active' : ''}`} onClick={() => go('forecast')}>
-              <div className="di fc">↗</div><div className="dt">Forecast</div>
+              <div className="di fc"><ForecastIcon size={15} /></div><div className="dt">Forecast</div>
             </div>
-
             <div className="drawer-div" />
-
             <div className={`drawer-item${active === 'expenses' ? ' active' : ''}`} onClick={() => go('expenses')}>
               <div className="di exp">▤</div><div className="dt">Expenses</div>
             </div>
             <div className={`drawer-item${active === 'wishlist' ? ' active' : ''}`} onClick={() => go('wishlist')}>
               <div className="di wish">☆</div><div className="dt">Wishlist</div>
             </div>
-
             <div className="drawer-div" />
-
             <div className={`drawer-item${active === 'settings' ? ' active' : ''}`} onClick={() => go('settings')}>
               <div className="di set">⚙</div><div className="dt">Settings</div>
             </div>

@@ -130,6 +130,14 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const [editEntryAmount,  setEditEntryAmount]  = useState('')
   const [editEntryLabel,   setEditEntryLabel]   = useState('')
 
+  // ── accordion state: which card sections are expanded ─────────────
+  // All open by default — the dashboard is a glance surface; collapsing
+  // is a per-session convenience, not persisted.
+  const [openSecs, setOpenSecs] = useState<Record<string, boolean>>({
+    income: true, fixed: true, var: true, budget: true,
+  })
+  function toggleSec(k: string) { setOpenSecs(p => ({ ...p, [k]: !p[k] })) }
+
 
   // Reload whenever userId changes or reloadKey is bumped (after overlay saves)
   useEffect(() => {
@@ -298,6 +306,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         detail: occs.length === 1 ? `${fmtDate(occs[0])} · ${src.frequency}` : occs.map((o: string) => fmtDate(o)).join(', '),
         value: fmt(unitCents * occs.length, false),
         valueClass: src.is_potential ? 'pot' : 'pos',
+        totalCents: unitCents * occs.length,
         ghost: src.is_potential, dashed: false, act: null,
         expenseId: null, unitCents: 0, originalUnitCents: 0,
       })
@@ -332,9 +341,12 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       // Lay-bys are saved with mode: 'fixed', so they still total correctly
       // and sit in the Fixed expenses section above. This only swaps the
       // icon/chip colour and replaces the date-list detail with payment
-      // progress + remaining balance, matching the ExpensesPage treatment.
+      // progress + this cycle's payment date(s) + remaining balance.
+      // laybyPct drives the purple progress bar rendered inside the
+      // (otherwise empty) act-row, so the card height matches siblings.
       let displayIconClass = iconClass
       let iconSvg = exp.icon || guessIcon(exp.name)
+      let laybyPct: number | null = null
       const isLayby = !!exp.lay_by_id
       if (isLayby) {
         icon = '◫'
@@ -353,9 +365,23 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         const paidThroughCents = sortedVersions
           .slice(0, idx >= 0 ? idx + 1 : sortedVersions.length)
           .reduce((s: number, sv: any) => s + sv.amount_cents, 0)
-        const remainingCents = Math.max(0, (layby?.target_amount_cents ?? 0) - paidThroughCents)
+        const targetCents    = layby?.target_amount_cents ?? 0
+        const remainingCents = Math.max(0, targetCents - paidThroughCents)
 
-        detail = `Payment ${paymentNumber} of ${totalPayments} · ${fmt(remainingCents, false)} left`
+        // Which payment(s) land in this cycle — usually one, but a weekly
+        // lay-by inside a fortnightly cycle lands two.
+        const firstIdx = sortedVersions.findIndex((sv: any) => sv.effective_from === occs[0])
+        const paymentLabel = occs.length > 1 && firstIdx >= 0
+          ? `Payments ${firstIdx + 1}–${paymentNumber} of ${totalPayments}`
+          : `Payment ${paymentNumber} of ${totalPayments}`
+        const dateStr = occs.map((o: string) => fmtDate(o)).join(', ')
+
+        detail = `${paymentLabel} · ${dateStr} · ${fmt(remainingCents, false)} left`
+        // Progress through the lay-by *after* this cycle's payment(s) —
+        // consistent with the "$X left" figure on the same line.
+        laybyPct = targetCents > 0
+          ? Math.min(100, Math.round((paidThroughCents / targetCents) * 100))
+          : 0
       }
 
       cards.push({
@@ -363,6 +389,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         value: '−' + fmt(total, false), valueClass: '', totalCents: total,
         ghost: false, dashed: mode === 'variable', act,
         expenseId: exp.id,
+        laybyPct,
         unitCents,           // current per-occurrence amount for this cycle
         originalUnitCents: unitCents,  // what to revert to after a one-off override
         estimatedCents: unitCents,
@@ -678,6 +705,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const fixedCards   = cards.filter(c => c.iconClass === 'fix')
   const varCards     = cards.filter(c => c.iconClass === 'var')
   const budgetCards  = cards.filter(c => c.iconClass === 'base')
+  const incomeTotalCents = incomeCards.filter(c => !c.ghost).reduce((s, c) => s + (c.totalCents ?? 0), 0)
   const fixedTotalCents  = fixedCards.reduce((s, c) => s + (c.totalCents ?? 0), 0)
   const varTotalCents    = varCards.reduce((s, c) => s + (c.totalCents ?? 0), 0)
   const budgetTotalCents = budgetCards.reduce((s, c) => s + (c.totalCents ?? 0), 0)
@@ -798,96 +826,140 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           )}
         </div>
 
-        <div className="cards">
-          {incomeCards.map((cd, i) => (
-            <div key={'inc'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
-              <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
-              <div className="tx">
-                <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
-                <div className="dt">{cd.detail}</div>
-                <div className="act-row">{cd.act === 'edit' && <span className="act" onClick={() => openEdit(cd)}>edit →</span>}{cd.act === 'var' && <span className="act" onClick={() => openVar(cd)}>confirm →</span>}</div>
-              </div>
-              <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
+        {incomeCards.length > 0 && (
+          <>
+            <div className="section-hdr sh-inc tappable" onClick={() => toggleSec('income')}>
+              <span className="sh-label">Money in</span>
+              <span className="sh-right">
+                <span className="sh-total">+{fmt(incomeTotalCents, false)}</span>
+                <span className={`chv${openSecs.income ? ' up' : ''}`}>▾</span>
+              </span>
             </div>
-          ))}
-        </div>
+            {openSecs.income && (
+              <div className="cards">
+                {incomeCards.map((cd, i) => (
+                  <div key={'inc'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
+                    <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
+                    <div className="tx">
+                      <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
+                      <div className="dt">{cd.detail}</div>
+                      <div className="act-row">{cd.act === 'edit' && <span className="act" onClick={() => openEdit(cd)}>edit →</span>}{cd.act === 'var' && <span className="act" onClick={() => openVar(cd)}>confirm →</span>}</div>
+                    </div>
+                    <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
 
         {fixedCards.length > 0 && (
           <>
-            <div className="section-hdr sh-fix"><span className="sh-label">Fixed expenses</span><span className="sh-total">−{fmt(fixedTotalCents, false)}</span></div>
-            <div className="cards">
-              {fixedCards.map((cd, i) => (
-                <div key={'fix'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
-                  <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
-                  <div className="tx">
-                    <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
-                    <div className="dt">{cd.detail}</div>
-                    <div className="act-row">{cd.act === 'edit' && <span className="act" onClick={() => openEdit(cd)}>edit →</span>}</div>
-                  </div>
-                  <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
-                </div>
-              ))}
+            <div className="section-hdr sh-fix tappable" onClick={() => toggleSec('fixed')}>
+              <span className="sh-label">Fixed expenses</span>
+              <span className="sh-right">
+                <span className="sh-total">−{fmt(fixedTotalCents, false)}</span>
+                <span className={`chv${openSecs.fixed ? ' up' : ''}`}>▾</span>
+              </span>
             </div>
+            {openSecs.fixed && (
+              <div className="cards">
+                {fixedCards.map((cd, i) => (
+                  <div key={'fix'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
+                    <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
+                    <div className="tx">
+                      <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
+                      <div className="dt">{cd.detail}</div>
+                      <div className="act-row">
+                        {cd.act === 'edit' && <span className="act" onClick={() => openEdit(cd)}>edit →</span>}
+                        {cd.laybyPct != null && (
+                          <div className="exp-prog" style={{ flex: 1, marginTop: 0 }}>
+                            <div className="fill" style={{ width: cd.laybyPct + '%', background: 'var(--event)' }} />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </>
         )}
 
         {varCards.length > 0 && (
           <>
-            <div className="section-hdr sh-var"><span className="sh-label">Estimates</span><span className="sh-total">−{fmt(varTotalCents, false)}</span></div>
-            <div className="cards">
-              {varCards.map((cd, i) => (
-                <div key={'var'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
-                  <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
-                  <div className="tx">
-                    <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
-                    <div className="dt">{cd.detail}</div>
-                    <div className="act-row">{cd.act === 'var' && <span className="act" onClick={() => openVar(cd)}>confirm →</span>}</div>
-                  </div>
-                  <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
-                </div>
-              ))}
+            <div className="section-hdr sh-var tappable" onClick={() => toggleSec('var')}>
+              <span className="sh-label">Estimates</span>
+              <span className="sh-right">
+                <span className="sh-total">−{fmt(varTotalCents, false)}</span>
+                <span className={`chv${openSecs.var ? ' up' : ''}`}>▾</span>
+              </span>
             </div>
+            {openSecs.var && (
+              <div className="cards">
+                {varCards.map((cd, i) => (
+                  <div key={'var'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
+                    <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
+                    <div className="tx">
+                      <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
+                      <div className="dt">{cd.detail}</div>
+                      <div className="act-row">{cd.act === 'var' && <span className="act" onClick={() => openVar(cd)}>confirm →</span>}</div>
+                    </div>
+                    <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </>
         )}
 
         {budgetCards.length > 0 && (
           <>
-            <div className="section-hdr sh-bud"><span className="sh-label">Budget</span><span className="sh-total">−{fmt(budgetTotalCents, false)}</span></div>
-            <div className="cards">
-              {budgetCards.map((cd, i) => {
-                const entries = entriesForExpenseInCycle(cd.expenseId)
-                const spent = entries.reduce((s, e) => s + e.amount_cents, 0)
-                const rawPct = cd.totalCents > 0 ? Math.round((spent / cd.totalCents) * 100) : 0
-                const pct = Math.min(100, rawPct)
-                const barState = rawPct >= 100 ? 'over' : rawPct >= 80 ? 'warn' : ''
-                const quickAddOpen = openQuickAdd === cd.expenseId
-                return (
-                  <div key={'bud'+i} className="budg-card">
-                    <div className="budg-top" onClick={() => openLog(cd)}>
-                      <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
-                      <div className="budg-tx">
-                        <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
-                        <div className="budg-sofar"><b>{fmt(spent, false)}</b> of {fmt(cd.totalCents, false)}</div>
-                        <div className="budg-barwrap"><div className={`budg-bar ${barState}`} style={{ width: pct + '%' }} /></div>
-                      </div>
-                      <button className={`budg-plus${quickAddOpen ? ' on' : ''}`} onClick={e => { e.stopPropagation(); toggleQuickAdd(cd.expenseId) }}>{quickAddOpen ? '×' : '+'}</button>
-                    </div>
-                    <div className={`budg-quickadd${quickAddOpen ? ' on' : ''}`}>
-                      <div className="budg-qa-inner">
-                        <span className="pre">$</span>
-                        <input
-                          type="number" inputMode="decimal" placeholder="0.00"
-                          value={quickAddAmount} onChange={e => setQuickAddAmount(e.target.value)}
-                          onClick={e => e.stopPropagation()}
-                          onKeyDown={e => { if (e.key === 'Enter') saveQuickAdd(cd.expenseId) }}
-                        />
-                        <button className="budg-qa-save" onClick={e => { e.stopPropagation(); saveQuickAdd(cd.expenseId) }}>Add</button>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
+            <div className="section-hdr sh-bud tappable" onClick={() => toggleSec('budget')}>
+              <span className="sh-label">Budget</span>
+              <span className="sh-right">
+                <span className="sh-total">−{fmt(budgetTotalCents, false)}</span>
+                <span className={`chv${openSecs.budget ? ' up' : ''}`}>▾</span>
+              </span>
             </div>
+            {openSecs.budget && (
+              <div className="cards">
+                {budgetCards.map((cd, i) => {
+                  const entries = entriesForExpenseInCycle(cd.expenseId)
+                  const spent = entries.reduce((s, e) => s + e.amount_cents, 0)
+                  const rawPct = cd.totalCents > 0 ? Math.round((spent / cd.totalCents) * 100) : 0
+                  const pct = Math.min(100, rawPct)
+                  const barState = rawPct >= 100 ? 'over' : rawPct >= 80 ? 'warn' : ''
+                  const quickAddOpen = openQuickAdd === cd.expenseId
+                  return (
+                    <div key={'bud'+i} className="budg-card">
+                      <div className="budg-top" onClick={() => openLog(cd)}>
+                        <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
+                        <div className="budg-tx">
+                          <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
+                          <div className="budg-sofar"><b>{fmt(spent, false)}</b> of {fmt(cd.totalCents, false)}</div>
+                          <div className="budg-barwrap"><div className={`budg-bar ${barState}`} style={{ width: pct + '%' }} /></div>
+                        </div>
+                        <button className={`budg-plus${quickAddOpen ? ' on' : ''}`} onClick={e => { e.stopPropagation(); toggleQuickAdd(cd.expenseId) }}>{quickAddOpen ? '×' : '+'}</button>
+                      </div>
+                      <div className={`budg-quickadd${quickAddOpen ? ' on' : ''}`}>
+                        <div className="budg-qa-inner">
+                          <span className="pre">$</span>
+                          <input
+                            type="number" inputMode="decimal" placeholder="0.00"
+                            value={quickAddAmount} onChange={e => setQuickAddAmount(e.target.value)}
+                            onClick={e => e.stopPropagation()}
+                            onKeyDown={e => { if (e.key === 'Enter') saveQuickAdd(cd.expenseId) }}
+                          />
+                          <button className="budg-qa-save" onClick={e => { e.stopPropagation(); saveQuickAdd(cd.expenseId) }}>Add</button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </>
         )}
 

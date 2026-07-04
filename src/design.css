@@ -147,6 +147,24 @@ svg.proj { display:block; width:100%; height:152px; }
 .sh-fix .sh-label { color: var(--acc); }
 .sh-var .sh-label { color: var(--warn); }
 .sh-bud .sh-label { color: var(--mut); }
+.sh-inc .sh-label { color: var(--pos); }
+
+/* accordion behaviour on dashboard section headers:
+   whole header is tappable, chevron sits after the total */
+.section-hdr.tappable {
+  cursor: pointer;
+  align-items: center;
+  -webkit-tap-highlight-color: transparent;
+}
+.section-hdr .sh-right {
+  display: flex; align-items: center; gap: 7px;
+}
+.section-hdr .chv {
+  font-size: 12px; color: var(--mut);
+  transition: transform .2s ease;
+  display: inline-block; line-height: 1;
+}
+.section-hdr .chv.up { transform: rotate(180deg); }
 
 /* icon badge */
 .card .ic {
@@ -780,3 +798,112 @@ svg.proj { display:block; width:100%; height:152px; }
   line-height: 1.3;
   text-align: left;
 }
+
+/* budget cards use .budg-card instead of .card, so the .card .ic sizing
+   rule never matched either — the badge collapsed to content size and
+   pushed the text column out of alignment. This mirrors .card .ic. */
+.budg-card .ic {
+  width: 36px; height: 36px; border-radius: 10px;
+  display: grid; place-items: center;
+  font-size: 16px; font-weight: 700;
+  flex: 0 0 36px;
+}
+
+
+/* ── lay-by management sheet: stat tiles + payment strip ─────────── */
+
+/* four-tile header — key/value pairs above the strip */
+.lay-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.lay-stat {
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 9px;
+  min-width: 0;
+}
+.lay-stat-k {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8.5px; letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.lay-stat-v {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600; font-size: 14px;
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+
+/* strip wrapper */
+.lay-strip-wrap { margin-bottom: 6px; }
+.lay-strip-hdr {
+  display: flex; align-items: baseline; justify-content: space-between;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--mut);
+  margin-bottom: 8px;
+}
+.lay-strip-note { color: var(--faint); font-size: 9px; text-transform: none; letter-spacing: 0; }
+
+.lay-strip {
+  display: flex; gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+.lay-strip::-webkit-scrollbar { height: 0; }
+
+/* cell — fixed width so 10+ payments scroll horizontally */
+.lay-cell {
+  flex: 0 0 96px;
+  scroll-snap-align: start;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 9px 10px;
+  background: var(--bg2);
+  display: flex; flex-direction: column; gap: 3px;
+}
+
+.lay-cell-n {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; font-weight: 600;
+  color: var(--faint); letter-spacing: .06em;
+}
+.lay-cell-d {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px; font-weight: 600;
+  color: var(--ink);
+}
+.lay-cell-a {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600; font-size: 14px;
+  color: var(--event); margin-top: 3px;
+}
+.lay-cell-r {
+  font-size: 9.5px; color: var(--mut); margin-top: 2px;
+}
+
+/* state variants: past (dashed, muted), current (solid purple, brighter),
+   future (default border) */
+.lay-cell.past {
+  border-style: dashed;
+  opacity: .65;
+}
+.lay-cell.past .lay-cell-a { color: var(--mut); }
+.lay-cell.past .lay-cell-r { color: var(--pos); font-weight: 600; }
+
+.lay-cell.current {
+  border-color: var(--event);
+  background: var(--event-s);
+  box-shadow: 0 3px 12px -6px var(--event);
+}
+.lay-cell.current .lay-cell-n { color: var(--event); }
+
+.lay-cell.future { }
