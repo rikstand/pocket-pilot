@@ -23,6 +23,10 @@ function fmt(cents: number) {
   return '$' + (Math.abs(cents) / 100).toLocaleString('en-NZ', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 }
 
+function fmtDate(d: string) {
+  return new Date(d + 'T00:00:00').toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+}
+
 function toFn(cents: number, freq: string): number {
   if (freq === 'weekly')      return cents * 2
   if (freq === 'fortnightly') return cents
@@ -45,12 +49,16 @@ function cycleDetail(cents: number, freq: string, isEstimate: boolean): string {
   return `${raw}/${abbr} → ${norm}/fn`
 }
 
-export default function ExpensesPage({ userId, onBack }: { userId: string; onBack: () => void }) {
+// NOTE: onBack is kept in the props signature so parent wiring doesn't break,
+// but it's no longer wired to any button — navigation is handled by AppShell's
+// bottom nav / drawer, so the previous "← Dashboard" back button and the local
+// dark-mode toggle have both been removed to avoid duplicating the AppShell
+// appbar that now wraps every page.
+export default function ExpensesPage({ userId }: { userId: string; onBack?: () => void }) {
   const [expenses, setExpenses] = useState<any[]>([])
   const [layBys,   setLayBys]   = useState<any[]>([])
   const [loading,  setLoading]  = useState(true)
   const [saving,   setSaving]   = useState(false)
-  const [darkMode, setDarkMode] = useState(() => document.documentElement.getAttribute('data-theme') === 'dark')
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
@@ -66,10 +74,6 @@ export default function ExpensesPage({ userId, onBack }: { userId: string; onBac
   const [formError,  setFormError]  = useState('')
   const [laybyExp,   setLaybyExp]   = useState<any>(null)
   const [galOpen,    setGalOpen]    = useState(false)
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light')
-  }, [darkMode])
 
   useEffect(() => { load() }, [])
 
@@ -200,6 +204,45 @@ export default function ExpensesPage({ userId, onBack }: { userId: string; onBac
 
   const m = sheet ? MODE_META[mode] : MODE_META['fixed']
 
+  // ── lay-by sheet: build payment strip data ─────────────────────────
+  // Returns each scheduled payment as a cell with a state (past/current/future),
+  // a running remainder (target − cumulative paid through this cell), and a
+  // label. "past" = date ≤ today (scheduled, not verified-paid); "current" =
+  // date falls in a cycle spanning today; "future" = ahead. The last future
+  // cell gets "paid off" rather than "$0 left".
+  function buildLaybyCells(exp: any) {
+    if (!exp) return { cells: [], layby: null, target: 0, paidCents: 0, paidCount: 0, total: 0, endDate: '' as string | null }
+    const layby = layBys.find((l: any) => l.id === exp.lay_by_id)
+    const target = layby?.target_amount_cents ?? 0
+    const totalPayments = layby?.payments_total ?? 0
+    const todayStr = new Date().toISOString().split('T')[0]
+    const sorted = [...(exp.expense_amount_versions ?? [])]
+      .sort((a: any, b: any) => a.effective_from < b.effective_from ? -1 : 1)
+
+    let cumulative = 0
+    const cells = sorted.map((v: any, i: number) => {
+      cumulative += v.amount_cents
+      const remaining = Math.max(0, target - cumulative)
+      const isLast = i === sorted.length - 1
+      const state: 'past' | 'future' = v.effective_from <= todayStr ? 'past' : 'future'
+      return {
+        date: v.effective_from,
+        amountCents: v.amount_cents,
+        remainingCents: remaining,
+        state,
+        isLast,
+        paymentNumber: i + 1,
+      }
+    })
+
+    const paidCells = cells.filter(c => c.state === 'past')
+    const paidCents = paidCells.reduce((s, c) => s + c.amountCents, 0)
+    const endDate = sorted[sorted.length - 1]?.effective_from ?? null
+
+    return { cells, layby, target, paidCents, paidCount: paidCells.length, total: totalPayments, endDate }
+  }
+  const laybyView = buildLaybyCells(laybyExp)
+
   // ── render helpers ──────────────────────────────────────────────
   function renderRow(exp: any) {
     const cents    = latestCents(exp)
@@ -274,18 +317,11 @@ export default function ExpensesPage({ userId, onBack }: { userId: string; onBac
   ].filter(s => s.exps.length > 0)
 
   // ── render ────────────────────────────────────────────────────────
+  // NOTE: no more <div className="app"> wrapper or local appbar — AppShell
+  // provides both. This component returns a fragment; the scrollarea is the
+  // outermost element so the layout still works inside AppShell's flex column.
   return (
-    <div className="app">
-
-      <div className="appbar">
-        <button className="back-btn" onClick={onBack}>← Dashboard</button>
-        <div className="nm">Expenses</div>
-        <button className="tgl" onClick={() => setDarkMode(d => !d)}>
-          <span>{darkMode ? '☀' : '☾'}</span>
-          <span className="lab">{darkMode ? 'LIGHT' : 'DARK'}</span>
-        </button>
-      </div>
-
+    <>
       <div className="scrollarea">
 
         {loading && <p style={{ padding: 24, color: 'var(--mut)' }}>Loading…</p>}
@@ -488,17 +524,66 @@ export default function ExpensesPage({ userId, onBack }: { userId: string; onBac
         </div>
       )}
 
-      {/* ═══════════ LAY-BY SHEET ═══════════ */}
+      {/* ═══════════════════════════════════════════════════════════
+          LAY-BY MANAGEMENT SHEET — header stats + payment strip + delete
+          ═══════════════════════════════════════════════════════════ */}
       {laybyExp && (
         <div className="ov" onClick={() => setLaybyExp(null)}>
           <div className="sheet" onClick={e => e.stopPropagation()}>
             <button className="xbtn" onClick={() => setLaybyExp(null)}>×</button>
             <div className="grab" />
+
             <h3>{laybyExp.name}</h3>
-            <p className="sd">This expense is part of a lay-by and can't be edited here. A full lay-by management view is coming.</p>
-            <div className="recline"><span>Payment amount</span><b>{fmt((laybyExp.expense_amount_versions ?? []).sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]?.amount_cents ?? 0)}</b></div>
-            <div className="recline"><span>Frequency</span><b>{laybyExp.frequency}</b></div>
-            {laybyExp.end_date && <div className="recline"><span>Ends</span><b>{new Date(laybyExp.end_date + 'T00:00:00').toLocaleDateString('en-NZ', { day: 'numeric', month: 'short', year: 'numeric' })}</b></div>}
+            <p className="sd">
+              {laybyView.paidCount} of {laybyView.total} paid so far · {fmt(laybyView.target - laybyView.paidCents)} left
+            </p>
+
+            {/* four-tile stat header — all data from buildLaybyCells */}
+            <div className="lay-stats">
+              <div className="lay-stat">
+                <div className="lay-stat-k">Total</div>
+                <div className="lay-stat-v">{fmt(laybyView.target)}</div>
+              </div>
+              <div className="lay-stat">
+                <div className="lay-stat-k">Per payment</div>
+                <div className="lay-stat-v">{fmt(latestCents(laybyExp))}</div>
+              </div>
+              <div className="lay-stat">
+                <div className="lay-stat-k">Frequency</div>
+                <div className="lay-stat-v" style={{ textTransform: 'capitalize' }}>{laybyExp.frequency}</div>
+              </div>
+              <div className="lay-stat">
+                <div className="lay-stat-k">Ends</div>
+                <div className="lay-stat-v">{laybyView.endDate ? fmtDate(laybyView.endDate) : '—'}</div>
+              </div>
+            </div>
+
+            {/* payment strip — horizontal scroll, one cell per scheduled payment */}
+            <div className="lay-strip-wrap">
+              <div className="lay-strip-hdr">
+                <span>Payments</span>
+                <span className="lay-strip-note">"paid" = scheduled date has passed</span>
+              </div>
+              <div className="lay-strip">
+                {laybyView.cells.map((c, i) => {
+                  const isCurrent = c.state === 'future' && i === laybyView.paidCount // first unpaid = "current"
+                  const stateCls = c.state === 'past' ? 'past' : isCurrent ? 'current' : 'future'
+                  let label: string
+                  if (c.state === 'past') label = 'paid'
+                  else if (c.isLast) label = 'paid off'
+                  else label = `${fmt(c.remainingCents)} left`
+                  return (
+                    <div key={c.date} className={`lay-cell ${stateCls}`}>
+                      <div className="lay-cell-n">#{c.paymentNumber}</div>
+                      <div className="lay-cell-d">{fmtDate(c.date)}</div>
+                      <div className="lay-cell-a">{fmt(c.amountCents)}</div>
+                      <div className="lay-cell-r">{label}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
             <div className="navrow">
               <button onClick={() => setLaybyExp(null)}>Close</button>
             </div>
@@ -514,6 +599,6 @@ export default function ExpensesPage({ userId, onBack }: { userId: string; onBac
         </div>
       )}
 
-    </div>
+    </>
   )
 }
