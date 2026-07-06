@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
+import type { CSSProperties } from 'react'
 import { supabase } from './lib/supabase'
 import { getIncomeSources, getExpenses, getCycles, getProfile, getLayBys, getBudgetSpendEntries, addBudgetSpendEntry, updateBudgetSpendEntry, deleteBudgetSpendEntry } from './lib/repository'
 import { projectCycles } from './engine/index'
@@ -102,15 +103,23 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const [closeSaving,        setCloseSaving]        = useState(false)
   const [closeFrozen,        setCloseFrozen]        = useState(false)
 
-  // ── add-to-cycle overlay state (type picker → one-off / income-stub / layby) ──
+  // ── add-to-cycle overlay state (type picker → one-off / money-in / layby) ──
   const [addOpen,     setAddOpen]     = useState(false)
-  const [addStep,     setAddStep]     = useState(0) // 0 = type picker, 1 = form, 2 = layby preview (stub for now)
+  const [addStep,     setAddStep]     = useState(0) // 0 = type picker, 1 = form, 2 = layby confirmation
   const [addType,     setAddType]     = useState<'oneoff' | 'income' | 'layby' | null>(null)
   const [oneoffName,   setOneoffName]   = useState('')
   const [oneoffAmount, setOneoffAmount] = useState('')
   const [oneoffDate,   setOneoffDate]   = useState('')
   const [addSaving,   setAddSaving]   = useState(false)
   const [addError,    setAddError]    = useState('')
+
+  // ── money-in form fields ────────────────────────────────────────────
+  // incomeCertain drives is_potential (inverted): false = "not certain yet"
+  // → is_potential: true, ghost card, excluded from committed balance.
+  const [incomeName,    setIncomeName]    = useState('')
+  const [incomeAmount,  setIncomeAmount]  = useState('')
+  const [incomeDate,    setIncomeDate]    = useState('')
+  const [incomeCertain, setIncomeCertain] = useState(false)
 
   // ── lay-by form fields ──────────────────────────────────────────────
   const [laybyName,     setLaybyName]     = useState('')
@@ -456,6 +465,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   function openAddToCycle() {
     setAddType(null); setAddStep(0)
     setOneoffName(''); setOneoffAmount(''); setOneoffDate(activeCycle.startDate)
+    setIncomeName(''); setIncomeAmount(''); setIncomeDate(activeCycle.startDate); setIncomeCertain(false)
     setLaybyName(''); setLaybyTotal(''); setLaybyFrequency('fortnightly')
     setLaybyPayments('4'); setLaybyFirstDate('')
     setAddError(''); setAddOpen(true)
@@ -465,6 +475,10 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   }
   function selectAddType(t: 'oneoff' | 'income' | 'layby') {
     setAddType(t); setAddStep(1); setAddError('')
+    if (t === 'income') {
+      setIncomeName(''); setIncomeAmount('')
+      setIncomeDate(activeCycle.startDate); setIncomeCertain(false)
+    }
     if (t === 'layby') {
       setLaybyName(''); setLaybyTotal(''); setLaybyFrequency('fortnightly')
       setLaybyPayments('4'); setLaybyFirstDate(activeCycle.startDate)
@@ -485,6 +499,37 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       const { error: e2 } = await supabase
         .from('expense_amount_versions')
         .insert({ expense_id: exp.id, amount_cents: amountCents, effective_from: oneoffDate })
+      if (e2) throw e2
+      closeAddSheet(); reload()
+    } catch (e: any) { setAddError(e.message) }
+    finally { setAddSaving(false) }
+  }
+  // Mirrors saveOneOff, but on the income side: one income_sources row with
+  // frequency 'once' + one income_amount_versions row. is_potential is the
+  // inverse of the "Confirmed" choice — potential income renders as a ghost
+  // card and stays out of the committed balance; confirmed income counts
+  // like pay and appears in the close ritual's "Did income land?" step.
+  async function saveIncome() {
+    const amountCents = Math.round(parseFloat(incomeAmount || '0') * 100)
+    if (!incomeName.trim() || !amountCents || !incomeDate) {
+      setAddError('Name, amount and date are required.'); return
+    }
+    setAddSaving(true); setAddError('')
+    try {
+      const { data: src, error: e1 } = await supabase
+        .from('income_sources')
+        .insert({
+          profile_id: userId,
+          name: incomeName.trim(),
+          frequency: 'once',
+          anchor_date: incomeDate,
+          is_potential: !incomeCertain,
+        })
+        .select().single()
+      if (e1) throw e1
+      const { error: e2 } = await supabase
+        .from('income_amount_versions')
+        .insert({ income_source_id: src.id, amount_cents: amountCents, effective_from: incomeDate })
       if (e2) throw e2
       closeAddSheet(); reload()
     } catch (e: any) { setAddError(e.message) }
@@ -715,6 +760,15 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const heroCentsVal = Math.abs(openingCents % 100)
   const editAmountCents = Math.round(parseFloat(editAmount || '0') * 100)
   const varAmountCents  = Math.round(parseFloat(varAmount  || '0') * 100)
+
+  // Shared inline style for the certainty-block icons — tokens only, no
+  // design.css changes. Dashed border on "not certain" echoes the ghost
+  // card treatment the row gets on the dashboard.
+  const certIconBase: CSSProperties = {
+    width: 30, height: 30, borderRadius: 9, display: 'grid', placeItems: 'center',
+    fontSize: 15, fontWeight: 700, flex: '0 0 auto',
+    background: 'var(--pos-s)', color: 'var(--pos)',
+  }
 
   // ── render ────────────────────────────────────────────────────────
   return (
@@ -1193,7 +1247,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       )}
 
       {/* ═══════════════════════════════════════════════════════════
-          OVERLAY 4 — Add to this cycle (type picker → one-off / income-stub / layby form)
+          OVERLAY 4 — Add to this cycle (type picker → one-off / money-in / layby form)
           ═══════════════════════════════════════════════════════════ */}
       {addOpen && (
         <div className="ov" onClick={closeAddSheet}>
@@ -1265,10 +1319,66 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
 
             {addStep === 1 && addType === 'income' && <>
               <h3>Money coming in</h3>
-              <p className="sd">Coming soon — not wired up yet.</p>
-              <div className="skipnote">Bonuses, tax returns, and other one-off income land here next.</div>
+              <p className="sd">A one-off amount landing in this cycle.</p>
+
+              <div className="field">
+                <label>What is it?</label>
+                <div className="inrow">
+                  <input type="text" value={incomeName} onChange={e => setIncomeName(e.target.value)} placeholder="e.g. Tax return" />
+                </div>
+              </div>
+
+              <div className="field">
+                <label>Amount</label>
+                <div className="inrow">
+                  <span className="pre">$</span>
+                  <input type="number" inputMode="decimal" value={incomeAmount} onChange={e => setIncomeAmount(e.target.value)} placeholder="0" />
+                </div>
+              </div>
+
+              <div className="field">
+                <label>Date</label>
+                <div className="inrow">
+                  <input
+                    type="date" value={incomeDate} onChange={e => setIncomeDate(e.target.value)}
+                    style={{ border:'none', background:'transparent', color:'var(--ink)', fontFamily:"'Space Grotesk',sans-serif", fontSize:15, fontWeight:600, width:'100%', outline:'none' }}
+                  />
+                </div>
+                <p className="hint">Defaults to the start of this cycle — change it if it lands in a different one.</p>
+              </div>
+
+              <div className="field" style={{ marginBottom: 4 }}>
+                <label>How sure is it?</label>
+              </div>
+
+              <div className={`opt${!incomeCertain ? ' sel' : ''}`} onClick={() => setIncomeCertain(false)} style={{ display:'flex', gap:11, alignItems:'flex-start' }}>
+                <div style={{ ...certIconBase, border: '1.5px dashed var(--pos)' }}>?</div>
+                <div>
+                  <div className="ot">Not certain yet</div>
+                  <div className="os">Shown on the cycle, but kept out of your forecast until it lands.</div>
+                  <div style={{ fontSize:11, color:'var(--faint)', marginTop:4, fontStyle:'italic' }}>e.g. a bonus that hasn't been confirmed</div>
+                </div>
+              </div>
+              <div className={`opt${incomeCertain ? ' sel' : ''}`} onClick={() => setIncomeCertain(true)} style={{ display:'flex', gap:11, alignItems:'flex-start' }}>
+                <div style={certIconBase}>✓</div>
+                <div>
+                  <div className="ot">Confirmed</div>
+                  <div className="os">Counts toward your projected balance, same as your pay.</div>
+                  <div style={{ fontSize:11, color:'var(--faint)', marginTop:4, fontStyle:'italic' }}>e.g. an approved refund with a date</div>
+                </div>
+              </div>
+
+              {addError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:10 }}>{addError}</p>}
+
               <div className="navrow">
                 <button onClick={() => setAddStep(0)}>Back</button>
+                <button
+                  className="pri"
+                  onClick={saveIncome}
+                  style={{ opacity: addSaving ? 0.6 : 1, cursor: addSaving ? 'default' : 'pointer' }}
+                >
+                  {addSaving ? 'Saving…' : 'Add income'}
+                </button>
               </div>
             </>}
 
