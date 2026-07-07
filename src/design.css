@@ -1022,3 +1022,13 @@ svg.proj { display:block; width:100%; height:152px; }
   color: var(--acc);
   flex-shrink: 0;
 }
+
+.modeopt .mt,
+.modeopt .ms,
+.modeopt .me {
+  text-align: left;
+}
+
+.modeopt > div:last-child {
+  text-align: left;
+}

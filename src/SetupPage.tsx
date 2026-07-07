@@ -575,15 +575,19 @@ export default function SetupPage({
             <p style={{ fontSize:12, color:'var(--mut)', fontWeight:500, marginBottom:8 }}>How does this cost behave?</p>
             <div className={`modeopt${expMode === 'fixed' ? ' sel' : ''}`} onClick={() => setExpMode('fixed')}>
               <div className="mi ic fix">▤</div>
-              <div><div className="mt">Exact amount</div><div className="ms">Same every time.</div><div className="me">e.g. rent, insurance, subscriptions</div></div>
+              <div style={{ textAlign: 'left' }}><div className="mt">Exact amount</div><div className="ms">Same every time.</div><div className="me">e.g. rent, insurance, subscriptions</div></div>
             </div>
             <div className={`modeopt${expMode === 'variable' ? ' sel' : ''}`} onClick={() => setExpMode('variable')}>
-              <div className="mi ic var">~</div>
-              <div><div className="mt">Varies — I'll confirm</div><div className="ms">Set an estimate. Confirm the real figure when the bill arrives.</div><div className="me">e.g. power, water</div></div>
-            </div>
+  <div className="mi ic var">~</div>
+  <div style={{ textAlign: 'left' }}>
+    <div className="mt">Varies — I'll confirm</div>
+    <div className="ms">Set an estimate. Confirm the real figure when the bill arrives.</div>
+    <div className="me">e.g. power, water</div>
+  </div>
+</div>
             <div className={`modeopt${expMode === 'budget' ? ' sel' : ''}`} onClick={() => setExpMode('budget')}>
               <div className="mi ic base">≈</div>
-              <div><div className="mt">Just a budget</div><div className="ms">A conservative number you won't itemise.</div><div className="me">e.g. groceries, fuel, eating out</div></div>
+              <div style={{ textAlign: 'left' }}><div className="mt">Just a budget</div><div className="ms">A conservative number you won't itemise.</div><div className="me">e.g. groceries, fuel, eating out</div></div>
             </div>
             <div className="field" style={{ marginTop:6 }}>
               <label>Name</label>
