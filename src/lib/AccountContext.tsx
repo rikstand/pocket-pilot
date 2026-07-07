@@ -7,6 +7,7 @@ export interface Account {
   name: string
   currency_code: string
   opening_balance_cents: number
+  safety_floor_cents: number
   created_at: string
 }
 
