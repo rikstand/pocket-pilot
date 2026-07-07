@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from 'react'
 import type { CSSProperties } from 'react'
 import { supabase } from './lib/supabase'
-import { getIncomeSources, getExpenses, getCycles, getProfile, getLayBys, getBudgetSpendEntries, addBudgetSpendEntry, updateBudgetSpendEntry, deleteBudgetSpendEntry } from './lib/repository'
+import { getIncomeSources, getExpenses, getCycles, getLayBys, getBudgetSpendEntries, addBudgetSpendEntry, updateBudgetSpendEntry, deleteBudgetSpendEntry } from './lib/repository'
+import { useAccount } from './lib/AccountContext'
 import { projectCycles } from './engine/index'
 import { getOccurrencesInRange } from './engine/recurrence'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
@@ -28,30 +29,23 @@ function findCurrentIdx(cycles: any[]) {
   const idx = cycles.findIndex(c => c.startDate <= t && c.endDate >= t)
   return idx >= 0 ? idx : 0
 }
-// Add one day to a YYYY-MM-DD string — used to compute revert date when on last cycle
 function addOneDay(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00')
   d.setDate(d.getDate() + 1)
   return d.toISOString().split('T')[0]
 }
-// Pick latest amount version effective on or before cycleStart
 function versionForCycle(versions: any[], cycleStart: string): any {
   const all = versions ?? []
   const applicable = all
     .filter((v: any) => v.effective_from <= cycleStart)
     .sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)
   if (applicable.length > 0) return applicable[0]
-  // Fallback: use earliest version if none are effective yet for this cycle
   return [...all].sort((a: any, b: any) => a.effective_from < b.effective_from ? -1 : 1)[0]
 }
-// Inline override for chip colour — mirrors the lay-by chip styling on ExpensesPage.
-// Returns undefined for every other chip class so normal CSS classes keep driving the look.
 function chipStyle(cls: string): { color: string, borderColor: string, background: string } | undefined {
   if (cls === 'evt') return { color: 'var(--event)', borderColor: 'var(--event)', background: 'var(--event-s)' }
   return undefined
 }
-// Step forward `count` dates starting at firstDate, at the given frequency.
-// Shared by the lay-by form preview and (next step) the actual save.
 function computeLaybySchedule(
   firstDate: string,
   frequency: 'weekly' | 'fortnightly' | 'monthly' | 'annually',
@@ -70,19 +64,18 @@ function computeLaybySchedule(
   return dates
 }
 
-export default function Dashboard({ userId, variant }: { userId: string, variant: 'cycle' | 'forecast' }) {
+export default function Dashboard({ userId, accountId, variant }: { userId: string, accountId: string, variant: 'cycle' | 'forecast' }) {
+  const { activeAccount } = useAccount()
   const [cycles,      setCycles]      = useState<any[]>([])
   const [rawExpenses, setRawExpenses] = useState<any[]>([])
   const [rawIncome,   setRawIncome]   = useState<any[]>([])
   const [rawLayBys,   setRawLayBys]   = useState<any[]>([])
-  const [profile,     setProfile]     = useState<any>(null)
   const [activeIdx,   setActiveIdx]   = useState(0)
   const [error,       setError]       = useState('')
   const [loading,     setLoading]     = useState(true)
   const [reloadKey,   setReloadKey]   = useState(0)
   const pillsRef = useRef<HTMLDivElement>(null)
 
-  // ── overlay state ──────────────────────────────────────────────────
   const [editCard,   setEditCard]   = useState<any>(null)
   const [editScope,  setEditScope]  = useState<'occurrence' | 'forward' | null>(null)
   const [editStep,   setEditStep]   = useState(0)
@@ -103,9 +96,8 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const [closeSaving,        setCloseSaving]        = useState(false)
   const [closeFrozen,        setCloseFrozen]        = useState(false)
 
-  // ── add-to-cycle overlay state (type picker → one-off / money-in / layby) ──
   const [addOpen,     setAddOpen]     = useState(false)
-  const [addStep,     setAddStep]     = useState(0) // 0 = type picker, 1 = form, 2 = layby confirmation
+  const [addStep,     setAddStep]     = useState(0)
   const [addType,     setAddType]     = useState<'oneoff' | 'income' | 'layby' | null>(null)
   const [oneoffName,   setOneoffName]   = useState('')
   const [oneoffAmount, setOneoffAmount] = useState('')
@@ -113,18 +105,11 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const [addSaving,   setAddSaving]   = useState(false)
   const [addError,    setAddError]    = useState('')
 
-  // ── money-in form fields ────────────────────────────────────────────
-  // incomeCertain drives is_potential (inverted): false = "not certain yet"
-  // → is_potential: true, ghost card, excluded from committed balance.
   const [incomeName,    setIncomeName]    = useState('')
   const [incomeAmount,  setIncomeAmount]  = useState('')
   const [incomeDate,    setIncomeDate]    = useState('')
   const [incomeCertain, setIncomeCertain] = useState(false)
 
-  // ── one-off management sheet state ──────────────────────────────
-  // Opens when a one-off (expense or income) card is tapped.
-  // Supports editing name, amount, and (income only) certainty toggle.
-  // Delete is a soft-retire: is_active → false.
   const [oneOffItem,     setOneOffItem]     = useState<any>(null)
   const [oneOffName,     setOneOffName]     = useState('')
   const [oneOffAmt,      setOneOffAmt]      = useState('')
@@ -133,16 +118,14 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const [oneOffDeleting, setOneOffDeleting] = useState(false)
   const [oneOffError,    setOneOffError]    = useState('')
 
-  // ── lay-by form fields ──────────────────────────────────────────────
-  const [laybyName,     setLaybyName]     = useState('')
-  const [laybyTotal,    setLaybyTotal]    = useState('')
-  const [laybyFrequency,setLaybyFrequency]= useState<'weekly'|'fortnightly'|'monthly'|'annually'>('fortnightly')
-  const [laybyPayments, setLaybyPayments] = useState('4')
-  const [laybyFirstDate,setLaybyFirstDate]= useState('')
-  const [laybySaving,   setLaybySaving]   = useState(false)
-  const [laybyResult,   setLaybyResult]   = useState<any>(null)
+  const [laybyName,      setLaybyName]      = useState('')
+  const [laybyTotal,     setLaybyTotal]     = useState('')
+  const [laybyFrequency, setLaybyFrequency] = useState<'weekly'|'fortnightly'|'monthly'|'annually'>('fortnightly')
+  const [laybyPayments,  setLaybyPayments]  = useState('4')
+  const [laybyFirstDate, setLaybyFirstDate] = useState('')
+  const [laybySaving,    setLaybySaving]    = useState(false)
+  const [laybyResult,    setLaybyResult]    = useState<any>(null)
 
-  // ── budget tracking state ────────────────────────────────────────
   const [rawBudgetEntries, setRawBudgetEntries] = useState<any[]>([])
   const [openQuickAdd,     setOpenQuickAdd]     = useState<string | null>(null)
   const [quickAddAmount,   setQuickAddAmount]   = useState('')
@@ -151,24 +134,28 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const [editEntryAmount,  setEditEntryAmount]  = useState('')
   const [editEntryLabel,   setEditEntryLabel]   = useState('')
 
-  // ── accordion state: which card sections are expanded ─────────────
-  // All open by default — the dashboard is a glance surface; collapsing
-  // is a per-session convenience, not persisted.
   const [openSecs, setOpenSecs] = useState<Record<string, boolean>>({
     income: true, fixed: true, var: true, budget: true,
   })
   function toggleSec(k: string) { setOpenSecs(p => ({ ...p, [k]: !p[k] })) }
 
-
-  // Reload whenever userId changes or reloadKey is bumped (after overlay saves)
   useEffect(() => {
     async function load() {
       setLoading(true)
       try {
-        const [prof, income, expenses, storedCycles, layBys, budgetEntries] = await Promise.all([
-          getProfile(userId), getIncomeSources(userId), getExpenses(userId), getCycles(userId), getLayBys(userId), getBudgetSpendEntries(userId),
+        const [income, expenses, storedCycles, layBys, budgetEntries] = await Promise.all([
+          getIncomeSources(accountId),
+          getExpenses(accountId),
+          getCycles(accountId),
+          getLayBys(accountId),
+          getBudgetSpendEntries(accountId),
         ])
-        setProfile(prof); setRawIncome(income); setRawExpenses(expenses); setRawLayBys(layBys); setRawBudgetEntries(budgetEntries)
+        setRawIncome(income)
+        setRawExpenses(expenses)
+        setRawLayBys(layBys)
+        setRawBudgetEntries(budgetEntries)
+
+        const floorCents = activeAccount?.safety_floor_cents ?? 0
 
         const engineIncome = income.map((src: any) => {
           const v = (src.income_amount_versions ?? []).sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
@@ -180,7 +167,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           }
         })
 
-        // Pass ALL amount versions so the engine can select per-cycle
         const engineExpenses = expenses.map((exp: any) => {
           const versions = (exp.expense_amount_versions ?? []).map((v: any) => ({
             amountCents: v.amount_cents,
@@ -197,8 +183,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           }
         })
 
-        // Show the latest closed cycle (if any) for historical context,
-        // then project forward from the current/next open cycle.
         const openCycles   = storedCycles.filter((c: any) => !c.is_closed)
         const closedCycles = storedCycles.filter((c: any) => c.is_closed)
         const latestClosed = closedCycles[closedCycles.length - 1]
@@ -210,10 +194,9 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           openingBalanceCents: projectFrom?.opening_balance_cents ?? 0,
           startDate: projectFrom?.start_date ?? today(),
           numCycles: 6,
-          safetyFloorCents: prof?.safety_floor_cents ?? 0,
+          safetyFloorCents: floorCents,
         })
 
-        // Prepend the latest closed cycle so user can see history
         let cyclesWithHistory: any[] = projected
         if (latestClosed) {
           const historicalCycle = {
@@ -242,7 +225,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       finally { setLoading(false) }
     }
     load()
-  }, [userId, reloadKey])
+  }, [accountId, reloadKey])
 
   useEffect(() => {
     if (pillsRef.current) {
@@ -258,17 +241,17 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   }, [variant, cycles])
 
   if (loading) return <div className="app" style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh' }}><p style={{ color:'var(--mut)' }}>Loading…</p></div>
-  if (error)      return <div className="app" style={{ padding:24 }}><p style={{ color:'var(--floor)' }}>{error}</p></div>
+  if (error)   return <div className="app" style={{ padding:24 }}><p style={{ color:'var(--floor)' }}>{error}</p></div>
   if (!cycles.length) return <div className="app" style={{ padding:24 }}><p style={{ color:'var(--mut)' }}>No cycle data.</p></div>
 
   const activeCycle  = cycles[activeIdx]
-  const floorCents   = profile?.safety_floor_cents ?? 0
+  const floorCents   = activeAccount?.safety_floor_cents ?? 0
   const currentIdx   = findCurrentIdx(cycles)
   const openingCents = cycles[0]?.openingBalanceCents ?? 0
+  const currencyCode = activeAccount?.currency_code ?? 'NZD'
 
   function reload() { setReloadKey(k => k + 1) }
 
-  // next pay
   const primaryIncome = rawIncome.find((s: any) => s.is_primary && !s.is_potential)
   let nextPayStr = ''
   if (primaryIncome) {
@@ -280,7 +263,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     }
   }
 
-  // graph — concept D: auto-scale, Y-axis labels, active dot label
   const closeVals    = cycles.map(c => c.committedClosingBalanceCents / 100)
   const floorDollars = floorCents / 100
   const dataMax      = Math.max(...closeVals, floorDollars, 100)
@@ -341,8 +323,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, cycle.startDate, cycle.endDate, exp.end_date ?? undefined)
       if (!occs.length) continue
 
-      // Use cycle-aware version selection so edit/confirm amounts are consistent
-      const v        = versionForCycle(exp.expense_amount_versions, cycle.startDate)
+      const v         = versionForCycle(exp.expense_amount_versions, cycle.startDate)
       const unitCents = v?.amount_cents ?? 0
       const total     = unitCents * occs.length
       const mode      = exp.mode ?? 'fixed'
@@ -352,9 +333,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       else if (mode === 'budget') { icon = '≈'; iconClass = 'base'; chips = [['bl','baseline']] }
       else { act = 'edit' }
 
-      // One-offs don't get the recurring edit flow ("this occurrence or
-      // onward?" makes no sense for something that happens once) — they get
-      // the management sheet instead, which is also where delete lives.
       const isOneOffExp = exp.frequency === 'once' && !exp.lay_by_id
       if (isOneOffExp) act = 'oneoff'
 
@@ -368,13 +346,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         if (exp.category) detail += ' · ' + exp.category
       }
 
-      // ── lay-by visual override ──────────────────────────────────
-      // Lay-bys are saved with mode: 'fixed', so they still total correctly
-      // and sit in the Fixed expenses section above. This only swaps the
-      // icon/chip colour and replaces the date-list detail with payment
-      // progress + this cycle's payment date(s) + remaining balance.
-      // laybyPct drives the purple progress bar rendered inside the
-      // (otherwise empty) act-row, so the card height matches siblings.
       let displayIconClass = iconClass
       let iconSvg = exp.icon || guessIcon(exp.name)
       let laybyPct: number | null = null
@@ -399,8 +370,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         const targetCents    = layby?.target_amount_cents ?? 0
         const remainingCents = Math.max(0, targetCents - paidThroughCents)
 
-        // Which payment(s) land in this cycle — usually one, but a weekly
-        // lay-by inside a fortnightly cycle lands two.
         const firstIdx = sortedVersions.findIndex((sv: any) => sv.effective_from === occs[0])
         const paymentLabel = occs.length > 1 && firstIdx >= 0
           ? `Payments ${firstIdx + 1}–${paymentNumber} of ${totalPayments}`
@@ -408,8 +377,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         const dateStr = occs.map((o: string) => fmtDate(o)).join(', ')
 
         detail = `${paymentLabel} · ${dateStr} · ${fmt(remainingCents, false)} left`
-        // Progress through the lay-by *after* this cycle's payment(s) —
-        // consistent with the "$X left" figure on the same line.
         laybyPct = targetCents > 0
           ? Math.min(100, Math.round((paidThroughCents / targetCents) * 100))
           : 0
@@ -423,15 +390,14 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         oneOff: isOneOffExp, oneOffKind: 'expense',
         oneOffDateStr: fmtDate(occs[0]),
         laybyPct,
-        unitCents,           // current per-occurrence amount for this cycle
-        originalUnitCents: unitCents,  // what to revert to after a one-off override
+        unitCents,
+        originalUnitCents: unitCents,
         estimatedCents: unitCents,
       })
     }
     return cards
   }
 
-  // close ritual data
   const varExpensesInCycle = rawExpenses
     .filter(e => e.mode === 'variable')
     .map(exp => {
@@ -457,15 +423,13 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const closeRealCents   = Math.round(parseFloat(closeRealBalance || '0') * 100)
   const unaccountedCents = closeRealCents > 0 ? closeRealCents - activeCycle.committedClosingBalanceCents : 0
 
-  // ── lay-by derived preview values ──────────────────────────────────
-  const laybyTotalCents     = Math.round(parseFloat(laybyTotal || '0') * 100)
-  const laybyCountNum       = parseInt(laybyPayments || '0', 10) || 0
-  const laybyDates          = computeLaybySchedule(laybyFirstDate, laybyFrequency, laybyCountNum)
-  const laybyPerPaymentCents= laybyCountNum > 0 ? Math.floor(laybyTotalCents / laybyCountNum) : 0
-  const laybyRemainderCents = laybyTotalCents - laybyPerPaymentCents * laybyCountNum
-  const laybyEndDate        = laybyDates[laybyDates.length - 1]
+  const laybyTotalCents      = Math.round(parseFloat(laybyTotal || '0') * 100)
+  const laybyCountNum        = parseInt(laybyPayments || '0', 10) || 0
+  const laybyDates           = computeLaybySchedule(laybyFirstDate, laybyFrequency, laybyCountNum)
+  const laybyPerPaymentCents = laybyCountNum > 0 ? Math.floor(laybyTotalCents / laybyCountNum) : 0
+  const laybyRemainderCents  = laybyTotalCents - laybyPerPaymentCents * laybyCountNum
+  const laybyEndDate         = laybyDates[laybyDates.length - 1]
 
-  // ── overlay handlers ──────────────────────────────────────────────
   function openEdit(cd: any) {
     setEditCard(cd); setEditScope(null); setEditStep(0)
     setEditAmount(cd.unitCents ? String(cd.unitCents / 100) : '')
@@ -485,7 +449,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     setCloseRealBalance(''); setCloseStep(0); setCloseOpen(true)
   }
 
-  // ── add-to-cycle handlers ──────────────────────────────────────────
   function openAddToCycle() {
     setAddType(null); setAddStep(0)
     setOneoffName(''); setOneoffAmount(''); setOneoffDate(activeCycle.startDate)
@@ -508,6 +471,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       setLaybyPayments('4'); setLaybyFirstDate(activeCycle.startDate)
     }
   }
+
   async function saveOneOff() {
     const amountCents = Math.round(parseFloat(oneoffAmount || '0') * 100)
     if (!oneoffName.trim() || !amountCents || !oneoffDate) {
@@ -517,7 +481,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     try {
       const { data: exp, error: e1 } = await supabase
         .from('expenses')
-        .insert({ profile_id: userId, name: oneoffName.trim(), frequency: 'once', anchor_date: oneoffDate, mode: 'fixed' })
+        .insert({ profile_id: userId, account_id: accountId, name: oneoffName.trim(), frequency: 'once', anchor_date: oneoffDate, mode: 'fixed' })
         .select().single()
       if (e1) throw e1
       const { error: e2 } = await supabase
@@ -528,11 +492,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     } catch (e: any) { setAddError(e.message) }
     finally { setAddSaving(false) }
   }
-  // Mirrors saveOneOff, but on the income side: one income_sources row with
-  // frequency 'once' + one income_amount_versions row. is_potential is the
-  // inverse of the "Confirmed" choice — potential income renders as a ghost
-  // card and stays out of the committed balance; confirmed income counts
-  // like pay and appears in the close ritual's "Did income land?" step.
+
   async function saveIncome() {
     const amountCents = Math.round(parseFloat(incomeAmount || '0') * 100)
     if (!incomeName.trim() || !amountCents || !incomeDate) {
@@ -544,6 +504,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         .from('income_sources')
         .insert({
           profile_id: userId,
+          account_id: accountId,
           name: incomeName.trim(),
           frequency: 'once',
           anchor_date: incomeDate,
@@ -559,9 +520,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     } catch (e: any) { setAddError(e.message) }
     finally { setAddSaving(false) }
   }
-  // Save edits to a one-off from the management sheet.
-  // Expense: update name + amount_version. Income: update name, amount_version,
-  // and is_potential (the certainty toggle).
+
   async function saveOneOffEdits() {
     const amountCents = Math.round(parseFloat(oneOffAmt || '0') * 100)
     if (!oneOffName.trim() || !amountCents) {
@@ -575,7 +534,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           .update({ name: oneOffName.trim(), is_potential: !oneOffCertain })
           .eq('id', oneOffItem.incomeId)
         if (e1) throw e1
-        // Update the single amount version for this one-off
         const { error: e2 } = await supabase
           .from('income_amount_versions')
           .update({ amount_cents: amountCents })
@@ -597,7 +555,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     } catch (e: any) { setOneOffError(e.message) }
     finally { setOneOffSaving(false) }
   }
-  // Soft-retire a one-off: flip is_active on the right table.
+
   async function deleteOneOff() {
     if (!oneOffItem || oneOffDeleting) return
     setOneOffDeleting(true); setOneOffError('')
@@ -615,8 +573,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     } catch (e: any) { setOneOffError(e.message) }
     finally { setOneOffDeleting(false) }
   }
-  // Validates the lay-by form, writes the lay_bys row + linked expense +
-  // one amount_version per scheduled payment, then shows the confirmation step.
+
   async function saveLayby() {
     if (!laybyName.trim() || !laybyTotalCents || laybyCountNum <= 0 || !laybyFirstDate) {
       setAddError('Name, total, payments, and first payment date are required.'); return
@@ -629,6 +586,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         .from('lay_bys')
         .insert({
           profile_id: userId,
+          account_id: accountId,
           name: laybyName.trim(),
           target_amount_cents: laybyTotalCents,
           target_date: laybyEndDate,
@@ -642,6 +600,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         .from('expenses')
         .insert({
           profile_id: userId,
+          account_id: accountId,
           name: laybyName.trim(),
           frequency: laybyFrequency,
           anchor_date: laybyFirstDate,
@@ -666,12 +625,10 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     finally { setLaybySaving(false) }
   }
 
-  // ── SAVE: edit scope overlay ──────────────────────────────────────
   async function applyEdit() {
     if (!editScope || !editAmountCents) return
     setEditSaving(true); setEditError('')
     try {
-      // Insert new version for this cycle
       const { error: e1 } = await supabase.from('expense_amount_versions').insert({
         expense_id: editCard.expenseId,
         amount_cents: editAmountCents,
@@ -680,7 +637,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       if (e1) throw e1
 
       if (editScope === 'occurrence') {
-        // Revert to original at next cycle start
         const nextStart = cycles[activeIdx + 1]?.startDate ?? addOneDay(activeCycle.endDate)
         const { error: e2 } = await supabase.from('expense_amount_versions').insert({
           expense_id: editCard.expenseId,
@@ -694,26 +650,24 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     } catch (e: any) { setEditError(e.message) }
     finally { setEditSaving(false) }
   }
-// ── SAVE: close ritual ───────────────────────────────────────────
+
   async function applyFreeze() {
     if (!closeRealCents) return
     setCloseSaving(true)
     try {
-      // 1. Save variable expense actuals
       for (const e of varExpensesInCycle) {
         const actualStr = closeVarActuals[e.id]
         if (!actualStr) continue
         const actualCents = Math.round(parseFloat(actualStr) * 100)
         const { error } = await supabase.from('cycle_expense_actuals').insert({
-          cycle_id: activeCycle.id ?? null,  // may not exist if cycle was engine-projected
+          cycle_id: activeCycle.id ?? null,
+          account_id: accountId,
           expense_id: e.id,
           actual_amount_cents: actualCents,
         })
-        // Soft-fail — the cycle row may be virtual (engine-projected, not in DB yet)
         if (error) console.warn('actual insert failed:', error.message)
       }
 
-      // 2. Freeze the current cycle (if it exists in DB)
       if (activeCycle.id) {
         const { error: e1 } = await supabase.from('cycles')
           .update({
@@ -725,7 +679,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         if (e1) throw e1
       }
 
-      // 3. Create the next cycle with the real balance as opening
       const nextStart = addOneDay(activeCycle.endDate)
       const nextEndDate = new Date(nextStart + 'T00:00:00')
       const freq = primaryIncome?.frequency ?? 'fortnightly'
@@ -736,6 +689,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
 
       const { error: e2 } = await supabase.from('cycles').insert({
         profile_id: userId,
+        account_id: accountId,
         start_date: nextStart,
         end_date: nextEndDate.toISOString().split('T')[0],
         opening_balance_cents: closeRealCents,
@@ -744,7 +698,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       })
       if (e2) throw e2
 
-      // 4. Show success, then reload
       setCloseFrozen(true)
       setTimeout(() => {
         setCloseOpen(false)
@@ -758,12 +711,11 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       setCloseSaving(false)
     }
   }
-  // ── SAVE: confirm variable overlay ───────────────────────────────
+
   async function applyConfirm() {
     if (!varAmountCents) return
     setVarSaving(true); setVarError('')
     try {
-      // Lock in actual for this cycle
       const { error: e1 } = await supabase.from('expense_amount_versions').insert({
         expense_id: varCard.expenseId,
         amount_cents: varAmountCents,
@@ -771,7 +723,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       })
       if (e1) throw e1
 
-      // Revert to estimate at next cycle start
       const nextStart = cycles[activeIdx + 1]?.startDate ?? addOneDay(activeCycle.endDate)
       const { error: e2 } = await supabase.from('expense_amount_versions').insert({
         expense_id: varCard.expenseId,
@@ -785,7 +736,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     finally { setVarSaving(false) }
   }
 
-  // ── budget tracking handlers ───────────────────────────────────────
   function entriesForExpenseInCycle(expenseId: string) {
     return rawBudgetEntries.filter(e =>
       e.expense_id === expenseId &&
@@ -801,7 +751,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
     const cents = Math.round(parseFloat(quickAddAmount || '0') * 100)
     if (!cents) return
     try {
-      await addBudgetSpendEntry(userId, expenseId, cents, 'Quick add', today())
+      await addBudgetSpendEntry(accountId, expenseId, cents, 'Quick add', today())
       setOpenQuickAdd(null); setQuickAddAmount(''); reload()
     } catch (e: any) { alert('Could not log spend: ' + e.message) }
   }
@@ -841,9 +791,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const editAmountCents = Math.round(parseFloat(editAmount || '0') * 100)
   const varAmountCents  = Math.round(parseFloat(varAmount  || '0') * 100)
 
-  // Shared inline style for the certainty-block icons — tokens only, no
-  // design.css changes. Dashed border on "not certain" echoes the ghost
-  // card treatment the row gets on the dashboard.
   const certIconBase: CSSProperties = {
     width: 30, height: 30, borderRadius: 9, display: 'grid', placeItems: 'center',
     fontSize: 15, fontWeight: 700, flex: '0 0 auto',
@@ -862,76 +809,71 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
             <div className="sub">
               {nextPayStr && <>Next pay <b>{nextPayStr}</b> · </>}
               {floorCents > 0 && <>floor <b>{fmt(floorCents,false)}</b></>}
+              {currencyCode !== 'NZD' && <> · <b>{currencyCode}</b></>}
             </div>
           </div>
         )}
 
         {variant === 'forecast' && (
-        <>
-        <div className="graphwrap">
-          <div className="graph-cap">
-            <span>Projected close · {cycles.length} cycles</span>
-            <span>{monthStart} → {monthEnd}</span>
-          </div>
-          <svg className="proj" viewBox="0 0 340 152" aria-label="Balance projection">
-            {/* axis lines */}
-            <line className="axln" x1={xLeft} y1={gTop} x2={xLeft} y2={gBot} />
-            <line className="axln" x1={xLeft} y1={gBot} x2={xRight} y2={gBot} />
-            {/* gridlines + Y-axis labels */}
-            {ticks.map(tv => (
-              <g key={tv}>
-                {tv !== minTick && (
-                  <line className={tv === 0 && minTick < 0 ? 'axln' : 'gridln'}
-                    x1={xLeft} y1={yFor(tv)} x2={xRight} y2={yFor(tv)} />
-                )}
-                <text className="axtx" x={xLeft - 4} y={yFor(tv) + 3} textAnchor="end">{fmtAxis(tv)}</text>
-              </g>
-            ))}
-            {/* floor line */}
-            {floorCents > 0 && <>
-              <line className="floorln" x1={xLeft} y1={fY} x2={xRight} y2={fY} />
-              <text className="floortx" x={xLeft + 4} y={fY - 4}>{fmt(floorCents,false)} FLOOR</text>
-            </>}
-            {/* area fill — anchored to $0 line, not chart bottom */}
-            <path className="area" d={`M${pts[0][0]},${pts[0][1]} ${pts.map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} L${pts[pts.length-1][0]},${zeroY} L${pts[0][0]},${zeroY} Z`} />
-            {/* past + future lines */}
-            <polyline className="pastln" points={pts.slice(0, splitIdx+1).map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
-            <polyline className="futln"  points={pts.slice(splitIdx).map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
-            {/* waypoints + active dot label */}
-            {pts.map((p:number[], i:number) => {
-              const s = cycleStatus(i)
-              const isLow = s==='low', isPast = s==='past', isActive = i===activeIdx
-              return (
-                <g key={i} onClick={() => setActiveIdx(i)} style={{ cursor:'pointer' }}>
-                  {isActive && <circle className={`focusring${isLow?' low':''}`} cx={p[0]} cy={p[1]} r="8" />}
-                  <circle className={`wp${isPast?' past':''}${isLow?' low':''}`} cx={p[0]} cy={p[1]} r="4.2" />
-                  {isActive && (
-                    <text className={`dotlbl${isLow?' low':''}`} x={p[0]} y={p[1] - 12} textAnchor="middle">
-                      {fmt(cycles[i].committedClosingBalanceCents, false)}
-                    </text>
-                  )}
-                </g>
-              )
-            })}
-          </svg>
-        </div>
+          <>
+            <div className="graphwrap">
+              <div className="graph-cap">
+                <span>Projected close · {cycles.length} cycles</span>
+                <span>{monthStart} → {monthEnd}</span>
+              </div>
+              <svg className="proj" viewBox="0 0 340 152" aria-label="Balance projection">
+                <line className="axln" x1={xLeft} y1={gTop} x2={xLeft} y2={gBot} />
+                <line className="axln" x1={xLeft} y1={gBot} x2={xRight} y2={gBot} />
+                {ticks.map(tv => (
+                  <g key={tv}>
+                    {tv !== minTick && (
+                      <line className={tv === 0 && minTick < 0 ? 'axln' : 'gridln'}
+                        x1={xLeft} y1={yFor(tv)} x2={xRight} y2={yFor(tv)} />
+                    )}
+                    <text className="axtx" x={xLeft - 4} y={yFor(tv) + 3} textAnchor="end">{fmtAxis(tv)}</text>
+                  </g>
+                ))}
+                {floorCents > 0 && <>
+                  <line className="floorln" x1={xLeft} y1={fY} x2={xRight} y2={fY} />
+                  <text className="floortx" x={xLeft + 4} y={fY - 4}>{fmt(floorCents,false)} FLOOR</text>
+                </>}
+                <path className="area" d={`M${pts[0][0]},${pts[0][1]} ${pts.map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} L${pts[pts.length-1][0]},${zeroY} L${pts[0][0]},${zeroY} Z`} />
+                <polyline className="pastln" points={pts.slice(0, splitIdx+1).map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
+                <polyline className="futln"  points={pts.slice(splitIdx).map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
+                {pts.map((p:number[], i:number) => {
+                  const s = cycleStatus(i)
+                  const isLow = s==='low', isPast = s==='past', isActive = i===activeIdx
+                  return (
+                    <g key={i} onClick={() => setActiveIdx(i)} style={{ cursor:'pointer' }}>
+                      {isActive && <circle className={`focusring${isLow?' low':''}`} cx={p[0]} cy={p[1]} r="8" />}
+                      <circle className={`wp${isPast?' past':''}${isLow?' low':''}`} cx={p[0]} cy={p[1]} r="4.2" />
+                      {isActive && (
+                        <text className={`dotlbl${isLow?' low':''}`} x={p[0]} y={p[1] - 12} textAnchor="middle">
+                          {fmt(cycles[i].committedClosingBalanceCents, false)}
+                        </text>
+                      )}
+                    </g>
+                  )
+                })}
+              </svg>
+            </div>
 
-        <div className="pills" ref={pillsRef}>
-          {cycles.map((c, i) => {
-            const s = cycleStatus(i)
-            return (
-              <button key={i}
-                className={`pill${s==='low'?' low':''}${s==='past'?' past':''}${i===activeIdx?' active':''}`}
-                onClick={() => setActiveIdx(i)}
-              >
-                <div className="pd">{fmtDate(c.startDate)}</div>
-                <div className="pe">{fmt(c.committedClosingBalanceCents,false)}</div>
-                <div className="ps">{s==='now' ? 'this cycle' : `→ ${fmtDate(c.endDate)}`}</div>
-              </button>
-            )
-          })}
-        </div>
-        </>
+            <div className="pills" ref={pillsRef}>
+              {cycles.map((c, i) => {
+                const s = cycleStatus(i)
+                return (
+                  <button key={i}
+                    className={`pill${s==='low'?' low':''}${s==='past'?' past':''}${i===activeIdx?' active':''}`}
+                    onClick={() => setActiveIdx(i)}
+                  >
+                    <div className="pd">{fmtDate(c.startDate)}</div>
+                    <div className="pe">{fmt(c.committedClosingBalanceCents,false)}</div>
+                    <div className="ps">{s==='now' ? 'this cycle' : `→ ${fmtDate(c.endDate)}`}</div>
+                  </button>
+                )
+              })}
+            </div>
+          </>
         )}
 
         <div className="cyc">
@@ -1012,7 +954,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                     onClick={cd.oneOff ? () => {
                       setOneOffError(''); setOneOffName(cd.name)
                       setOneOffAmt(String(cd.totalCents / 100))
-                      setOneOffCertain(false) // expenses have no certainty toggle
+                      setOneOffCertain(false)
                       setOneOffItem(cd)
                     } : undefined}
                   >
@@ -1127,19 +1069,14 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           </>
         )}
 
-
-
       </div>
 
-      {/* ═══════════════════════════════════════════════════════════
-          OVERLAY 1 — Edit scope + amount (2-step, now saves to DB)
-          ═══════════════════════════════════════════════════════════ */}
+      {/* ═══ OVERLAY 1 — Edit scope ═══ */}
       {editCard && (
         <div className="ov" onClick={() => setEditCard(null)}>
           <div className="sheet" onClick={e => e.stopPropagation()}>
             <button className="xbtn" onClick={() => setEditCard(null)}>×</button>
             <div className="grab" />
-
             {editStep === 0 && <>
               <h3>Change {editCard.name.toLowerCase()}</h3>
               <p className="sd">When should the new amount apply?</p>
@@ -1152,38 +1089,23 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                 <div className="os">A permanent change — every future cycle uses the new amount.</div>
               </div>
               <div className="navrow">
-                <button
-                  className="pri"
-                  style={{ opacity: editScope ? 1 : 0.4, cursor: editScope ? 'pointer' : 'default' }}
-                  onClick={() => { if (editScope) setEditStep(1) }}
-                >
-                  Next →
-                </button>
+                <button className="pri" style={{ opacity: editScope ? 1 : 0.4, cursor: editScope ? 'pointer' : 'default' }}
+                  onClick={() => { if (editScope) setEditStep(1) }}>Next →</button>
               </div>
             </>}
-
             {editStep === 1 && <>
               <h3>New amount</h3>
-              <p className="sd">
-                {editScope === 'occurrence'
-                  ? 'One-off — reverts to original next cycle.'
-                  : `Permanent from ${fmtDate(activeCycle.startDate)} onward.`}
-              </p>
+              <p className="sd">{editScope === 'occurrence' ? 'One-off — reverts to original next cycle.' : `Permanent from ${fmtDate(activeCycle.startDate)} onward.`}</p>
               <div className="field">
                 <label>{editCard.name} — currently {editCard.unitCents ? fmt(editCard.unitCents, false) : '—'}</label>
-                <div className="inrow">
-                  <span className="pre">$</span>
+                <div className="inrow"><span className="pre">$</span>
                   <input type="number" inputMode="decimal" value={editAmount} onChange={e => setEditAmount(e.target.value)} />
                 </div>
               </div>
               {editError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:8 }}>{editError}</p>}
               <div className="navrow">
                 <button onClick={() => setEditStep(0)}>Back</button>
-                <button
-                  className="pri"
-                  style={{ opacity: editAmountCents > 0 && !editSaving ? 1 : 0.4 }}
-                  onClick={applyEdit}
-                >
+                <button className="pri" style={{ opacity: editAmountCents > 0 && !editSaving ? 1 : 0.4 }} onClick={applyEdit}>
                   {editSaving ? 'Saving…' : `Apply ${editAmountCents > 0 ? fmt(editAmountCents, false) : ''}`}
                 </button>
               </div>
@@ -1192,9 +1114,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════
-          OVERLAY 2 — Confirm variable (now saves to DB)
-          ═══════════════════════════════════════════════════════════ */}
+      {/* ═══ OVERLAY 2 — Confirm variable ═══ */}
       {varCard && (
         <div className="ov" onClick={() => setVarCard(null)}>
           <div className="sheet" onClick={e => e.stopPropagation()}>
@@ -1204,22 +1124,15 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
             <p className="sd">Lock in the real figure — this cycle stops being an estimate. Next cycle reverts to the estimate.</p>
             <div className="field">
               <label>Actual amount for this cycle</label>
-              <div className="inrow">
-                <span className="pre">$</span>
+              <div className="inrow"><span className="pre">$</span>
                 <input type="number" inputMode="decimal" value={varAmount} onChange={e => setVarAmount(e.target.value)} />
               </div>
-              {varCard.estimatedCents > 0 && (
-                <p className="hint">Was estimated at {fmt(varCard.estimatedCents, false)}.</p>
-              )}
+              {varCard.estimatedCents > 0 && <p className="hint">Was estimated at {fmt(varCard.estimatedCents, false)}.</p>}
             </div>
             {varError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:8 }}>{varError}</p>}
             <div className="navrow">
               <button onClick={() => setVarCard(null)}>Cancel</button>
-              <button
-                className="pri"
-                style={{ opacity: varAmountCents > 0 && !varSaving ? 1 : 0.4 }}
-                onClick={applyConfirm}
-              >
+              <button className="pri" style={{ opacity: varAmountCents > 0 && !varSaving ? 1 : 0.4 }} onClick={applyConfirm}>
                 {varSaving ? 'Saving…' : `Confirm ${varAmountCents > 0 ? fmt(varAmountCents, false) : ''}`}
               </button>
             </div>
@@ -1227,18 +1140,13 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════
-          OVERLAY 3 — Close ritual (UI complete, DB write pending)
-          ═══════════════════════════════════════════════════════════ */}
+      {/* ═══ OVERLAY 3 — Close ritual ═══ */}
       {closeOpen && (
         <div className="ov" onClick={() => setCloseOpen(false)}>
           <div className="sheet" onClick={e => e.stopPropagation()}>
             <button className="xbtn" onClick={() => setCloseOpen(false)}>×</button>
             <div className="grab" />
-            <div className="steps">
-              {[0,1,2,3].map(i => <div key={i} className={`s${i <= closeStep ? ' done' : ''}`} />)}
-            </div>
-
+            <div className="steps">{[0,1,2,3].map(i => <div key={i} className={`s${i <= closeStep ? ' done' : ''}`} />)}</div>
             {closeStep === 0 && <>
               <h3>Confirm what varied</h3>
               <p className="sd">Only the items estimated in advance — enter what actually arrived.</p>
@@ -1247,19 +1155,15 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                 : varExpensesInCycle.map(e => (
                     <div key={e.id} className="field">
                       <label>{e.name} — estimated {fmt(e.estimatedCents, false)}</label>
-                      <div className="inrow">
-                        <span className="pre">$</span>
-                        <input type="number" inputMode="decimal"
-                          value={closeVarActuals[e.id] || ''}
-                          onChange={ev => setCloseVarActuals(p => ({ ...p, [e.id]: ev.target.value }))}
-                        />
+                      <div className="inrow"><span className="pre">$</span>
+                        <input type="number" inputMode="decimal" value={closeVarActuals[e.id] || ''}
+                          onChange={ev => setCloseVarActuals(p => ({ ...p, [e.id]: ev.target.value }))} />
                       </div>
                     </div>
                   ))
               }
               <div className="skipnote"><b>Budget items skipped on purpose.</b> The real balance is the check.</div>
             </>}
-
             {closeStep === 1 && <>
               <h3>Did income land?</h3>
               <p className="sd">Confirm the expected deposits — adjust if anything differed.</p>
@@ -1268,34 +1172,26 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                 : incomeInCycle.map(s => (
                     <div key={s.id} className="field">
                       <label>{s.name} — expected {fmt(s.expectedCents, false)}</label>
-                      <div className="inrow">
-                        <span className="pre">$</span>
-                        <input type="number" inputMode="decimal"
-                          value={closeIncomeActuals[s.id] || ''}
-                          onChange={ev => setCloseIncomeActuals(p => ({ ...p, [s.id]: ev.target.value }))}
-                        />
+                      <div className="inrow"><span className="pre">$</span>
+                        <input type="number" inputMode="decimal" value={closeIncomeActuals[s.id] || ''}
+                          onChange={ev => setCloseIncomeActuals(p => ({ ...p, [s.id]: ev.target.value }))} />
                       </div>
                     </div>
                   ))
               }
-              <div className="skipnote"><b>Bonus or windfall?</b> Add it here — that's where a potential item becomes real.</div>
+              <div className="skipnote"><b>Bonus or windfall?</b> Add it here.</div>
             </>}
-
             {closeStep === 2 && <>
               <h3>Your real balance</h3>
               <p className="sd">Whatever your bank says wins — it becomes next cycle's opening balance.</p>
               <div className="field">
                 <label>Actual balance right now</label>
-                <div className="inrow">
-                  <span className="pre">$</span>
-                  <input type="number" inputMode="decimal"
-                    value={closeRealBalance} onChange={e => setCloseRealBalance(e.target.value)} placeholder="0.00"
-                  />
+                <div className="inrow"><span className="pre">$</span>
+                  <input type="number" inputMode="decimal" value={closeRealBalance} onChange={e => setCloseRealBalance(e.target.value)} placeholder="0.00" />
                 </div>
                 <p className="hint">We projected {fmt(activeCycle.committedClosingBalanceCents, false)}.</p>
               </div>
             </>}
-
             {closeStep === 3 && <>
               <h3>Reconcile & close</h3>
               <p className="sd">The gap between forecast and reality.</p>
@@ -1303,59 +1199,38 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
               {confirmedVarTotalCents > 0 && <div className="recline"><span>Confirmed variables</span><b>−{fmt(confirmedVarTotalCents, false)}</b></div>}
               <div className="recline"><span>Your real balance</span><b>{closeRealCents > 0 ? fmt(closeRealCents, false) : '—'}</b></div>
               <div className={`recline${unaccountedCents >= 0 ? ' res' : ''}`}>
-                <span>Unaccounted (groceries / other)</span>
+                <span>Unaccounted</span>
                 <b>{unaccountedCents >= 0 ? '+' : '−'}{fmt(Math.abs(unaccountedCents), false)}</b>
               </div>
               <div className="skipnote" style={{ marginTop:13 }}>
-                {unaccountedCents >= 0
-                  ? 'Closing above forecast — expected when baselines run conservative.'
-                  : 'Closing below forecast — spent a little more than projected.'}
+                {unaccountedCents >= 0 ? 'Closing above forecast — expected when baselines run conservative.' : 'Closing below forecast — spent a little more than projected.'}
               </div>
             </>}
-
             {closeFrozen
-              ? (
-                <div style={{
-                  textAlign:'center', padding:'24px 0',
-                  fontFamily:"'Space Grotesk',sans-serif", fontSize:18, fontWeight:600,
-                  color:'var(--pos)',
-                }}>
-                  ✓ Cycle frozen
-                </div>
-              )
-              : (
-                <div className="navrow">
+              ? <div style={{ textAlign:'center', padding:'24px 0', fontFamily:"'Space Grotesk',sans-serif", fontSize:18, fontWeight:600, color:'var(--pos)' }}>✓ Cycle frozen</div>
+              : <div className="navrow">
                   {closeStep > 0 && <button onClick={() => setCloseStep(s => s - 1)}>Back</button>}
                   {closeStep < 3
                     ? <button className="pri" onClick={() => setCloseStep(s => s + 1)}>Next</button>
-                    : <button
-                        className="pri"
-                        style={{ opacity: closeRealCents > 0 && !closeSaving ? 1 : 0.4 }}
-                        onClick={applyFreeze}
-                      >
+                    : <button className="pri" style={{ opacity: closeRealCents > 0 && !closeSaving ? 1 : 0.4 }} onClick={applyFreeze}>
                         {closeSaving ? 'Freezing…' : 'Freeze & start next cycle'}
                       </button>
                   }
                 </div>
-              )
             }
           </div>
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════
-          OVERLAY 4 — Add to this cycle (type picker → one-off / money-in / layby form)
-          ═══════════════════════════════════════════════════════════ */}
+      {/* ═══ OVERLAY 4 — Add to this cycle ═══ */}
       {addOpen && (
         <div className="ov" onClick={closeAddSheet}>
           <div className="sheet" onClick={e => e.stopPropagation()}>
             <button className="xbtn" onClick={closeAddSheet}>×</button>
             <div className="grab" />
-
             {addStep === 0 && <>
               <h3>Add to this cycle</h3>
               <p className="sd">{fmtDate(activeCycle.startDate)} – {fmtDate(activeCycle.endDate)}. Pick the kind of thing — the form adapts.</p>
-
               <div className="typeopt" onClick={() => selectAddType('oneoff')}>
                 <div className="ti ic fix">−</div>
                 <div className="tx2"><div className="tt2">One-off expense</div><div className="ts2">A single cost on a date.</div></div>
@@ -1369,209 +1244,117 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
                 <div className="tx2"><div className="tt2">Lay-by or instalment</div><div className="ts2">A fixed total, paid off over time. Self-retires when done.</div></div>
               </div>
             </>}
-
             {addStep === 1 && addType === 'oneoff' && <>
               <h3>One-off expense</h3>
               <p className="sd">A single cost on a date — doesn't repeat.</p>
-
-              <div className="field">
-                <label>What's it for?</label>
-                <div className="inrow">
-                  <input type="text" value={oneoffName} onChange={e => setOneoffName(e.target.value)} placeholder="e.g. Car registration" />
-                </div>
+              <div className="field"><label>What's it for?</label>
+                <div className="inrow"><input type="text" value={oneoffName} onChange={e => setOneoffName(e.target.value)} placeholder="e.g. Car registration" /></div>
               </div>
-
-              <div className="field">
-                <label>Amount</label>
-                <div className="inrow">
-                  <span className="pre">$</span>
+              <div className="field"><label>Amount</label>
+                <div className="inrow"><span className="pre">$</span>
                   <input type="number" inputMode="decimal" value={oneoffAmount} onChange={e => setOneoffAmount(e.target.value)} placeholder="0" />
                 </div>
               </div>
-
-              <div className="field">
-                <label>Date</label>
+              <div className="field"><label>Date</label>
                 <div className="inrow">
-                  <input
-                    type="date" value={oneoffDate} onChange={e => setOneoffDate(e.target.value)}
-                    style={{ border:'none', background:'transparent', color:'var(--ink)', fontFamily:"'Space Grotesk',sans-serif", fontSize:15, fontWeight:600, width:'100%', outline:'none' }}
-                  />
+                  <input type="date" value={oneoffDate} onChange={e => setOneoffDate(e.target.value)}
+                    style={{ border:'none', background:'transparent', color:'var(--ink)', fontFamily:"'Space Grotesk',sans-serif", fontSize:15, fontWeight:600, width:'100%', outline:'none' }} />
                 </div>
-                <p className="hint">Defaults to the start of this cycle — change it if it actually falls in a different one.</p>
+                <p className="hint">Defaults to the start of this cycle.</p>
               </div>
-
               {addError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:10 }}>{addError}</p>}
-
               <div className="navrow">
                 <button onClick={() => setAddStep(0)}>Back</button>
-                <button
-                  className="pri"
-                  onClick={saveOneOff}
-                  style={{ opacity: addSaving ? 0.6 : 1, cursor: addSaving ? 'default' : 'pointer' }}
-                >
-                  {addSaving ? 'Saving…' : 'Add expense'}
-                </button>
+                <button className="pri" onClick={saveOneOff} style={{ opacity: addSaving ? 0.6 : 1 }}>{addSaving ? 'Saving…' : 'Add expense'}</button>
               </div>
             </>}
-
             {addStep === 1 && addType === 'income' && <>
               <h3>Money coming in</h3>
               <p className="sd">A one-off amount landing in this cycle.</p>
-
-              <div className="field">
-                <label>What is it?</label>
-                <div className="inrow">
-                  <input type="text" value={incomeName} onChange={e => setIncomeName(e.target.value)} placeholder="e.g. Tax return" />
-                </div>
+              <div className="field"><label>What is it?</label>
+                <div className="inrow"><input type="text" value={incomeName} onChange={e => setIncomeName(e.target.value)} placeholder="e.g. Tax return" /></div>
               </div>
-
-              <div className="field">
-                <label>Amount</label>
-                <div className="inrow">
-                  <span className="pre">$</span>
+              <div className="field"><label>Amount</label>
+                <div className="inrow"><span className="pre">$</span>
                   <input type="number" inputMode="decimal" value={incomeAmount} onChange={e => setIncomeAmount(e.target.value)} placeholder="0" />
                 </div>
               </div>
-
-              <div className="field">
-                <label>Date</label>
+              <div className="field"><label>Date</label>
                 <div className="inrow">
-                  <input
-                    type="date" value={incomeDate} onChange={e => setIncomeDate(e.target.value)}
-                    style={{ border:'none', background:'transparent', color:'var(--ink)', fontFamily:"'Space Grotesk',sans-serif", fontSize:15, fontWeight:600, width:'100%', outline:'none' }}
-                  />
+                  <input type="date" value={incomeDate} onChange={e => setIncomeDate(e.target.value)}
+                    style={{ border:'none', background:'transparent', color:'var(--ink)', fontFamily:"'Space Grotesk',sans-serif", fontSize:15, fontWeight:600, width:'100%', outline:'none' }} />
                 </div>
-                <p className="hint">Defaults to the start of this cycle — change it if it lands in a different one.</p>
               </div>
-
-              <div className="field" style={{ marginBottom: 4 }}>
-                <label>How sure is it?</label>
-              </div>
-
+              <div className="field" style={{ marginBottom: 4 }}><label>How sure is it?</label></div>
               <div className={`opt${!incomeCertain ? ' sel' : ''}`} onClick={() => setIncomeCertain(false)} style={{ display:'flex', gap:11, alignItems:'flex-start' }}>
                 <div style={{ ...certIconBase, border: '1.5px dashed var(--pos)' }}>?</div>
-                <div>
-                  <div className="ot">Not certain yet</div>
-                  <div className="os">Shown on the cycle, but kept out of your forecast until it lands.</div>
-                  <div style={{ fontSize:11, color:'var(--faint)', marginTop:4, fontStyle:'italic' }}>e.g. a bonus that hasn't been confirmed</div>
-                </div>
+                <div><div className="ot">Not certain yet</div><div className="os">Shown on the cycle, but kept out of your forecast until it lands.</div></div>
               </div>
               <div className={`opt${incomeCertain ? ' sel' : ''}`} onClick={() => setIncomeCertain(true)} style={{ display:'flex', gap:11, alignItems:'flex-start' }}>
                 <div style={certIconBase}>✓</div>
-                <div>
-                  <div className="ot">Confirmed</div>
-                  <div className="os">Counts toward your projected balance, same as your pay.</div>
-                  <div style={{ fontSize:11, color:'var(--faint)', marginTop:4, fontStyle:'italic' }}>e.g. an approved refund with a date</div>
-                </div>
+                <div><div className="ot">Confirmed</div><div className="os">Counts toward your projected balance, same as your pay.</div></div>
               </div>
-
               {addError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:10 }}>{addError}</p>}
-
               <div className="navrow">
                 <button onClick={() => setAddStep(0)}>Back</button>
-                <button
-                  className="pri"
-                  onClick={saveIncome}
-                  style={{ opacity: addSaving ? 0.6 : 1, cursor: addSaving ? 'default' : 'pointer' }}
-                >
-                  {addSaving ? 'Saving…' : 'Add income'}
-                </button>
+                <button className="pri" onClick={saveIncome} style={{ opacity: addSaving ? 0.6 : 1 }}>{addSaving ? 'Saving…' : 'Add income'}</button>
               </div>
             </>}
-
             {addStep === 1 && addType === 'layby' && <>
               <h3>Lay-by or instalment</h3>
               <p className="sd">A fixed total, split into equal payments. Stops itself once paid off.</p>
-
-              <div className="field">
-                <label>What's it for?</label>
-                <div className="inrow">
-                  <input type="text" value={laybyName} onChange={e => setLaybyName(e.target.value)} placeholder="e.g. Winter coat" />
-                </div>
+              <div className="field"><label>What's it for?</label>
+                <div className="inrow"><input type="text" value={laybyName} onChange={e => setLaybyName(e.target.value)} placeholder="e.g. Winter coat" /></div>
               </div>
-
-              <div className="field">
-                <label>Total</label>
-                <div className="inrow">
-                  <span className="pre">$</span>
+              <div className="field"><label>Total</label>
+                <div className="inrow"><span className="pre">$</span>
                   <input type="number" inputMode="decimal" value={laybyTotal} onChange={e => setLaybyTotal(e.target.value)} placeholder="0" />
                 </div>
               </div>
-
-              <div className="field">
-                <label>Pay every</label>
+              <div className="field"><label>Pay every</label>
                 <div className="freq-picker">
                   {(['weekly','fortnightly','monthly','annually'] as const).map(f => (
-                    <button
-                      key={f}
-                      className={`freq-opt${laybyFrequency === f ? ' sel' : ''}`}
-                      onClick={() => setLaybyFrequency(f)}
-                    >
+                    <button key={f} className={`freq-opt${laybyFrequency === f ? ' sel' : ''}`} onClick={() => setLaybyFrequency(f)}>
                       {f === 'weekly' ? 'Weekly' : f === 'fortnightly' ? 'Fortnightly' : f === 'monthly' ? 'Monthly' : 'Annually'}
                     </button>
                   ))}
                 </div>
               </div>
-
-              <div className="field">
-                <label>Payments</label>
+              <div className="field"><label>Payments</label>
+                <div className="inrow"><input type="number" inputMode="numeric" value={laybyPayments} onChange={e => setLaybyPayments(e.target.value)} placeholder="4" /></div>
+              </div>
+              <div className="field"><label>First payment</label>
                 <div className="inrow">
-                  <input type="number" inputMode="numeric" value={laybyPayments} onChange={e => setLaybyPayments(e.target.value)} placeholder="4" />
+                  <input type="date" value={laybyFirstDate} onChange={e => setLaybyFirstDate(e.target.value)}
+                    style={{ border:'none', background:'transparent', color:'var(--ink)', fontFamily:"'Space Grotesk',sans-serif", fontSize:15, fontWeight:600, width:'100%', outline:'none' }} />
                 </div>
               </div>
-
-              <div className="field">
-                <label>First payment</label>
-                <div className="inrow">
-                  <input
-                    type="date" value={laybyFirstDate} onChange={e => setLaybyFirstDate(e.target.value)}
-                    style={{ border:'none', background:'transparent', color:'var(--ink)', fontFamily:"'Space Grotesk',sans-serif", fontSize:15, fontWeight:600, width:'100%', outline:'none' }}
-                  />
-                </div>
-              </div>
-
               {laybyCountNum > 0 && laybyTotalCents > 0 && laybyFirstDate && (
                 <div className="skipnote">
                   <b>{fmt(laybyPerPaymentCents, false)}</b> per payment × {laybyCountNum}
                   {laybyRemainderCents !== 0 && <> (last payment {fmt(laybyPerPaymentCents + laybyRemainderCents, false)}, absorbs rounding)</>}
-                  <br />First payment {fmtDate(laybyDates[0])} · last payment {fmtDate(laybyEndDate)}
+                  <br />First {fmtDate(laybyDates[0])} · last {fmtDate(laybyEndDate)}
                 </div>
               )}
-
               {addError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:10 }}>{addError}</p>}
-
               <div className="navrow">
                 <button onClick={() => setAddStep(0)}>Back</button>
-                <button
-                  className="pri"
-                  onClick={saveLayby}
-                  style={{ opacity: laybySaving ? 0.6 : 1, cursor: laybySaving ? 'default' : 'pointer' }}
-                >
-                  {laybySaving ? 'Saving…' : 'Add lay-by'}
-                </button>
+                <button className="pri" onClick={saveLayby} style={{ opacity: laybySaving ? 0.6 : 1 }}>{laybySaving ? 'Saving…' : 'Add lay-by'}</button>
               </div>
             </>}
-
             {addStep === 2 && addType === 'layby' && laybyResult && <>
               <h3>Lay-by added</h3>
               <p className="sd">{laybyResult.name} is now tracked across {laybyResult.count} cycles.</p>
               <div className="recline"><span>Total</span><b>{fmt(laybyResult.totalCents)}</b></div>
               <div className="recline"><span>Per payment</span><b>{fmt(laybyResult.perPaymentCents)}</b></div>
               <div className="recline res"><span>Paid off by</span><b>{fmtDate(laybyResult.endDate)}</b></div>
-              <div className="skipnote" style={{ marginTop:13 }}>
-                It'll show up as a card in every cycle it touches, and disappear on its own once the last payment lands.
-              </div>
-              <div className="navrow">
-                <button className="pri" onClick={() => { closeAddSheet(); reload() }}>Done</button>
-              </div>
+              <div className="navrow"><button className="pri" onClick={() => { closeAddSheet(); reload() }}>Done</button></div>
             </>}
           </div>
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════
-          OVERLAY 5 — Budget spend log (tap a budget card to open)
-          ═══════════════════════════════════════════════════════════ */}
+      {/* ═══ OVERLAY 5 — Budget spend log ═══ */}
       {logItem && (
         <div className="ov" onClick={closeLog}>
           <div className="sheet" onClick={e => e.stopPropagation()}>
@@ -1579,28 +1362,25 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
             <div className="grab" />
             <h3>{logItem.name}</h3>
             <p className="sd">This cycle · {fmtDate(activeCycle.startDate)} – {fmtDate(activeCycle.endDate)}</p>
-
-            {entriesForExpenseInCycle(logItem.expenseId).length === 0 ? (
-              <div className="skipnote">No spend logged yet this cycle.</div>
-            ) : (
-              entriesForExpenseInCycle(logItem.expenseId).map((entry: any) =>
-                editingEntryId === entry.id ? (
-                  <div key={entry.id} className="entry-row">
-                    <input className="entry-edit-label" value={editEntryLabel} onChange={e => setEditEntryLabel(e.target.value)} />
-                    <input className="entry-edit-amount" type="number" inputMode="decimal" value={editEntryAmount} onChange={e => setEditEntryAmount(e.target.value)} />
-                    <span className="entry-save" onClick={() => saveEditEntry(entry)}>save</span>
-                  </div>
-                ) : (
-                  <div key={entry.id} className="entry-row">
-                    <div className="entry-date">{fmtDate(entry.spent_date)}</div>
-                    <div className="entry-label" onClick={() => startEditEntry(entry)}>{entry.label}</div>
-                    <div className="entry-amount" onClick={() => startEditEntry(entry)}>{fmt(entry.amount_cents, false)}</div>
-                    <span className="entry-del" onClick={() => deleteEntry(entry)}>✕</span>
-                  </div>
+            {entriesForExpenseInCycle(logItem.expenseId).length === 0
+              ? <div className="skipnote">No spend logged yet this cycle.</div>
+              : entriesForExpenseInCycle(logItem.expenseId).map((entry: any) =>
+                  editingEntryId === entry.id ? (
+                    <div key={entry.id} className="entry-row">
+                      <input className="entry-edit-label" value={editEntryLabel} onChange={e => setEditEntryLabel(e.target.value)} />
+                      <input className="entry-edit-amount" type="number" inputMode="decimal" value={editEntryAmount} onChange={e => setEditEntryAmount(e.target.value)} />
+                      <span className="entry-save" onClick={() => saveEditEntry(entry)}>save</span>
+                    </div>
+                  ) : (
+                    <div key={entry.id} className="entry-row">
+                      <div className="entry-date">{fmtDate(entry.spent_date)}</div>
+                      <div className="entry-label" onClick={() => startEditEntry(entry)}>{entry.label}</div>
+                      <div className="entry-amount" onClick={() => startEditEntry(entry)}>{fmt(entry.amount_cents, false)}</div>
+                      <span className="entry-del" onClick={() => deleteEntry(entry)}>✕</span>
+                    </div>
+                  )
                 )
-              )
-            )}
-
+            }
             <div className="recline" style={{ marginTop: 4 }}>
               <span>Total logged</span>
               <b>{fmt(entriesForExpenseInCycle(logItem.expenseId).reduce((s: number, e: any) => s + e.amount_cents, 0), false)}</b>
@@ -1609,73 +1389,45 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════
-          OVERLAY 6 — One-off management: edit name, amount, certainty + delete
-          ═══════════════════════════════════════════════════════════ */}
+      {/* ═══ OVERLAY 6 — One-off management ═══ */}
       {oneOffItem && (
         <div className="ov" onClick={() => setOneOffItem(null)}>
           <div className="sheet" onClick={e => e.stopPropagation()}>
             <button className="xbtn" onClick={() => setOneOffItem(null)}>×</button>
             <div className="grab" />
             <h3>{oneOffItem.oneOffKind === 'income' ? 'Money coming in' : 'One-off expense'}</h3>
-            <p className="sd">
-              {oneOffItem.oneOffDateStr} · one-off
-            </p>
-
-            <div className="field">
-              <label>What is it?</label>
-              <div className="inrow">
-                <input type="text" value={oneOffName} onChange={e => setOneOffName(e.target.value)} />
-              </div>
+            <p className="sd">{oneOffItem.oneOffDateStr} · one-off</p>
+            <div className="field"><label>What is it?</label>
+              <div className="inrow"><input type="text" value={oneOffName} onChange={e => setOneOffName(e.target.value)} /></div>
             </div>
-
-            <div className="field">
-              <label>Amount</label>
-              <div className="inrow">
-                <span className="pre">$</span>
+            <div className="field"><label>Amount</label>
+              <div className="inrow"><span className="pre">$</span>
                 <input type="number" inputMode="decimal" value={oneOffAmt} onChange={e => setOneOffAmt(e.target.value)} />
               </div>
             </div>
-
             {oneOffItem.oneOffKind === 'income' && <>
-              <div className="field" style={{ marginBottom: 4 }}>
-                <label>How sure is it?</label>
-              </div>
+              <div className="field" style={{ marginBottom: 4 }}><label>How sure is it?</label></div>
               <div className={`opt${!oneOffCertain ? ' sel' : ''}`} onClick={() => setOneOffCertain(false)} style={{ display:'flex', gap:11, alignItems:'flex-start' }}>
                 <div style={{ ...certIconBase, border: '1.5px dashed var(--pos)' }}>?</div>
-                <div>
-                  <div className="ot">Not certain yet</div>
-                  <div className="os">Shown on the cycle, but kept out of your forecast until it lands.</div>
-                  <div style={{ fontSize:11, color:'var(--faint)', marginTop:4, fontStyle:'italic' }}>e.g. a bonus that hasn't been confirmed</div>
-                </div>
+                <div><div className="ot">Not certain yet</div><div className="os">Kept out of your forecast until it lands.</div></div>
               </div>
               <div className={`opt${oneOffCertain ? ' sel' : ''}`} onClick={() => setOneOffCertain(true)} style={{ display:'flex', gap:11, alignItems:'flex-start' }}>
                 <div style={certIconBase}>✓</div>
-                <div>
-                  <div className="ot">Confirmed</div>
-                  <div className="os">Counts toward your projected balance, same as your pay.</div>
-                  <div style={{ fontSize:11, color:'var(--faint)', marginTop:4, fontStyle:'italic' }}>e.g. an approved refund with a date</div>
-                </div>
+                <div><div className="ot">Confirmed</div><div className="os">Counts toward your projected balance.</div></div>
               </div>
             </>}
-
             {oneOffError && <p style={{ color:'var(--floor)', fontSize:13, marginTop:8, marginBottom:0 }}>{oneOffError}</p>}
-
             <div className="navrow">
               <button onClick={() => setOneOffItem(null)}>Cancel</button>
-              <button
-                className="pri"
-                onClick={saveOneOffEdits}
-                style={{ opacity: oneOffSaving ? 0.6 : 1, cursor: oneOffSaving ? 'default' : 'pointer' }}
-              >
+              <button className="pri" onClick={saveOneOffEdits} style={{ opacity: oneOffSaving ? 0.6 : 1 }}>
                 {oneOffSaving ? 'Saving…' : 'Save changes'}
               </button>
             </div>
             <button onClick={deleteOneOff} style={{
-              display: 'block', width: '100%', marginTop: 12, padding: '10px',
-              background: 'none', border: 'none', cursor: 'pointer',
-              color: 'var(--floor)', fontSize: 13, fontWeight: 600,
-              fontFamily: "'Space Grotesk',sans-serif",
+              display:'block', width:'100%', marginTop:12, padding:'10px',
+              background:'none', border:'none', cursor:'pointer',
+              color:'var(--floor)', fontSize:13, fontWeight:600,
+              fontFamily:"'Space Grotesk',sans-serif",
               opacity: oneOffDeleting ? 0.6 : 1,
             }}>
               {oneOffDeleting ? 'Removing…' : oneOffItem.oneOffKind === 'income' ? 'Delete this income' : 'Delete this expense'}
@@ -1683,7 +1435,6 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
           </div>
         </div>
       )}
-
     </>
   )
 }

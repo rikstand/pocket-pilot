@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import {
-  getIncomeSources, getExpenses, getCycles, getProfile,
+  getIncomeSources, getExpenses, getCycles,
   getWishlistItems, addWishlistItem, reorderWishlistItems,
   commitWishlistItem, uncommitWishlistItem, deleteWishlistItem,
 } from './lib/repository'
+import { useAccount } from './lib/AccountContext'
 import { projectCycles } from './engine/index'
 
 function fmt(cents: number, showCents = true) {
@@ -20,12 +21,6 @@ function fmtDate(d: string) {
 }
 function today() { return new Date().toISOString().split('T')[0] }
 
-// ── THE RESOLVER ────────────────────────────────────────────────────
-// Walks active items in rank order against the real projected cycles.
-// Priority is a strict sequence: an item can never clear earlier than
-// the one ranked above it, even if the budget alone would allow it.
-// Validated in isolation before being wired in here — see the resolver
-// mock from the design session for the reasoning behind each rule.
 function resolveActive(items: any[], cycles: any[], floorCents: number) {
   const reserved = cycles.map(() => 0)
   const results: any[] = []
@@ -48,13 +43,13 @@ function resolveActive(items: any[], cycles: any[], floorCents: number) {
   return results
 }
 
-export default function WishlistPage({ userId }: { userId: string }) {
-  const [items,      setItems]      = useState<any[]>([])
-  const [cycles,     setCycles]     = useState<any[]>([])
-  const [floorCents, setFloorCents] = useState(0)
-  const [loading,    setLoading]    = useState(true)
-  const [error,      setError]      = useState('')
-  const [reloadKey,  setReloadKey]  = useState(0)
+export default function WishlistPage({ userId, accountId }: { userId: string; accountId: string }) {
+  const { activeAccount } = useAccount()
+  const [items,     setItems]     = useState<any[]>([])
+  const [cycles,    setCycles]    = useState<any[]>([])
+  const [loading,   setLoading]   = useState(true)
+  const [error,     setError]     = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
 
   const [addOpen,   setAddOpen]   = useState(false)
   const [addName,   setAddName]   = useState('')
@@ -62,22 +57,25 @@ export default function WishlistPage({ userId }: { userId: string }) {
   const [addSaving, setAddSaving] = useState(false)
   const [addError,  setAddError]  = useState('')
 
-  const [commitTarget,  setCommitTarget]  = useState<any>(null)
-  const [commitSaving,  setCommitSaving]  = useState(false)
-  const [uncommitTarget,setUncommitTarget]= useState<any>(null)
-  const [uncommitSaving,setUncommitSaving]= useState(false)
-  const [boughtTarget,  setBoughtTarget]  = useState<any>(null)
-  const [boughtSaving,  setBoughtSaving]  = useState(false)
+  const [commitTarget,   setCommitTarget]   = useState<any>(null)
+  const [commitSaving,   setCommitSaving]   = useState(false)
+  const [uncommitTarget, setUncommitTarget] = useState<any>(null)
+  const [uncommitSaving, setUncommitSaving] = useState(false)
+  const [boughtTarget,   setBoughtTarget]   = useState<any>(null)
+  const [boughtSaving,   setBoughtSaving]   = useState(false)
+
+  const floorCents = activeAccount?.safety_floor_cents ?? 0
 
   useEffect(() => {
     async function load() {
       setLoading(true)
       try {
-        const [prof, income, expenses, storedCycles, wishlist] = await Promise.all([
-          getProfile(userId), getIncomeSources(userId), getExpenses(userId),
-          getCycles(userId), getWishlistItems(userId),
+        const [income, expenses, storedCycles, wishlist] = await Promise.all([
+          getIncomeSources(accountId),
+          getExpenses(accountId),
+          getCycles(accountId),
+          getWishlistItems(accountId),
         ])
-        setFloorCents(prof?.safety_floor_cents ?? 0)
         setItems(wishlist)
 
         const engineIncome = income.map((src: any) => {
@@ -99,26 +97,24 @@ export default function WishlistPage({ userId }: { userId: string }) {
           openingBalanceCents: projectFrom?.opening_balance_cents ?? 0,
           startDate: projectFrom?.start_date ?? today(),
           numCycles: 6,
-          safetyFloorCents: prof?.safety_floor_cents ?? 0,
+          safetyFloorCents: floorCents,
         })
         setCycles(projected)
       } catch (e: any) { setError(e.message) }
       finally { setLoading(false) }
     }
     load()
-  }, [userId, reloadKey])
+  }, [accountId, reloadKey])
 
   function reload() { setReloadKey(k => k + 1) }
 
   if (loading) return <div className="scrollarea" style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%' }}><p style={{ color:'var(--mut)' }}>Loading…</p></div>
-  if (error) return <div className="scrollarea" style={{ padding:24 }}><p style={{ color:'var(--floor)' }}>{error}</p></div>
+  if (error)   return <div className="scrollarea" style={{ padding:24 }}><p style={{ color:'var(--floor)' }}>{error}</p></div>
 
   const activeItems    = items.filter(i => i.status === 'active').sort((a, b) => a.rank - b.rank)
   const committedItems = items.filter(i => i.status === 'committed').sort((a, b) => a.rank - b.rank)
-  const resolved        = resolveActive(activeItems, cycles, floorCents)
+  const resolved       = resolveActive(activeItems, cycles, floorCents)
 
-  // For each committed item, find its cycle and check whether it still clears the floor —
-  // the numbers here are real, since the commitment is a real expense the engine already accounted for.
   const committedWithRisk = committedItems.map(item => {
     const cycle = cycles.find(c => c.startDate === item.committed_cycle_start)
     const atRisk = cycle ? cycle.committedClosingBalanceCents < floorCents : false
@@ -126,20 +122,18 @@ export default function WishlistPage({ userId }: { userId: string }) {
     return { ...item, cycle, atRisk, shortfallCents }
   })
 
-  // ── add item ────────────────────────────────────────────────────
   function openAdd() { setAddName(''); setAddAmount(''); setAddError(''); setAddOpen(true) }
   async function saveAdd() {
     const cents = Math.round(parseFloat(addAmount || '0') * 100)
     if (!addName.trim() || !cents) { setAddError('Name and cost are required.'); return }
     setAddSaving(true); setAddError('')
     try {
-      await addWishlistItem(userId, addName.trim(), cents)
+      await addWishlistItem(accountId, addName.trim(), cents)
       setAddOpen(false); reload()
     } catch (e: any) { setAddError(e.message) }
     finally { setAddSaving(false) }
   }
 
-  // ── reorder ─────────────────────────────────────────────────────
   async function moveItem(item: any, dir: -1 | 1) {
     const idx = activeItems.findIndex(i => i.id === item.id)
     const swapIdx = idx + dir
@@ -151,7 +145,6 @@ export default function WishlistPage({ userId }: { userId: string }) {
     } catch (e: any) { alert('Could not reorder: ' + e.message) }
   }
 
-  // ── bought (delete wishlist row only — any committed expense stays real) ──
   async function doMarkBought() {
     if (!boughtTarget) return
     setBoughtSaving(true)
@@ -162,11 +155,11 @@ export default function WishlistPage({ userId }: { userId: string }) {
     finally { setBoughtSaving(false) }
   }
 
-  // ── commit ──────────────────────────────────────────────────────
   function openCommit(resolvedItem: any) {
     if (resolvedItem.clearedAt === null) return
     setCommitTarget(resolvedItem)
   }
+
   async function doCommit() {
     if (!commitTarget) return
     const cycle = cycles[commitTarget.clearedAt]
@@ -174,7 +167,14 @@ export default function WishlistPage({ userId }: { userId: string }) {
     try {
       const { data: exp, error: e1 } = await supabase
         .from('expenses')
-        .insert({ profile_id: userId, name: commitTarget.name, frequency: 'once', anchor_date: cycle.startDate, mode: 'fixed' })
+        .insert({
+          profile_id: userId,
+          account_id: accountId,
+          name: commitTarget.name,
+          frequency: 'once',
+          anchor_date: cycle.startDate,
+          mode: 'fixed',
+        })
         .select().single()
       if (e1) throw e1
       const { error: e2 } = await supabase
@@ -187,7 +187,6 @@ export default function WishlistPage({ userId }: { userId: string }) {
     finally { setCommitSaving(false) }
   }
 
-  // ── uncommit ────────────────────────────────────────────────────
   async function doUncommit() {
     if (!uncommitTarget) return
     setUncommitSaving(true)
@@ -277,7 +276,7 @@ export default function WishlistPage({ userId }: { userId: string }) {
 
       </div>
 
-      {/* ── add item ──────────────────────────────────────────────── */}
+      {/* ── add item ── */}
       {addOpen && (
         <div className="ov" onClick={() => setAddOpen(false)}>
           <div className="sheet" onClick={e => e.stopPropagation()}>
@@ -302,7 +301,7 @@ export default function WishlistPage({ userId }: { userId: string }) {
         </div>
       )}
 
-      {/* ── commit confirm ───────────────────────────────────────── */}
+      {/* ── commit confirm ── */}
       {commitTarget && (
         <div className="ov" onClick={() => setCommitTarget(null)}>
           <div className="sheet" onClick={e => e.stopPropagation()}>
@@ -321,7 +320,7 @@ export default function WishlistPage({ userId }: { userId: string }) {
         </div>
       )}
 
-      {/* ── uncommit confirm ─────────────────────────────────────── */}
+      {/* ── uncommit confirm ── */}
       {uncommitTarget && (
         <div className="ov" onClick={() => setUncommitTarget(null)}>
           <div className="sheet" onClick={e => e.stopPropagation()}>
@@ -339,7 +338,8 @@ export default function WishlistPage({ userId }: { userId: string }) {
           </div>
         </div>
       )}
-      {/* ── bought confirm ───────────────────────────────────────── */}
+
+      {/* ── bought confirm ── */}
       {boughtTarget && (
         <div className="ov" onClick={() => setBoughtTarget(null)}>
           <div className="sheet" onClick={e => e.stopPropagation()}>

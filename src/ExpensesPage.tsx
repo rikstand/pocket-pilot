@@ -3,10 +3,6 @@ import { supabase } from './lib/supabase'
 import { getExpenses, getLayBys } from './lib/repository'
 import { ExpenseIcon, guessIcon, iconLabel, ICON_GROUPS } from './lib/icons'
 
-// 'once' stays in the type (one-off rows exist in the table and share these
-// labels), but the Expenses page is recurring-commitments-only: one-offs are
-// created and managed from the Dashboard's "Add to this cycle" flow, so they
-// are filtered out of every section below and removed from the add form.
 const FREQUENCIES = ['weekly', 'fortnightly', 'monthly', 'annually', 'once'] as const
 type Frequency = typeof FREQUENCIES[number]
 type Mode      = 'fixed' | 'variable' | 'budget'
@@ -28,11 +24,9 @@ const MODE_META: Record<Mode, { iconClass: string; chip: string; chipLabel: stri
 function fmt(cents: number) {
   return '$' + (Math.abs(cents) / 100).toLocaleString('en-NZ', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 }
-
 function fmtDate(d: string) {
   return new Date(d + 'T00:00:00').toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
 }
-
 function toFn(cents: number, freq: string): number {
   if (freq === 'weekly')      return cents * 2
   if (freq === 'fortnightly') return cents
@@ -40,11 +34,9 @@ function toFn(cents: number, freq: string): number {
   if (freq === 'annually')    return Math.round(cents * 14 / 365.25)
   return cents
 }
-
 const FREQ_SHORT: Record<string, string> = {
   weekly: 'wk', fortnightly: 'fn', monthly: 'mo', annually: 'yr', once: 'one-off',
 }
-
 function cycleDetail(cents: number, freq: string, isEstimate: boolean): string {
   const prefix = isEstimate ? '~' : ''
   const raw = prefix + fmt(cents)
@@ -55,12 +47,7 @@ function cycleDetail(cents: number, freq: string, isEstimate: boolean): string {
   return `${raw}/${abbr} → ${norm}/fn`
 }
 
-// NOTE: onBack is kept in the props signature so parent wiring doesn't break,
-// but it's no longer wired to any button — navigation is handled by AppShell's
-// bottom nav / drawer, so the previous "← Dashboard" back button and the local
-// dark-mode toggle have both been removed to avoid duplicating the AppShell
-// appbar that now wraps every page.
-export default function ExpensesPage({ userId }: { userId: string; onBack?: () => void }) {
+export default function ExpensesPage({ userId, accountId, onBack }: { userId: string; accountId: string; onBack?: () => void }) {
   const [expenses, setExpenses] = useState<any[]>([])
   const [layBys,   setLayBys]   = useState<any[]>([])
   const [loading,  setLoading]  = useState(true)
@@ -81,7 +68,7 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
   const [laybyExp,   setLaybyExp]   = useState<any>(null)
   const [galOpen,    setGalOpen]    = useState(false)
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [accountId])
 
   useEffect(() => {
     if (sheet === 'add' && !iconManual && name.trim()) {
@@ -92,7 +79,7 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
   async function load() {
     setLoading(true)
     try {
-      const [exps, lbs] = await Promise.all([getExpenses(userId), getLayBys(userId)])
+      const [exps, lbs] = await Promise.all([getExpenses(accountId), getLayBys(accountId)])
       setExpenses(exps); setLayBys(lbs)
     } catch (e: any) { console.error(e) }
     finally { setLoading(false) }
@@ -130,7 +117,6 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
   }
 
   function closeSheet() { setSheet(null); setEditingExp(null); setFormError(''); setGalOpen(false) }
-
   function chooseIcon(n: string) { setIcon(n); setIconManual(true); setGalOpen(false) }
 
   async function handleSave() {
@@ -142,7 +128,7 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
       if (sheet === 'add') {
         const { data: exp, error: e1 } = await supabase
           .from('expenses')
-          .insert({ profile_id: userId, name: name.trim(), frequency, anchor_date: anchorDate, mode, icon })
+          .insert({ profile_id: userId, account_id: accountId, name: name.trim(), frequency, anchor_date: anchorDate, mode, icon })
           .select().single()
         if (e1) throw e1
         const { error: e2 } = await supabase
@@ -187,11 +173,6 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
     } catch (e: any) { setFormError(e.message) }
   }
 
-  // ── group expenses ──────────────────────────────────────────────
-  // One-offs (frequency 'once') are excluded everywhere: this page is the
-  // recurring-commitments view, and counting one-offs would also inflate
-  // the fortnightly-normalised totals in the summary bar. One-offs live on
-  // the Dashboard, in the cycle they belong to.
   const recurring  = expenses.filter(e => e.frequency !== 'once')
   const fixedExps  = recurring.filter(e => (e.mode ?? 'fixed') === 'fixed' && !e.lay_by_id)
   const varExps    = recurring.filter(e => e.mode === 'variable')
@@ -203,7 +184,6 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
       .sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
     return v?.amount_cents ?? 0
   }
-
   function groupTotalFn(exps: any[]): number {
     return exps.reduce((sum, e) => sum + toFn(latestCents(e), e.frequency), 0)
   }
@@ -215,12 +195,6 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
 
   const m = sheet ? MODE_META[mode] : MODE_META['fixed']
 
-  // ── lay-by sheet: build payment strip data ─────────────────────────
-  // Returns each scheduled payment as a cell with a state (past/current/future),
-  // a running remainder (target − cumulative paid through this cell), and a
-  // label. "past" = date ≤ today (scheduled, not verified-paid); "current" =
-  // date falls in a cycle spanning today; "future" = ahead. The last future
-  // cell gets "paid off" rather than "$0 left".
   function buildLaybyCells(exp: any) {
     if (!exp) return { cells: [], layby: null, target: 0, paidCents: 0, paidCount: 0, total: 0, endDate: '' as string | null }
     const layby = layBys.find((l: any) => l.id === exp.lay_by_id)
@@ -236,14 +210,7 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
       const remaining = Math.max(0, target - cumulative)
       const isLast = i === sorted.length - 1
       const state: 'past' | 'future' = v.effective_from <= todayStr ? 'past' : 'future'
-      return {
-        date: v.effective_from,
-        amountCents: v.amount_cents,
-        remainingCents: remaining,
-        state,
-        isLast,
-        paymentNumber: i + 1,
-      }
+      return { date: v.effective_from, amountCents: v.amount_cents, remainingCents: remaining, state, isLast, paymentNumber: i + 1 }
     })
 
     const paidCells = cells.filter(c => c.state === 'past')
@@ -254,7 +221,6 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
   }
   const laybyView = buildLaybyCells(laybyExp)
 
-  // ── render helpers ──────────────────────────────────────────────
   function renderRow(exp: any) {
     const cents    = latestCents(exp)
     const expMode  = (exp.mode ?? 'fixed') as Mode
@@ -262,16 +228,12 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
     const expIcon  = exp.icon || guessIcon(exp.name)
     const isEstimate = expMode === 'variable'
     const fnCents  = toFn(cents, exp.frequency)
-
     let rightLabel = 'THIS CYCLE'
     if (isEstimate)            rightLabel = 'ESTIMATE'
     else if (expMode === 'budget') rightLabel = 'PER CYCLE'
-
     return (
       <div key={exp.id} className="exp-row" onClick={() => openEdit(exp)}>
-        <div className="ri" style={{ background: em.sft, color: em.col }}>
-          <ExpenseIcon name={expIcon} size={16} />
-        </div>
+        <div className="ri" style={{ background: em.sft, color: em.col }}><ExpenseIcon name={expIcon} size={16} /></div>
         <div className="rm">
           <div className="rn">{exp.name}</div>
           <div className="rd">{cycleDetail(cents, exp.frequency, isEstimate)}</div>
@@ -288,24 +250,18 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
     const cents   = latestCents(exp)
     const expIcon = exp.icon || 'gift'
     const layby   = layBys.find((l: any) => l.id === exp.lay_by_id)
-
     const totalPayments = layby?.payments_total ?? 1
     const targetCents   = layby?.target_amount_cents ?? 0
     const todayStr      = new Date().toISOString().split('T')[0]
     const sortedVersions = [...(exp.expense_amount_versions ?? [])]
       .sort((a: any, b: any) => a.effective_from < b.effective_from ? -1 : 1)
     const paidCount = sortedVersions.filter((v: any) => v.effective_from <= todayStr).length
-    const paidCents = sortedVersions
-      .filter((v: any) => v.effective_from <= todayStr)
-      .reduce((s: number, v: any) => s + v.amount_cents, 0)
+    const paidCents = sortedVersions.filter((v: any) => v.effective_from <= todayStr).reduce((s: number, v: any) => s + v.amount_cents, 0)
     const remainingCents = Math.max(0, targetCents - paidCents)
     const progress = totalPayments > 0 ? Math.min(paidCount / totalPayments, 1) : 0
-
     return (
       <div key={exp.id} className="exp-row" onClick={() => setLaybyExp(exp)}>
-        <div className="ri" style={{ background: 'var(--event-s)', color: 'var(--event)' }}>
-          <ExpenseIcon name={expIcon} size={16} />
-        </div>
+        <div className="ri" style={{ background: 'var(--event-s)', color: 'var(--event)' }}><ExpenseIcon name={expIcon} size={16} /></div>
         <div className="rm">
           <div className="rn">{exp.name}</div>
           <div className="rd">{paidCount} of {totalPayments} · {fmt(remainingCents)} left · {exp.frequency}</div>
@@ -327,14 +283,9 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
     { key: 'layby',    label: 'Lay-bys',   color: 'var(--event)', exps: laybyExps,  total: laybyTotal, isLayby: true },
   ].filter(s => s.exps.length > 0)
 
-  // ── render ────────────────────────────────────────────────────────
-  // NOTE: no more <div className="app"> wrapper or local appbar — AppShell
-  // provides both. This component returns a fragment; the scrollarea is the
-  // outermost element so the layout still works inside AppShell's flex column.
   return (
     <>
       <div className="scrollarea">
-
         {loading && <p style={{ padding: 24, color: 'var(--mut)' }}>Loading…</p>}
 
         {!loading && recurring.length === 0 && (
@@ -372,10 +323,7 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
                 </div>
                 {isOpen && (
                   <div className="exp-rows">
-                    {sec.isLayby
-                      ? sec.exps.map(exp => renderLaybyRow(exp))
-                      : sec.exps.map(exp => renderRow(exp))
-                    }
+                    {sec.isLayby ? sec.exps.map(exp => renderLaybyRow(exp)) : sec.exps.map(exp => renderRow(exp))}
                   </div>
                 )}
               </div>
@@ -388,130 +336,82 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
             <button className="addbtn" onClick={openAdd}>+ Add expense</button>
           </div>
         )}
-
       </div>
 
-      {/* ═══════════ ADD / EDIT SHEET ═══════════ */}
+      {/* ═══ ADD / EDIT SHEET ═══ */}
       {sheet && (
         <div className="ov" onClick={closeSheet}>
           <div className="sheet" onClick={e => e.stopPropagation()}>
             <button className="xbtn" onClick={closeSheet}>×</button>
             <div className="grab" />
-
             <h3>{sheet === 'add' ? 'Add expense' : `Edit ${name}`}</h3>
-            <p className="sd">
-              {sheet === 'add' ? 'What goes out on a regular schedule?' : 'Update any field — amount changes create a new version from today.'}
-            </p>
-
-            <p style={{ fontSize: 12, color: 'var(--mut)', fontWeight: 500, marginBottom: 8 }}>
-              How does this cost behave?
-            </p>
-
+            <p className="sd">{sheet === 'add' ? 'What goes out on a regular schedule?' : 'Update any field — amount changes create a new version from today.'}</p>
+            <p style={{ fontSize: 12, color: 'var(--mut)', fontWeight: 500, marginBottom: 8 }}>How does this cost behave?</p>
             <div className={`modeopt${mode === 'fixed' ? ' sel' : ''}`} onClick={() => setMode('fixed')}>
               <div className="mi ic fix"><ExpenseIcon name={icon} size={18} /></div>
-              <div>
-                <div className="mt">Exact amount</div>
-                <div className="ms">Same every time. If it changes, you set a new amount from a date.</div>
-                <div className="me">e.g. rent, insurance, subscriptions</div>
-              </div>
+              <div><div className="mt">Exact amount</div><div className="ms">Same every time.</div><div className="me">e.g. rent, insurance, subscriptions</div></div>
             </div>
             <div className={`modeopt${mode === 'variable' ? ' sel' : ''}`} onClick={() => setMode('variable')}>
               <div className="mi ic var"><ExpenseIcon name={icon} size={18} /></div>
-              <div>
-                <div className="mt">Varies — I'll confirm</div>
-                <div className="ms">Set an estimate now. Enter the real figure when the bill arrives.</div>
-                <div className="me">e.g. power, water</div>
-              </div>
+              <div><div className="mt">Varies — I'll confirm</div><div className="ms">Set an estimate now. Enter the real figure when the bill arrives.</div><div className="me">e.g. power, water</div></div>
             </div>
             <div className={`modeopt${mode === 'budget' ? ' sel' : ''}`} onClick={() => setMode('budget')}>
               <div className="mi ic base"><ExpenseIcon name={icon} size={18} /></div>
-              <div>
-                <div className="mt">Just a budget</div>
-                <div className="ms">A conservative number you won't itemise. Your real balance is the check.</div>
-                <div className="me">e.g. groceries, fuel, eating out</div>
-              </div>
+              <div><div className="mt">Just a budget</div><div className="ms">A conservative number you won't itemise.</div><div className="me">e.g. groceries, fuel, eating out</div></div>
             </div>
-
             <div className="field" style={{ marginTop: 6 }}>
               <label>Name</label>
-              <div className="inrow">
-                <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Power" />
-              </div>
+              <div className="inrow"><input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Power" /></div>
             </div>
-
             <div className="field">
               <label>Icon</label>
               <div className="iconrow" onClick={() => setGalOpen(true)}>
-                <div className="sw" style={{ background: m.sft, color: m.col }}>
-                  <ExpenseIcon name={icon} size={22} />
-                </div>
-                <div>
-                  <div className="it">{iconLabel(icon)}</div>
-                  <div className="is">{sheet === 'add' && !iconManual ? 'Auto-picked from name — tap to change' : 'Tap to change'}</div>
-                </div>
+                <div className="sw" style={{ background: m.sft, color: m.col }}><ExpenseIcon name={icon} size={22} /></div>
+                <div><div className="it">{iconLabel(icon)}</div><div className="is">{sheet === 'add' && !iconManual ? 'Auto-picked from name — tap to change' : 'Tap to change'}</div></div>
                 <div className="go">CHANGE</div>
               </div>
             </div>
-
             <div className="field">
               <label>{mode === 'variable' ? 'Estimated amount' : 'Amount'}</label>
-              <div className="inrow">
-                <span className="pre">$</span>
+              <div className="inrow"><span className="pre">$</span>
                 <input type="number" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0" />
               </div>
-              {mode === 'variable' && (
-                <p className="hint">You'll confirm the real figure at close — this is the estimate the engine uses.</p>
-              )}
             </div>
-
             <div className="field">
               <label>Frequency</label>
-              {/* 'once' removed on purpose — one-offs are added from the
-                  Dashboard's "Add to this cycle" flow, not here. */}
               <div className="freq-picker">
                 {RECURRING_FREQUENCIES.map(f => (
-                  <button key={f} className={`freq-opt${frequency === f ? ' sel' : ''}`} onClick={() => setFrequency(f)}>
-                    {FREQ_LABELS[f]}
-                  </button>
+                  <button key={f} className={`freq-opt${frequency === f ? ' sel' : ''}`} onClick={() => setFrequency(f)}>{FREQ_LABELS[f]}</button>
                 ))}
               </div>
             </div>
-
             <div className="field">
               <label>Anchor date</label>
               <div className="inrow">
-                <input
-                  type="date" value={anchorDate} onChange={e => setAnchorDate(e.target.value)}
-                  style={{ border: 'none', background: 'transparent', color: 'var(--ink)', fontFamily: "'Space Grotesk',sans-serif", fontSize: 15, fontWeight: 600, width: '100%', outline: 'none' }}
-                />
+                <input type="date" value={anchorDate} onChange={e => setAnchorDate(e.target.value)}
+                  style={{ border:'none', background:'transparent', color:'var(--ink)', fontFamily:"'Space Grotesk',sans-serif", fontSize:15, fontWeight:600, width:'100%', outline:'none' }} />
               </div>
-              <p className="hint">Any past date this expense falls on — the engine repeats from there.</p>
             </div>
-
             {formError && <p style={{ color: 'var(--floor)', fontSize: 13, marginBottom: 10 }}>{formError}</p>}
-
             <div className="navrow">
               <button onClick={closeSheet}>Cancel</button>
-              <button className="pri" onClick={handleSave} style={{ opacity: saving ? 0.6 : 1, cursor: saving ? 'default' : 'pointer' }}>
+              <button className="pri" onClick={handleSave} style={{ opacity: saving ? 0.6 : 1 }}>
                 {saving ? 'Saving…' : sheet === 'add' ? 'Add expense' : 'Save changes'}
               </button>
             </div>
-
             {sheet === 'edit' && editingExp && (
               <button onClick={() => handleDelete(editingExp.id)} style={{
-                display: 'block', width: '100%', marginTop: 12, padding: '10px',
-                background: 'none', border: 'none', cursor: 'pointer',
-                color: 'var(--floor)', fontSize: 13, fontWeight: 600,
-                fontFamily: "'Space Grotesk',sans-serif",
-              }}>
-                Delete this expense
-              </button>
+                display:'block', width:'100%', marginTop:12, padding:'10px',
+                background:'none', border:'none', cursor:'pointer',
+                color:'var(--floor)', fontSize:13, fontWeight:600,
+                fontFamily:"'Space Grotesk',sans-serif",
+              }}>Delete this expense</button>
             )}
           </div>
         </div>
       )}
 
-      {/* ═══════════ ICON GALLERY ═══════════ */}
+      {/* ═══ ICON GALLERY ═══ */}
       {galOpen && (
         <div className="ov" style={{ zIndex: 60 }} onClick={() => setGalOpen(false)}>
           <div className="sheet" onClick={e => e.stopPropagation()}>
@@ -537,49 +437,25 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════
-          LAY-BY MANAGEMENT SHEET — header stats + payment strip + delete
-          ═══════════════════════════════════════════════════════════ */}
+      {/* ═══ LAY-BY MANAGEMENT SHEET ═══ */}
       {laybyExp && (
         <div className="ov" onClick={() => setLaybyExp(null)}>
           <div className="sheet" onClick={e => e.stopPropagation()}>
             <button className="xbtn" onClick={() => setLaybyExp(null)}>×</button>
             <div className="grab" />
-
             <h3>{laybyExp.name}</h3>
-            <p className="sd">
-              {laybyView.paidCount} of {laybyView.total} paid so far · {fmt(laybyView.target - laybyView.paidCents)} left
-            </p>
-
-            {/* four-tile stat header — all data from buildLaybyCells */}
+            <p className="sd">{laybyView.paidCount} of {laybyView.total} paid so far · {fmt(laybyView.target - laybyView.paidCents)} left</p>
             <div className="lay-stats">
-              <div className="lay-stat">
-                <div className="lay-stat-k">Total</div>
-                <div className="lay-stat-v">{fmt(laybyView.target)}</div>
-              </div>
-              <div className="lay-stat">
-                <div className="lay-stat-k">Per payment</div>
-                <div className="lay-stat-v">{fmt(latestCents(laybyExp))}</div>
-              </div>
-              <div className="lay-stat">
-                <div className="lay-stat-k">Frequency</div>
-                <div className="lay-stat-v" style={{ textTransform: 'capitalize' }}>{laybyExp.frequency}</div>
-              </div>
-              <div className="lay-stat">
-                <div className="lay-stat-k">Ends</div>
-                <div className="lay-stat-v">{laybyView.endDate ? fmtDate(laybyView.endDate) : '—'}</div>
-              </div>
+              <div className="lay-stat"><div className="lay-stat-k">Total</div><div className="lay-stat-v">{fmt(laybyView.target)}</div></div>
+              <div className="lay-stat"><div className="lay-stat-k">Per payment</div><div className="lay-stat-v">{fmt(latestCents(laybyExp))}</div></div>
+              <div className="lay-stat"><div className="lay-stat-k">Frequency</div><div className="lay-stat-v" style={{ textTransform: 'capitalize' }}>{laybyExp.frequency}</div></div>
+              <div className="lay-stat"><div className="lay-stat-k">Ends</div><div className="lay-stat-v">{laybyView.endDate ? fmtDate(laybyView.endDate) : '—'}</div></div>
             </div>
-
-            {/* payment strip — horizontal scroll, one cell per scheduled payment */}
             <div className="lay-strip-wrap">
-              <div className="lay-strip-hdr">
-                <span>Payments</span>
-                <span className="lay-strip-note">"paid" = scheduled date has passed</span>
-              </div>
+              <div className="lay-strip-hdr"><span>Payments</span><span className="lay-strip-note">"paid" = scheduled date has passed</span></div>
               <div className="lay-strip">
                 {laybyView.cells.map((c, i) => {
-                  const isCurrent = c.state === 'future' && i === laybyView.paidCount // first unpaid = "current"
+                  const isCurrent = c.state === 'future' && i === laybyView.paidCount
                   const stateCls = c.state === 'past' ? 'past' : isCurrent ? 'current' : 'future'
                   let label: string
                   if (c.state === 'past') label = 'paid'
@@ -596,22 +472,16 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
                 })}
               </div>
             </div>
-
-            <div className="navrow">
-              <button onClick={() => setLaybyExp(null)}>Close</button>
-            </div>
+            <div className="navrow"><button onClick={() => setLaybyExp(null)}>Close</button></div>
             <button onClick={() => handleDeleteLayby(laybyExp)} style={{
-              display: 'block', width: '100%', marginTop: 12, padding: '10px',
-              background: 'none', border: 'none', cursor: 'pointer',
-              color: 'var(--floor)', fontSize: 13, fontWeight: 600,
-              fontFamily: "'Space Grotesk',sans-serif",
-            }}>
-              Delete this lay-by
-            </button>
+              display:'block', width:'100%', marginTop:12, padding:'10px',
+              background:'none', border:'none', cursor:'pointer',
+              color:'var(--floor)', fontSize:13, fontWeight:600,
+              fontFamily:"'Space Grotesk',sans-serif",
+            }}>Delete this lay-by</button>
           </div>
         </div>
       )}
-
     </>
   )
 }
