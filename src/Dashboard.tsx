@@ -121,6 +121,18 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
   const [incomeDate,    setIncomeDate]    = useState('')
   const [incomeCertain, setIncomeCertain] = useState(false)
 
+  // ── one-off management sheet state ──────────────────────────────
+  // Opens when a one-off (expense or income) card is tapped.
+  // Supports editing name, amount, and (income only) certainty toggle.
+  // Delete is a soft-retire: is_active → false.
+  const [oneOffItem,     setOneOffItem]     = useState<any>(null)
+  const [oneOffName,     setOneOffName]     = useState('')
+  const [oneOffAmt,      setOneOffAmt]      = useState('')
+  const [oneOffCertain,  setOneOffCertain]  = useState(false)
+  const [oneOffSaving,   setOneOffSaving]   = useState(false)
+  const [oneOffDeleting, setOneOffDeleting] = useState(false)
+  const [oneOffError,    setOneOffError]    = useState('')
+
   // ── lay-by form fields ──────────────────────────────────────────────
   const [laybyName,     setLaybyName]     = useState('')
   const [laybyTotal,    setLaybyTotal]    = useState('')
@@ -308,6 +320,7 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       if (!occs.length) continue
       const v = (src.income_amount_versions ?? []).sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
       const unitCents = v?.amount_cents ?? 0
+      const isOneOffIncome = src.frequency === 'once'
       cards.push({
         name: src.name, icon: '↓',
         iconClass: src.is_potential ? 'pot' : 'inc',
@@ -317,6 +330,9 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         valueClass: src.is_potential ? 'pot' : 'pos',
         totalCents: unitCents * occs.length,
         ghost: src.is_potential, dashed: false, act: null,
+        oneOff: isOneOffIncome, oneOffKind: 'income', incomeId: src.id,
+        isPotential: src.is_potential ?? false,
+        oneOffDateStr: fmtDate(occs[0]),
         expenseId: null, unitCents: 0, originalUnitCents: 0,
       })
     }
@@ -335,6 +351,12 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       if (mode === 'variable') { icon = '~'; iconClass = 'var'; chips = [['est','estimate']]; act = 'var' }
       else if (mode === 'budget') { icon = '≈'; iconClass = 'base'; chips = [['bl','baseline']] }
       else { act = 'edit' }
+
+      // One-offs don't get the recurring edit flow ("this occurrence or
+      // onward?" makes no sense for something that happens once) — they get
+      // the management sheet instead, which is also where delete lives.
+      const isOneOffExp = exp.frequency === 'once' && !exp.lay_by_id
+      if (isOneOffExp) act = 'oneoff'
 
       let detail = ''
       if (mode === 'variable') {
@@ -398,6 +420,8 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
         value: '−' + fmt(total, false), valueClass: '', totalCents: total,
         ghost: false, dashed: mode === 'variable', act,
         expenseId: exp.id,
+        oneOff: isOneOffExp, oneOffKind: 'expense',
+        oneOffDateStr: fmtDate(occs[0]),
         laybyPct,
         unitCents,           // current per-occurrence amount for this cycle
         originalUnitCents: unitCents,  // what to revert to after a one-off override
@@ -534,6 +558,62 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
       closeAddSheet(); reload()
     } catch (e: any) { setAddError(e.message) }
     finally { setAddSaving(false) }
+  }
+  // Save edits to a one-off from the management sheet.
+  // Expense: update name + amount_version. Income: update name, amount_version,
+  // and is_potential (the certainty toggle).
+  async function saveOneOffEdits() {
+    const amountCents = Math.round(parseFloat(oneOffAmt || '0') * 100)
+    if (!oneOffName.trim() || !amountCents) {
+      setOneOffError('Name and amount are required.'); return
+    }
+    setOneOffSaving(true); setOneOffError('')
+    try {
+      if (oneOffItem.oneOffKind === 'income') {
+        const { error: e1 } = await supabase
+          .from('income_sources')
+          .update({ name: oneOffName.trim(), is_potential: !oneOffCertain })
+          .eq('id', oneOffItem.incomeId)
+        if (e1) throw e1
+        // Update the single amount version for this one-off
+        const { error: e2 } = await supabase
+          .from('income_amount_versions')
+          .update({ amount_cents: amountCents })
+          .eq('income_source_id', oneOffItem.incomeId)
+        if (e2) throw e2
+      } else {
+        const { error: e1 } = await supabase
+          .from('expenses')
+          .update({ name: oneOffName.trim() })
+          .eq('id', oneOffItem.expenseId)
+        if (e1) throw e1
+        const { error: e2 } = await supabase
+          .from('expense_amount_versions')
+          .update({ amount_cents: amountCents })
+          .eq('expense_id', oneOffItem.expenseId)
+        if (e2) throw e2
+      }
+      setOneOffItem(null); reload()
+    } catch (e: any) { setOneOffError(e.message) }
+    finally { setOneOffSaving(false) }
+  }
+  // Soft-retire a one-off: flip is_active on the right table.
+  async function deleteOneOff() {
+    if (!oneOffItem || oneOffDeleting) return
+    setOneOffDeleting(true); setOneOffError('')
+    try {
+      if (oneOffItem.oneOffKind === 'income') {
+        const { error } = await supabase
+          .from('income_sources').update({ is_active: false }).eq('id', oneOffItem.incomeId)
+        if (error) throw error
+      } else {
+        const { error } = await supabase
+          .from('expenses').update({ is_active: false }).eq('id', oneOffItem.expenseId)
+        if (error) throw error
+      }
+      setOneOffItem(null); reload()
+    } catch (e: any) { setOneOffError(e.message) }
+    finally { setOneOffDeleting(false) }
   }
   // Validates the lay-by form, writes the lay_bys row + linked expense +
   // one amount_version per scheduled payment, then shows the confirmation step.
@@ -892,12 +972,20 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
             {openSecs.income && (
               <div className="cards">
                 {incomeCards.map((cd, i) => (
-                  <div key={'inc'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
+                  <div key={'inc'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}
+                    style={cd.oneOff ? { cursor: 'pointer' } : undefined}
+                    onClick={cd.oneOff ? () => {
+                      setOneOffError(''); setOneOffName(cd.name)
+                      setOneOffAmt(String(cd.totalCents / 100))
+                      setOneOffCertain(!(cd.isPotential ?? true))
+                      setOneOffItem(cd)
+                    } : undefined}
+                  >
                     <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
                     <div className="tx">
                       <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
                       <div className="dt">{cd.detail}</div>
-                      <div className="act-row">{cd.act === 'edit' && <span className="act" onClick={() => openEdit(cd)}>edit →</span>}{cd.act === 'var' && <span className="act" onClick={() => openVar(cd)}>confirm →</span>}</div>
+                      <div className="act-row">{cd.oneOff && <span className="act">manage →</span>}</div>
                     </div>
                     <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
                   </div>
@@ -919,13 +1007,22 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
             {openSecs.fixed && (
               <div className="cards">
                 {fixedCards.map((cd, i) => (
-                  <div key={'fix'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
+                  <div key={'fix'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}
+                    style={cd.oneOff ? { cursor: 'pointer' } : undefined}
+                    onClick={cd.oneOff ? () => {
+                      setOneOffError(''); setOneOffName(cd.name)
+                      setOneOffAmt(String(cd.totalCents / 100))
+                      setOneOffCertain(false) // expenses have no certainty toggle
+                      setOneOffItem(cd)
+                    } : undefined}
+                  >
                     <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
                     <div className="tx">
                       <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
                       <div className="dt">{cd.detail}</div>
                       <div className="act-row">
                         {cd.act === 'edit' && <span className="act" onClick={() => openEdit(cd)}>edit →</span>}
+                        {cd.act === 'oneoff' && <span className="act">manage →</span>}
                         {cd.laybyPct != null && (
                           <div className="exp-prog" style={{ flex: 1, marginTop: 0 }}>
                             <div className="fill" style={{ width: cd.laybyPct + '%', background: 'var(--event)' }} />
@@ -1508,6 +1605,81 @@ export default function Dashboard({ userId, variant }: { userId: string, variant
               <span>Total logged</span>
               <b>{fmt(entriesForExpenseInCycle(logItem.expenseId).reduce((s: number, e: any) => s + e.amount_cents, 0), false)}</b>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════
+          OVERLAY 6 — One-off management: edit name, amount, certainty + delete
+          ═══════════════════════════════════════════════════════════ */}
+      {oneOffItem && (
+        <div className="ov" onClick={() => setOneOffItem(null)}>
+          <div className="sheet" onClick={e => e.stopPropagation()}>
+            <button className="xbtn" onClick={() => setOneOffItem(null)}>×</button>
+            <div className="grab" />
+            <h3>{oneOffItem.oneOffKind === 'income' ? 'Money coming in' : 'One-off expense'}</h3>
+            <p className="sd">
+              {oneOffItem.oneOffDateStr} · one-off
+            </p>
+
+            <div className="field">
+              <label>What is it?</label>
+              <div className="inrow">
+                <input type="text" value={oneOffName} onChange={e => setOneOffName(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="field">
+              <label>Amount</label>
+              <div className="inrow">
+                <span className="pre">$</span>
+                <input type="number" inputMode="decimal" value={oneOffAmt} onChange={e => setOneOffAmt(e.target.value)} />
+              </div>
+            </div>
+
+            {oneOffItem.oneOffKind === 'income' && <>
+              <div className="field" style={{ marginBottom: 4 }}>
+                <label>How sure is it?</label>
+              </div>
+              <div className={`opt${!oneOffCertain ? ' sel' : ''}`} onClick={() => setOneOffCertain(false)} style={{ display:'flex', gap:11, alignItems:'flex-start' }}>
+                <div style={{ ...certIconBase, border: '1.5px dashed var(--pos)' }}>?</div>
+                <div>
+                  <div className="ot">Not certain yet</div>
+                  <div className="os">Shown on the cycle, but kept out of your forecast until it lands.</div>
+                  <div style={{ fontSize:11, color:'var(--faint)', marginTop:4, fontStyle:'italic' }}>e.g. a bonus that hasn't been confirmed</div>
+                </div>
+              </div>
+              <div className={`opt${oneOffCertain ? ' sel' : ''}`} onClick={() => setOneOffCertain(true)} style={{ display:'flex', gap:11, alignItems:'flex-start' }}>
+                <div style={certIconBase}>✓</div>
+                <div>
+                  <div className="ot">Confirmed</div>
+                  <div className="os">Counts toward your projected balance, same as your pay.</div>
+                  <div style={{ fontSize:11, color:'var(--faint)', marginTop:4, fontStyle:'italic' }}>e.g. an approved refund with a date</div>
+                </div>
+              </div>
+            </>}
+
+            {oneOffError && <p style={{ color:'var(--floor)', fontSize:13, marginTop:8, marginBottom:0 }}>{oneOffError}</p>}
+
+            <div className="navrow">
+              <button onClick={() => setOneOffItem(null)}>Cancel</button>
+              <button
+                className="pri"
+                onClick={saveOneOffEdits}
+                style={{ opacity: oneOffSaving ? 0.6 : 1, cursor: oneOffSaving ? 'default' : 'pointer' }}
+              >
+                {oneOffSaving ? 'Saving…' : 'Save changes'}
+              </button>
+            </div>
+            <button onClick={deleteOneOff} style={{
+              display: 'block', width: '100%', marginTop: 12, padding: '10px',
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--floor)', fontSize: 13, fontWeight: 600,
+              fontFamily: "'Space Grotesk',sans-serif",
+              opacity: oneOffDeleting ? 0.6 : 1,
+            }}>
+              {oneOffDeleting ? 'Removing…' : oneOffItem.oneOffKind === 'income' ? 'Delete this income' : 'Delete this expense'}
+            </button>
           </div>
         </div>
       )}

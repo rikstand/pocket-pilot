@@ -3,10 +3,16 @@ import { supabase } from './lib/supabase'
 import { getExpenses, getLayBys } from './lib/repository'
 import { ExpenseIcon, guessIcon, iconLabel, ICON_GROUPS } from './lib/icons'
 
+// 'once' stays in the type (one-off rows exist in the table and share these
+// labels), but the Expenses page is recurring-commitments-only: one-offs are
+// created and managed from the Dashboard's "Add to this cycle" flow, so they
+// are filtered out of every section below and removed from the add form.
 const FREQUENCIES = ['weekly', 'fortnightly', 'monthly', 'annually', 'once'] as const
 type Frequency = typeof FREQUENCIES[number]
 type Mode      = 'fixed' | 'variable' | 'budget'
 type Sheet     = 'add' | 'edit' | null
+
+const RECURRING_FREQUENCIES = FREQUENCIES.filter(f => f !== 'once')
 
 const FREQ_LABELS: Record<Frequency, string> = {
   weekly: 'Weekly', fortnightly: 'Fortnightly', monthly: 'Monthly',
@@ -182,10 +188,15 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
   }
 
   // ── group expenses ──────────────────────────────────────────────
-  const fixedExps  = expenses.filter(e => (e.mode ?? 'fixed') === 'fixed' && !e.lay_by_id)
-  const varExps    = expenses.filter(e => e.mode === 'variable')
-  const budgetExps = expenses.filter(e => e.mode === 'budget')
-  const laybyExps  = expenses.filter(e => !!e.lay_by_id)
+  // One-offs (frequency 'once') are excluded everywhere: this page is the
+  // recurring-commitments view, and counting one-offs would also inflate
+  // the fortnightly-normalised totals in the summary bar. One-offs live on
+  // the Dashboard, in the cycle they belong to.
+  const recurring  = expenses.filter(e => e.frequency !== 'once')
+  const fixedExps  = recurring.filter(e => (e.mode ?? 'fixed') === 'fixed' && !e.lay_by_id)
+  const varExps    = recurring.filter(e => e.mode === 'variable')
+  const budgetExps = recurring.filter(e => e.mode === 'budget')
+  const laybyExps  = recurring.filter(e => !!e.lay_by_id)
 
   function latestCents(exp: any): number {
     const v = (exp.expense_amount_versions ?? [])
@@ -326,13 +337,13 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
 
         {loading && <p style={{ padding: 24, color: 'var(--mut)' }}>Loading…</p>}
 
-        {!loading && expenses.length === 0 && (
+        {!loading && recurring.length === 0 && (
           <p style={{ textAlign: 'center', color: 'var(--mut)', padding: '40px 24px', fontSize: 14 }}>
             No expenses yet — add one below.
           </p>
         )}
 
-        {!loading && expenses.length > 0 && <>
+        {!loading && recurring.length > 0 && <>
           <div className="exp-sum" style={{ marginTop: 12 }}>
             {fixedTotal > 0  && <div style={{ flex: fixedTotal,  background: 'var(--acc)' }} />}
             {varTotal > 0    && <div style={{ flex: varTotal,    background: 'var(--warn)' }} />}
@@ -455,8 +466,10 @@ export default function ExpensesPage({ userId }: { userId: string; onBack?: () =
 
             <div className="field">
               <label>Frequency</label>
+              {/* 'once' removed on purpose — one-offs are added from the
+                  Dashboard's "Add to this cycle" flow, not here. */}
               <div className="freq-picker">
-                {FREQUENCIES.map(f => (
+                {RECURRING_FREQUENCIES.map(f => (
                   <button key={f} className={`freq-opt${frequency === f ? ' sel' : ''}`} onClick={() => setFrequency(f)}>
                     {FREQ_LABELS[f]}
                   </button>
