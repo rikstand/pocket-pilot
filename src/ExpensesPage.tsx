@@ -47,7 +47,7 @@ function cycleDetail(cents: number, freq: string, isEstimate: boolean): string {
   return `${raw}/${abbr} → ${norm}/fn`
 }
 
-export default function ExpensesPage({ userId, accountId, onBack }: { userId: string; accountId: string; onBack?: () => void }) {
+export default function ExpensesPage({ userId, accountId }: { userId: string; accountId: string; onBack?: () => void }) {
   const [expenses, setExpenses] = useState<any[]>([])
   const [layBys,   setLayBys]   = useState<any[]>([])
   const [loading,  setLoading]  = useState(true)
