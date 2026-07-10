@@ -76,6 +76,16 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const [reloadKey,   setReloadKey]   = useState(0)
   const pillsRef = useRef<HTMLDivElement>(null)
 
+  // NEW — cycle carousel dot tracking (Available-to-spend / Next-payments swipe)
+  const [activeCarouselDot, setActiveCarouselDot] = useState(0)
+  const carouselRef = useRef<HTMLDivElement>(null)
+  function handleCarouselScroll() {
+    const el = carouselRef.current
+    if (!el || el.clientWidth === 0) return
+    const idx = Math.round(el.scrollLeft / el.clientWidth)
+    setActiveCarouselDot(idx)
+  }
+
   const [editCard,   setEditCard]   = useState<any>(null)
   const [editScope,  setEditScope]  = useState<'occurrence' | 'forward' | null>(null)
   const [editStep,   setEditStep]   = useState(0)
@@ -396,6 +406,59 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       })
     }
     return cards
+  }
+
+  // NEW — flattened, per-occurrence fixed/lay-by payments for the carousel.
+  // Distinct from buildCards(), which aggregates occurrences into one card per expense.
+  // This returns one entry per individual future occurrence, chronologically ordered,
+  // mixing plain fixed expenses and lay-by payments together (per design decision).
+  function buildFixedOccurrences() {
+    type PaymentItem = {
+      name: string, date: string, amountCents: number,
+      isLayby: boolean, icon: string, subLabel: string,
+    }
+    const items: PaymentItem[] = []
+    const t = today()
+
+    for (const exp of rawExpenses) {
+      if ((exp.mode ?? 'fixed') !== 'fixed') continue
+      const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, activeCycle.startDate, activeCycle.endDate, exp.end_date ?? undefined)
+      if (!occs.length) continue
+      const isLayby = !!exp.lay_by_id
+      const sortedVersions = [...(exp.expense_amount_versions ?? [])]
+        .sort((a: any, b: any) => a.effective_from < b.effective_from ? -1 : 1)
+      const layby = isLayby ? rawLayBys.find((l: any) => l.id === exp.lay_by_id) : null
+
+      for (const occDate of occs) {
+        if (occDate < t) continue // only upcoming occurrences count as "remaining"
+
+        let amountCents: number
+        let subLabel: string
+        if (isLayby) {
+          const match = sortedVersions.find((sv: any) => sv.effective_from === occDate)
+          amountCents = match?.amount_cents ?? 0
+          const idx = sortedVersions.findIndex((sv: any) => sv.effective_from === occDate)
+          const totalPayments = layby?.payments_total ?? sortedVersions.length
+          subLabel = `payment ${idx >= 0 ? idx + 1 : '?'} of ${totalPayments}`
+        } else {
+          const v = versionForCycle(exp.expense_amount_versions, occDate)
+          amountCents = v?.amount_cents ?? 0
+          subLabel = 'fixed'
+        }
+
+        items.push({
+          name: exp.name,
+          date: occDate,
+          amountCents,
+          isLayby,
+          icon: exp.icon || (isLayby ? 'gift' : guessIcon(exp.name)),
+          subLabel,
+        })
+      }
+    }
+
+    items.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0)
+    return items
   }
 
   const varExpensesInCycle = rawExpenses
@@ -791,6 +854,34 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const editAmountCents = Math.round(parseFloat(editAmount || '0') * 100)
   const varAmountCents  = Math.round(parseFloat(varAmount  || '0') * 100)
 
+  // NEW — Available-to-spend carousel card calculations
+  const fixedOccurrences  = buildFixedOccurrences()
+  const nextPayments      = fixedOccurrences.slice(0, 3)
+  const fixedRemainingCents = fixedOccurrences.reduce((s, p) => s + p.amountCents, 0)
+  const budgetSpentSoFarCents = budgetCards.reduce(
+    (sum, c) => sum + entriesForExpenseInCycle(c.expenseId).reduce((s: number, e: any) => s + e.amount_cents, 0),
+    0
+  )
+  const availableToSpendCents = incomeTotalCents - fixedRemainingCents - varTotalCents - budgetSpentSoFarCents
+  const daysToNextCycle = daysUntil(addOneDay(activeCycle.endDate))
+
+  const cycleTotalDaysNum = Math.max(1, Math.round(
+    (parseDate(activeCycle.endDate).getTime() - parseDate(activeCycle.startDate).getTime()) / 86400000
+  ) + 1)
+  const cycleDayNum = Math.min(cycleTotalDaysNum, Math.max(1, Math.round(
+    (parseDate(today()).getTime() - parseDate(activeCycle.startDate).getTime()) / 86400000
+  ) + 1))
+  const cycleDayPct = Math.min(100, Math.round((cycleDayNum / cycleTotalDaysNum) * 100))
+
+  const budgetPctRaw = budgetTotalCents > 0 ? Math.round((budgetSpentSoFarCents / budgetTotalCents) * 100) : 0
+  const budgetPctClamped = Math.min(100, budgetPctRaw)
+  const budgetRingColor = budgetPctRaw >= 100 ? 'var(--floor)' : budgetPctRaw >= 80 ? 'var(--warn)' : 'var(--pos)'
+
+  const OUTER_R = 25, OUTER_C = 2 * Math.PI * OUTER_R
+  const INNER_R = 17, INNER_C = 2 * Math.PI * INNER_R
+  const outerDashoffset = OUTER_C * (1 - cycleDayPct / 100)
+  const innerDashoffset = INNER_C * (1 - budgetPctClamped / 100)
+
   const certIconBase: CSSProperties = {
     width: 30, height: 30, borderRadius: 9, display: 'grid', placeItems: 'center',
     fontSize: 15, fontWeight: 700, flex: '0 0 auto',
@@ -803,13 +894,62 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       <div className="scrollarea">
 
         {variant === 'cycle' && (
-          <div className="hero">
-            <div className="k">Balance today · {fmtDate(today())}</div>
-            <div className="bal">${heroDollars.toLocaleString()}<small>.{String(heroCentsVal).padStart(2,'0')}</small></div>
-            <div className="sub">
-              {nextPayStr && <>Next pay <b>{nextPayStr}</b> · </>}
-              {floorCents > 0 && <>floor <b>{fmt(floorCents,false)}</b></>}
-              {currencyCode !== 'NZD' && <> · <b>{currencyCode}</b></>}
+          <div className="cyc-carousel-wrap">
+            <div className="cyc-carousel-label">This cycle · at a glance</div>
+            <div className="cyc-carousel" ref={carouselRef} onScroll={handleCarouselScroll}>
+
+              <div className="cyc-card">
+                <div className="cyc-card-hdr">
+                  <div className="cyc-card-title next">Next payments</div>
+                </div>
+                {nextPayments.length === 0 && (
+                  <div style={{ fontSize: 12, color: 'var(--mut)' }}>Nothing scheduled this cycle.</div>
+                )}
+                {nextPayments.map((p, i) => (
+                  <div className="np-row" key={i}>
+                    <div className="np-ic" style={{
+                      background: p.isLayby ? 'var(--event-s)' : 'var(--acc-s)',
+                      color: p.isLayby ? 'var(--event)' : 'var(--acc)',
+                    }}>
+                      <ExpenseIcon name={p.icon} size={16} />
+                    </div>
+                    <div className="np-tx">
+                      <div className="np-nm">{p.name}</div>
+                      <div className="np-dt">{fmtDate(p.date)} · {p.subLabel}</div>
+                    </div>
+                    <div className="np-amt">{fmt(p.amountCents, false)}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="cyc-card ring-corner">
+                <div className="cyc-card-hdr">
+                  <div className="cyc-card-title spend">Available to spend</div>
+                </div>
+                <svg className="ring-svg-dual" width="58" height="58" viewBox="0 0 58 58">
+                  <circle className="ring-track" cx="29" cy="29" r={OUTER_R} strokeWidth="3" />
+                  <circle className="ring-fill cyc" cx="29" cy="29" r={OUTER_R} strokeWidth="3"
+                    strokeDasharray={OUTER_C} strokeDashoffset={outerDashoffset} />
+                  <circle className="ring-track" cx="29" cy="29" r={INNER_R} strokeWidth="6" />
+                  <circle className="ring-fill" cx="29" cy="29" r={INNER_R} strokeWidth="6"
+                    style={{ stroke: budgetRingColor }}
+                    strokeDasharray={INNER_C} strokeDashoffset={innerDashoffset} />
+                </svg>
+                <div className="rs-hero">{fmt(availableToSpendCents, false)}</div>
+                <div className="rs-sub">next cycle in {daysToNextCycle} days</div>
+                <div className="rs-breakdown">
+                  <div className="rs-line">
+                    <div className="rs-dot" style={{ background: budgetRingColor }} />
+                    <div className="rs-line-lbl">Budget tracked</div>
+                    <div className="rs-line-val">{fmt(budgetSpentSoFarCents, false)} of {fmt(budgetTotalCents, false)}</div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+            <div className="cyc-carousel-dots">
+              <div className={`cyc-dot${activeCarouselDot === 0 ? ' active' : ''}`} />
+              <div className={`cyc-dot${activeCarouselDot === 1 ? ' active' : ''}`} />
             </div>
           </div>
         )}
