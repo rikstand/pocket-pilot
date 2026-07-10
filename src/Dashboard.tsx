@@ -257,21 +257,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const activeCycle  = cycles[activeIdx]
   const floorCents   = activeAccount?.safety_floor_cents ?? 0
   const currentIdx   = findCurrentIdx(cycles)
-  const openingCents = cycles[0]?.openingBalanceCents ?? 0
-  const currencyCode = activeAccount?.currency_code ?? 'NZD'
 
   function reload() { setReloadKey(k => k + 1) }
 
   const primaryIncome = rawIncome.find((s: any) => s.is_primary && !s.is_potential)
-  let nextPayStr = ''
-  if (primaryIncome) {
-    const future = new Date(); future.setDate(future.getDate() + 60)
-    const occs = getOccurrencesInRange(primaryIncome.anchor_date, primaryIncome.frequency, today(), future.toISOString().split('T')[0])
-    if (occs.length) {
-      const d = daysUntil(occs[0])
-      nextPayStr = d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`
-    }
-  }
 
   const closeVals    = cycles.map(c => c.committedClosingBalanceCents / 100)
   const floorDollars = floorCents / 100
@@ -849,8 +838,6 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const budgetTotalCents = budgetCards.reduce((s, c) => s + (c.totalCents ?? 0), 0)
   const aboveFloor   = activeCycle.committedClosingBalanceCents - floorCents
   const status       = cycleStatus(activeIdx)
-  const heroDollars  = Math.floor(openingCents / 100)
-  const heroCentsVal = Math.abs(openingCents % 100)
   const editAmountCents = Math.round(parseFloat(editAmount || '0') * 100)
   const varAmountCents  = Math.round(parseFloat(varAmount  || '0') * 100)
 
