@@ -1025,13 +1025,17 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
             <span className="arr">→</span>
             <span className="c">closes <b>{fmt(activeCycle.committedClosingBalanceCents,false)}</b></span>
           </div>
-          {floorCents > 0 && (
+          {floorCents > 0 ? (
             <div className={`nudge${aboveFloor>=0?' ok':''}`}>
               {aboveFloor>=0
                 ? <><b>{fmt(aboveFloor,false)}</b> above your floor this cycle.</>
                 : <>Closes <b>{fmt(Math.abs(aboveFloor),false)}</b> below your floor.</>}
             </div>
-          )}
+          ) : activeCycle.committedClosingBalanceCents < 0 ? (
+            <div className="nudge">
+              Closes <b>{fmt(Math.abs(activeCycle.committedClosingBalanceCents),false)}</b> negative this cycle.
+            </div>
+          ) : null}
         </div>
 
         {incomeCards.length > 0 && (
