@@ -844,12 +844,17 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // NEW — Available-to-spend carousel card calculations
   const fixedOccurrences  = buildFixedOccurrences()
   const nextPayments      = fixedOccurrences.slice(0, 3)
-  const fixedRemainingCents = fixedOccurrences.reduce((s, p) => s + p.amountCents, 0)
   const budgetSpentSoFarCents = budgetCards.reduce(
     (sum, c) => sum + entriesForExpenseInCycle(c.expenseId).reduce((s: number, e: any) => s + e.amount_cents, 0),
     0
   )
-  const availableToSpendCents = incomeTotalCents - fixedRemainingCents - varTotalCents - budgetSpentSoFarCents
+  // Built from the engine's own committedClosingBalanceCents (which already correctly
+  // nets every fixed/lay-by payment — past and future — plus the full estimate total)
+  // rather than recomputing fixed-remaining by occurrence date, which under-subtracted
+  // any fixed/lay-by payment that had already happened earlier in the cycle.
+  // We add back the unspent portion of the budget baseline, since "available to spend"
+  // only counts budget spend actually logged, not the full baseline.
+  const availableToSpendCents = activeCycle.committedClosingBalanceCents + (budgetTotalCents - budgetSpentSoFarCents)
   const daysToNextCycle = daysUntil(addOneDay(activeCycle.endDate))
 
   const cycleTotalDaysNum = Math.max(1, Math.round(
