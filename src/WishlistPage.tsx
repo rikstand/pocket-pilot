@@ -80,7 +80,7 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
 
         const engineIncome = income.map((src: any) => {
           const v = (src.income_amount_versions ?? []).sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
-          return { id: src.id, name: src.name, frequency: src.frequency, anchorDate: src.anchor_date, amountCents: v?.amount_cents ?? 0, isPotential: src.is_potential ?? false }
+          return { id: src.id, name: src.name, frequency: src.frequency, anchorDate: src.anchor_date, amountCents: v?.amount_cents ?? 0, isPotential: src.is_potential ?? false, isPrimary: src.is_primary ?? false }
         })
         const engineExpenses = expenses.map((exp: any) => {
           const versions = (exp.expense_amount_versions ?? []).map((v: any) => ({ amountCents: v.amount_cents, effectiveFrom: v.effective_from }))
