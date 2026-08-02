@@ -144,6 +144,16 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const [editEntryAmount,  setEditEntryAmount]  = useState('')
   const [editEntryLabel,   setEditEntryLabel]   = useState('')
 
+  // NEW — Salary / recurring income edit sheet (amount + frequency + payday)
+  const [incomeEditItem,      setIncomeEditItem]      = useState<any>(null)
+  const [incomeEditScope,     setIncomeEditScope]     = useState<'occurrence' | 'forward' | null>(null)
+  const [incomeEditStep,      setIncomeEditStep]      = useState(0)
+  const [incomeEditAmount,    setIncomeEditAmount]    = useState('')
+  const [incomeEditFrequency, setIncomeEditFrequency] = useState<'weekly'|'fortnightly'|'monthly'|'annually'>('fortnightly')
+  const [incomeEditAnchor,    setIncomeEditAnchor]    = useState('')
+  const [incomeEditSaving,    setIncomeEditSaving]    = useState(false)
+  const [incomeEditError,     setIncomeEditError]     = useState('')
+
   const [openSecs, setOpenSecs] = useState<Record<string, boolean>>({
     income: true, fixed: true, var: true, budget: true,
   })
@@ -284,9 +294,14 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const monthStart = fmtDate(cycles[0].startDate).split(' ')[1]
   const monthEnd   = fmtDate(cycles[cycles.length - 1].endDate).split(' ')[1]
 
+  // Overdue-cycle fix: a cycle is only genuinely "past" (frozen) when it's the
+  // stored historical snapshot from the close ritual. If a cycle's end date has
+  // simply gone by without ever being closed, it's "overdue" — still editable,
+  // still closeable, distinct from a truly frozen record.
   function cycleStatus(i: number) {
     const t = today(), c = cycles[i]
-    if (c.endDate < t) return 'past'
+    if (c.isHistorical) return 'past'
+    if (c.endDate < t) return 'overdue'
     if (c.startDate <= t && c.endDate >= t) return 'now'
     if (floorCents > 0 && c.committedClosingBalanceCents - floorCents < floorCents * 0.5) return 'low'
     return 'future'
@@ -314,7 +329,9 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         oneOff: isOneOffIncome, oneOffKind: 'income', incomeId: src.id,
         isPotential: src.is_potential ?? false,
         oneOffDateStr: fmtDate(occs[0]),
-        expenseId: null, unitCents: 0, originalUnitCents: 0,
+        // FIX: was hardcoded to 0/0, which meant the income edit sheet had no
+        // "currently $X" to show and no baseline to diff a scoped edit against.
+        expenseId: null, unitCents, originalUnitCents: unitCents,
       })
     }
 
@@ -522,6 +539,64 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       setLaybyName(''); setLaybyTotal(''); setLaybyFrequency('fortnightly')
       setLaybyPayments('4'); setLaybyFirstDate(activeCycle.startDate)
     }
+  }
+
+  // NEW — open the Salary / recurring income edit sheet
+  function openIncomeEdit(cd: any) {
+    const src = rawIncome.find((s: any) => s.id === cd.incomeId)
+    if (!src) return
+    setIncomeEditItem({ ...cd, src })
+    setIncomeEditScope(null); setIncomeEditStep(0)
+    setIncomeEditAmount(cd.unitCents ? String(cd.unitCents / 100) : '')
+    setIncomeEditFrequency(src.frequency)
+    setIncomeEditAnchor(src.anchor_date)
+    setIncomeEditError('')
+  }
+
+  // NEW — save Salary edits. Amount follows the same "just this cycle" vs
+  // "from this date onward" versioning as fixed-expense edits. Frequency and
+  // payday aren't versioned (income_sources has no history table for those
+  // fields), so they apply immediately — acceptable for now since the common
+  // case (a real job change) happens at a cycle boundary anyway.
+  async function applyIncomeEdit() {
+    if (!incomeEditItem) return
+    const amountCents = Math.round(parseFloat(incomeEditAmount || '0') * 100)
+    const amountChanged = amountCents > 0 && amountCents !== incomeEditItem.unitCents
+    if (amountChanged && !incomeEditScope) {
+      setIncomeEditError('Choose when the new amount applies.'); return
+    }
+    setIncomeEditSaving(true); setIncomeEditError('')
+    try {
+      if (amountChanged) {
+        const { error: e1 } = await supabase.from('income_amount_versions').insert({
+          income_source_id: incomeEditItem.incomeId,
+          amount_cents: amountCents,
+          effective_from: activeCycle.startDate,
+        })
+        if (e1) throw e1
+        if (incomeEditScope === 'occurrence') {
+          const nextStart = cycles[activeIdx + 1]?.startDate ?? addOneDay(activeCycle.endDate)
+          const { error: e2 } = await supabase.from('income_amount_versions').insert({
+            income_source_id: incomeEditItem.incomeId,
+            amount_cents: incomeEditItem.unitCents,
+            effective_from: nextStart,
+          })
+          if (e2) throw e2
+        }
+      }
+
+      const freqChanged   = incomeEditFrequency !== incomeEditItem.src.frequency
+      const anchorChanged = incomeEditAnchor    !== incomeEditItem.src.anchor_date
+      if (freqChanged || anchorChanged) {
+        const { error: e3 } = await supabase.from('income_sources')
+          .update({ frequency: incomeEditFrequency, anchor_date: incomeEditAnchor })
+          .eq('id', incomeEditItem.incomeId)
+        if (e3) throw e3
+      }
+
+      setIncomeEditItem(null); reload()
+    } catch (e: any) { setIncomeEditError(e.message) }
+    finally { setIncomeEditSaving(false) }
   }
 
   async function saveOneOff() {
@@ -1011,8 +1086,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         <div className="cyc">
           <div className="cyc-h">
             <div className="ttl">{fmtDate(activeCycle.startDate)} – {fmtDate(activeCycle.endDate)}</div>
-            <div className={`stt ${status==='past'?'frozen':status}`}>
-              {status==='now'?'Current':status==='past'?'Closed':status==='low'?'Near floor':'Forecast'}
+            <div className={`stt ${status==='past'?'frozen':status==='overdue'?'low':status}`}>
+              {status==='now'?'Current':status==='past'?'Closed':status==='overdue'?'Needs closing':status==='low'?'Near floor':'Forecast'}
             </div>
           </div>
           {variant === 'forecast' && activeIdx !== currentIdx && (
@@ -1028,12 +1103,12 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
           {floorCents > 0 ? (
             <div className={`nudge${aboveFloor>=0?' ok':''}`}>
               {aboveFloor>=0
-                ? <><b>{fmt(aboveFloor,false)}</b> above your floor this cycle.</>
-                : <>Closes <b>{fmt(Math.abs(aboveFloor),false)}</b> below your floor.</>}
+                ? <><b>{fmt(aboveFloor,false)}</b> above your floor {status==='past'?'that cycle':'this cycle'}.</>
+                : <>{status==='past'?'Closed':'Closes'} <b>{fmt(Math.abs(aboveFloor),false)}</b> below your floor.</>}
             </div>
           ) : activeCycle.committedClosingBalanceCents < 0 ? (
             <div className="nudge">
-              Closes <b>{fmt(Math.abs(activeCycle.committedClosingBalanceCents),false)}</b> negative this cycle.
+              {status==='past'?'Closed':status==='overdue'?'Would close':'Closes'} <b>{fmt(Math.abs(activeCycle.committedClosingBalanceCents),false)}</b> negative {status==='past'?'that cycle':'this cycle'}.
             </div>
           ) : null}
         </div>
@@ -1051,19 +1126,23 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               <div className="cards">
                 {incomeCards.map((cd, i) => (
                   <div key={'inc'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}
-                    style={cd.oneOff ? { cursor: 'pointer' } : undefined}
-                    onClick={cd.oneOff ? () => {
-                      setOneOffError(''); setOneOffName(cd.name)
-                      setOneOffAmt(String(cd.totalCents / 100))
-                      setOneOffCertain(!(cd.isPotential ?? true))
-                      setOneOffItem(cd)
-                    } : undefined}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => {
+                      if (cd.oneOff) {
+                        setOneOffError(''); setOneOffName(cd.name)
+                        setOneOffAmt(String(cd.totalCents / 100))
+                        setOneOffCertain(!(cd.isPotential ?? true))
+                        setOneOffItem(cd)
+                      } else {
+                        openIncomeEdit(cd)
+                      }
+                    }}
                   >
                     <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
                     <div className="tx">
                       <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
                       <div className="dt">{cd.detail}</div>
-                      <div className="act-row">{cd.oneOff && <span className="act">manage →</span>}</div>
+                      <div className="act-row"><span className="act">{cd.oneOff ? 'manage →' : 'edit →'}</span></div>
                     </div>
                     <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
                   </div>
@@ -1198,10 +1277,16 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
           </div>
         )}
 
-        {status === 'now' && (
+        {(status === 'now' || status === 'overdue') && (
           <>
-            <button className="closebtn" onClick={openClose}>Close this cycle →</button>
-            <div className="closehint">Confirms the real balance that becomes next cycle's opening.</div>
+            <button className="closebtn" onClick={openClose}>
+              {status === 'overdue' ? 'Close this overdue cycle →' : 'Close this cycle →'}
+            </button>
+            <div className="closehint">
+              {status === 'overdue'
+                ? 'This cycle ended already — closing it locks in your real balance and starts the next one.'
+                : "Confirms the real balance that becomes next cycle's opening."}
+            </div>
           </>
         )}
 
@@ -1272,6 +1357,69 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                 {varSaving ? 'Saving…' : `Confirm ${varAmountCents > 0 ? fmt(varAmountCents, false) : ''}`}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ OVERLAY 2b — Edit income (salary / job change) ═══ */}
+      {incomeEditItem && (
+        <div className="ov" onClick={() => setIncomeEditItem(null)}>
+          <div className="sheet" onClick={e => e.stopPropagation()}>
+            <button className="xbtn" onClick={() => setIncomeEditItem(null)}>×</button>
+            <div className="grab" />
+            {incomeEditStep === 0 && <>
+              <h3>Change {incomeEditItem.name.toLowerCase()}</h3>
+              <p className="sd">If the amount changed, when should it apply?</p>
+              <div className={`opt${incomeEditScope==='occurrence'?' sel':''}`} onClick={() => setIncomeEditScope('occurrence')}>
+                <div className="ot">Just this occurrence</div>
+                <div className="os">A one-off override for this cycle only. Reverts next cycle.</div>
+              </div>
+              <div className={`opt${incomeEditScope==='forward'?' sel':''}`} onClick={() => setIncomeEditScope('forward')}>
+                <div className="ot">From this date onward</div>
+                <div className="os">Permanent — matches a raise or new job.</div>
+              </div>
+              <div className="navrow">
+                <button className="pri" style={{ opacity: incomeEditScope ? 1 : 0.4 }}
+                  onClick={() => { if (incomeEditScope) setIncomeEditStep(1) }}>Next →</button>
+              </div>
+            </>}
+            {incomeEditStep === 1 && <>
+              <h3>Amount, frequency &amp; payday</h3>
+              <p className="sd">
+                {incomeEditScope === 'occurrence' ? 'Amount is one-off — reverts next cycle.' : 'Amount change is permanent.'}
+                {' '}Frequency and payday always apply from your next cycle onward.
+              </p>
+              <div className="field">
+                <label>Amount — currently {fmt(incomeEditItem.unitCents, false)}</label>
+                <div className="inrow"><span className="pre">$</span>
+                  <input type="number" inputMode="decimal" value={incomeEditAmount} onChange={e => setIncomeEditAmount(e.target.value)} />
+                </div>
+              </div>
+              <div className="field">
+                <label>Frequency</label>
+                <div className="freq-picker">
+                  {(['weekly','fortnightly','monthly','annually'] as const).map(f => (
+                    <button key={f} className={`freq-opt${incomeEditFrequency === f ? ' sel' : ''}`} onClick={() => setIncomeEditFrequency(f)}>
+                      {f === 'weekly' ? 'Weekly' : f === 'fortnightly' ? 'Fortnightly' : f === 'monthly' ? 'Monthly' : 'Annually'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="field">
+                <label>Payday (anchor date)</label>
+                <div className="inrow">
+                  <input type="date" value={incomeEditAnchor} onChange={e => setIncomeEditAnchor(e.target.value)}
+                    style={{ border:'none', background:'transparent', color:'var(--ink)', fontFamily:"'Space Grotesk',sans-serif", fontSize:15, fontWeight:600, width:'100%', outline:'none' }} />
+                </div>
+              </div>
+              {incomeEditError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:8 }}>{incomeEditError}</p>}
+              <div className="navrow">
+                <button onClick={() => setIncomeEditStep(0)}>Back</button>
+                <button className="pri" style={{ opacity: incomeEditSaving ? 0.6 : 1 }} onClick={applyIncomeEdit}>
+                  {incomeEditSaving ? 'Saving…' : 'Save changes'}
+                </button>
+              </div>
+            </>}
           </div>
         </div>
       )}
