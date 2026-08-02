@@ -13,6 +13,10 @@ export interface IncomeSource {
   anchorDate: string
   amountCents: number   // fallback if no versions supplied
   isPotential: boolean
+  isPrimary: boolean    // identifies which income source drives cycle length —
+                         // without this, projectCycles() falls back to array
+                         // order, which silently picks the wrong source on any
+                         // account with more than one non-potential income.
 }
 export interface Expense {
   id: string

@@ -41,7 +41,16 @@ export function projectCycles(input: CycleInput): CycleResult[] {
   const { incomeSources, expenses, openingBalanceCents, startDate, numCycles } = input
   const results: CycleResult[] = []
 
-  const primary = incomeSources.find(s => !s.isPotential) ?? incomeSources[0]
+  // FIX: previously `incomeSources.find(s => !s.isPotential) ?? incomeSources[0]`,
+  // which picks whichever non-potential source happens to come back first from
+  // the query — not necessarily the account's actual primary income. On any
+  // account with more than one non-potential income source, this silently used
+  // the wrong one to size cycles (e.g. a fortnightly side income overriding a
+  // monthly salary). Now explicitly prefers the flagged primary source, falling
+  // back to the old behaviour only if nothing is flagged.
+  const primary = incomeSources.find(s => s.isPrimary && !s.isPotential)
+    ?? incomeSources.find(s => !s.isPotential)
+    ?? incomeSources[0]
   const cycleFrequency = primary?.frequency ?? 'fortnightly'
 
   let cycleStart       = startDate

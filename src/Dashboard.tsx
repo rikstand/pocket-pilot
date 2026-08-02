@@ -184,6 +184,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
             anchorDate: src.anchor_date,
             amountCents: v?.amount_cents ?? 0,
             isPotential: src.is_potential ?? false,
+            isPrimary: src.is_primary ?? false,
           }
         })
 
@@ -1369,7 +1370,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
             <div className="grab" />
             {incomeEditStep === 0 && <>
               <h3>Change {incomeEditItem.name.toLowerCase()}</h3>
-              <p className="sd">If the amount changed, when should it apply?</p>
+              <p className="sd">Only matters if you're changing the amount — skip this if you're just updating frequency or payday.</p>
               <div className={`opt${incomeEditScope==='occurrence'?' sel':''}`} onClick={() => setIncomeEditScope('occurrence')}>
                 <div className="ot">Just this occurrence</div>
                 <div className="os">A one-off override for this cycle only. Reverts next cycle.</div>
@@ -1379,8 +1380,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                 <div className="os">Permanent — matches a raise or new job.</div>
               </div>
               <div className="navrow">
-                <button className="pri" style={{ opacity: incomeEditScope ? 1 : 0.4 }}
-                  onClick={() => { if (incomeEditScope) setIncomeEditStep(1) }}>Next →</button>
+                <button className="pri" onClick={() => setIncomeEditStep(1)}>Next →</button>
               </div>
             </>}
             {incomeEditStep === 1 && <>
