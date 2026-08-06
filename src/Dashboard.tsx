@@ -98,8 +98,9 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
   const [closeOpen,          setCloseOpen]          = useState(false)
   const [closeStep,          setCloseStep]          = useState(0)
-  const [closeVarActuals,    setCloseVarActuals]    = useState<Record<string, string>>({})
-  const [closeIncomeActuals, setCloseIncomeActuals] = useState<Record<string, string>>({})
+  const [closeVarActuals,  setCloseVarActuals]  = useState<Record<string, string>>({})
+  const [closePayLanded,   setClosePayLanded]   = useState<boolean | null>(null)
+  const [closePayAmount,   setClosePayAmount]   = useState('')
   const [closeRealBalance,   setCloseRealBalance]   = useState('')
   const [closeSaving,        setCloseSaving]        = useState(false)
   const [closeFrozen,        setCloseFrozen]        = useState(false)
@@ -476,20 +477,22 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     })
     .filter(Boolean) as { id: string, name: string, estimatedCents: number }[]
 
-  const incomeInCycle = rawIncome
-    .filter(s => !s.is_potential)
-    .map(src => {
-      const occs = getOccurrencesInRange(src.anchor_date, src.frequency, activeCycle.startDate, activeCycle.endDate)
-      if (!occs.length) return null
-      const v = (src.income_amount_versions ?? []).sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
-      return { id: src.id, name: src.name, expectedCents: (v?.amount_cents ?? 0) * occs.length }
-    })
-    .filter(Boolean) as { id: string, name: string, expectedCents: number }[]
+  
 
   const confirmedVarTotalCents = varExpensesInCycle.reduce((sum, e) =>
     sum + Math.round(parseFloat(closeVarActuals[e.id] || '0') * 100), 0)
-  const closeRealCents   = Math.round(parseFloat(closeRealBalance || '0') * 100)
-  const unaccountedCents = closeRealCents > 0 ? closeRealCents - activeCycle.committedClosingBalanceCents : 0
+  const closeRealCents = Math.round(parseFloat(closeRealBalance || '0') * 100)
+
+  // The pay for the NEXT cycle lands the night before it starts. If it's
+  // already sitting in the balance being entered, hold it back so the next
+  // cycle opens pre-pay — the engine then counts it as income on payday.
+  const nextCycleStartDate = addOneDay(activeCycle.endDate)
+  const scheduledPayCents  = primaryIncome
+    ? (versionForCycle(primaryIncome.income_amount_versions, nextCycleStartDate)?.amount_cents ?? 0)
+    : 0
+  const payLandedCents    = closePayLanded ? Math.round(parseFloat(closePayAmount || '0') * 100) : 0
+  const adjustedRealCents = closeRealCents - payLandedCents
+  const unaccountedCents  = closeRealCents > 0 ? adjustedRealCents - activeCycle.committedClosingBalanceCents : 0
 
   const laybyTotalCents      = Math.round(parseFloat(laybyTotal || '0') * 100)
   const laybyCountNum        = parseInt(laybyPayments || '0', 10) || 0
@@ -509,11 +512,11 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     setVarError('')
   }
   function openClose() {
-    const initVars: Record<string, string>   = {}
-    const initIncome: Record<string, string> = {}
-    for (const e of varExpensesInCycle) initVars[e.id]   = String(e.estimatedCents / 100)
-    for (const s of incomeInCycle)      initIncome[s.id] = String(s.expectedCents / 100)
-    setCloseVarActuals(initVars); setCloseIncomeActuals(initIncome)
+    const initVars: Record<string, string> = {}
+    for (const e of varExpensesInCycle) initVars[e.id] = String(e.estimatedCents / 100)
+    setCloseVarActuals(initVars)
+    setClosePayLanded(null)
+    setClosePayAmount(scheduledPayCents ? String(scheduledPayCents / 100) : '')
     setCloseRealBalance(''); setCloseStep(0); setCloseOpen(true)
   }
 
@@ -1448,21 +1451,25 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               <div className="skipnote"><b>Budget items skipped on purpose.</b> The real balance is the check.</div>
             </>}
             {closeStep === 1 && <>
-              <h3>Did income land?</h3>
-              <p className="sd">Confirm the expected deposits — adjust if anything differed.</p>
-              {incomeInCycle.length === 0
-                ? <div className="skipnote">No income expected this cycle.</div>
-                : incomeInCycle.map(s => (
-                    <div key={s.id} className="field">
-                      <label>{s.name} — expected {fmt(s.expectedCents, false)}</label>
-                      <div className="inrow"><span className="pre">$</span>
-                        <input type="number" inputMode="decimal" value={closeIncomeActuals[s.id] || ''}
-                          onChange={ev => setCloseIncomeActuals(p => ({ ...p, [s.id]: ev.target.value }))} />
-                      </div>
-                    </div>
-                  ))
-              }
-              <div className="skipnote"><b>Bonus or windfall?</b> Add it here.</div>
+              <h3>Has your next pay landed?</h3>
+              <p className="sd">Pay arrives the night before a cycle starts. If it's already in the balance you're about to enter, it belongs to the next cycle — not this one.</p>
+              <div className={`opt${closePayLanded === false ? ' sel' : ''}`} onClick={() => setClosePayLanded(false)}>
+                <div className="ot">Not yet</div>
+                <div className="os">The balance you enter is used as-is.</div>
+              </div>
+              <div className={`opt${closePayLanded === true ? ' sel' : ''}`} onClick={() => setClosePayLanded(true)}>
+                <div className="ot">Yes — it's already in there</div>
+                <div className="os">Held back so the next cycle opens before pay, then counted as income on payday.</div>
+              </div>
+              {closePayLanded === true && (
+                <div className="field">
+                  <label>Amount that landed{primaryIncome ? ` — ${primaryIncome.name}` : ''}</label>
+                  <div className="inrow"><span className="pre">$</span>
+                    <input type="number" inputMode="decimal" value={closePayAmount} onChange={e => setClosePayAmount(e.target.value)} />
+                  </div>
+                  <p className="hint">Defaults to your scheduled pay. Change it if the deposit differed.</p>
+                </div>
+              )}
             </>}
             {closeStep === 2 && <>
               <h3>Your real balance</h3>
@@ -1473,6 +1480,9 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                   <input type="number" inputMode="decimal" value={closeRealBalance} onChange={e => setCloseRealBalance(e.target.value)} placeholder="0.00" />
                 </div>
                 <p className="hint">We projected {fmt(activeCycle.committedClosingBalanceCents, false)}.</p>
+                 {payLandedCents > 0 && closeRealCents > 0 && (
+                  <p className="hint">Less {fmt(payLandedCents, false)} pay → next cycle opens at {fmt(adjustedRealCents, false)}.</p>
+                )}
               </div>
             </>}
             {closeStep === 3 && <>
@@ -1480,7 +1490,9 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               <p className="sd">The gap between forecast and reality.</p>
               <div className="recline"><span>Projected close</span><b>{fmt(activeCycle.committedClosingBalanceCents, false)}</b></div>
               {confirmedVarTotalCents > 0 && <div className="recline"><span>Confirmed variables</span><b>−{fmt(confirmedVarTotalCents, false)}</b></div>}
-              <div className="recline"><span>Your real balance</span><b>{closeRealCents > 0 ? fmt(closeRealCents, false) : '—'}</b></div>
+             <div className="recline"><span>Your real balance</span><b>{closeRealCents > 0 ? fmt(closeRealCents, false) : '—'}</b></div>
+              {payLandedCents > 0 && <div className="recline"><span>Pay held for next cycle</span><b>−{fmt(payLandedCents, false)}</b></div>}
+              <div className="recline"><span>Next cycle opens at</span><b>{fmt(adjustedRealCents, false)}</b></div>
               <div className={`recline${unaccountedCents >= 0 ? ' res' : ''}`}>
                 <span>Unaccounted</span>
                 <b>{unaccountedCents >= 0 ? '+' : '−'}{fmt(Math.abs(unaccountedCents), false)}</b>
@@ -1494,7 +1506,9 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               : <div className="navrow">
                   {closeStep > 0 && <button onClick={() => setCloseStep(s => s - 1)}>Back</button>}
                   {closeStep < 3
-                    ? <button className="pri" onClick={() => setCloseStep(s => s + 1)}>Next</button>
+                    ? <button className="pri"
+                        style={{ opacity: closeStep === 1 && closePayLanded === null ? 0.4 : 1 }}
+                        onClick={() => { if (!(closeStep === 1 && closePayLanded === null)) setCloseStep(s => s + 1) }}>Next</button>
                     : <button className="pri" style={{ opacity: closeRealCents > 0 && !closeSaving ? 1 : 0.4 }} onClick={applyFreeze}>
                         {closeSaving ? 'Freezing…' : 'Freeze & start next cycle'}
                       </button>
