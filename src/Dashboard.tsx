@@ -23,16 +23,14 @@ function daysUntil(dateStr: string) {
   const now = new Date(); now.setHours(0,0,0,0)
   return Math.max(0, Math.round((new Date(dateStr + 'T00:00:00').getTime() - now.getTime()) / 86400000))
 }
-function today() { return new Date().toISOString().split('T')[0] }
+function today() { return formatDate(new Date()) }
 function findCurrentIdx(cycles: any[]) {
   const t = today()
   const idx = cycles.findIndex(c => c.startDate <= t && c.endDate >= t)
   return idx >= 0 ? idx : 0
 }
 function addOneDay(dateStr: string): string {
-  const d = new Date(dateStr + 'T00:00:00')
-  d.setDate(d.getDate() + 1)
-  return d.toISOString().split('T')[0]
+  return formatDate(addDays(parseDate(dateStr), 1))
 }
 function versionForCycle(versions: any[], cycleStart: string): any {
   const all = versions ?? []
@@ -808,18 +806,19 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       }
 
       const nextStart = addOneDay(activeCycle.endDate)
-      const nextEndDate = new Date(nextStart + 'T00:00:00')
-      const freq = primaryIncome?.frequency ?? 'fortnightly'
-      if      (freq === 'weekly')      nextEndDate.setDate(nextEndDate.getDate() + 6)
-      else if (freq === 'fortnightly') nextEndDate.setDate(nextEndDate.getDate() + 13)
-      else if (freq === 'monthly')   { nextEndDate.setMonth(nextEndDate.getMonth() + 1); nextEndDate.setDate(nextEndDate.getDate() - 1) }
-      else                           { nextEndDate.setFullYear(nextEndDate.getFullYear() + 1); nextEndDate.setDate(nextEndDate.getDate() - 1) }
+      const freq      = primaryIncome?.frequency ?? 'fortnightly'
+      const nsDate    = parseDate(nextStart)
+      let nextEnd: string
+      if      (freq === 'weekly')      nextEnd = formatDate(addDays(nsDate, 6))
+      else if (freq === 'fortnightly') nextEnd = formatDate(addDays(nsDate, 13))
+      else if (freq === 'monthly')     nextEnd = formatDate(addDays(addMonths(nsDate, 1), -1))
+      else                             nextEnd = formatDate(addDays(addYears(nsDate, 1), -1))
 
       const { error: e2 } = await supabase.from('cycles').insert({
         profile_id: userId,
         account_id: accountId,
         start_date: nextStart,
-        end_date: nextEndDate.toISOString().split('T')[0],
+        end_date: nextEnd,
         opening_balance_cents: closeRealCents,
         contingency_cents: 0,
         is_closed: false,

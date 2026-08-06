@@ -236,7 +236,10 @@ export async function addBudgetSpendEntry(
       expense_id: expenseId,
       amount_cents: amountCents,
       label,
-      spent_date: spentDate ?? new Date().toISOString().split('T')[0],
+      spent_date: spentDate ?? (() => {
+        const d = new Date()
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      })(),
     })
     .select()
     .single()
