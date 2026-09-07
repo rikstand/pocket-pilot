@@ -1116,10 +1116,21 @@ svg.proj { display:block; width:100%; height:152px; }
    the extra-payment slider and the payoff curve are new.
    ══════════════════════════════════════════════════════════════════ */
 
+/* Action link. .card .tx .act is scoped to cards, so the Credit page needs
+   its own — same type treatment, credit colour. */
+.credit-act {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; font-weight: 600; letter-spacing: .03em;
+  color: var(--credit); cursor: pointer; white-space: nowrap;
+  background: none; border: none; padding: 0;
+}
+.credit-act:hover { filter: brightness(1.1); }
+
 /* ── balance card ── */
 .credit-bal {
   margin: 12px 16px 0; background: var(--bg2);
   border: 1px solid var(--line); border-radius: 18px; padding: 16px 17px;
+  text-align: left;   /* explicit: never inherit any centering */
 }
 .credit-bal-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .credit-bal-title {
@@ -1135,7 +1146,7 @@ svg.proj { display:block; width:100%; height:152px; }
 
 .credit-lines {
   margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--line2);
-  display: flex; flex-direction: column; gap: 8px;
+  display: flex; flex-direction: column; gap: 8px; text-align: left;
 }
 .credit-line { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
 .credit-line .cl-dot { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; background: var(--credit); }
@@ -1172,7 +1183,7 @@ svg.proj { display:block; width:100%; height:152px; }
 }
 
 /* ── extra payment slider ── */
-.credit-slider { padding: 4px 16px 0; }
+.credit-slider { padding: 4px 16px 0; text-align: left; }
 .credit-slider-top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 7px; }
 .credit-slider-top .l {
   font-family: 'JetBrains Mono', monospace; font-size: 9.5px;
@@ -1199,7 +1210,7 @@ svg.proj { display:block; width:100%; height:152px; }
 }
 
 /* ── payoff curve ── */
-.credit-chart-wrap { padding: 14px 16px 0; }
+.credit-chart-wrap { padding: 14px 16px 0; text-align: left; }
 .credit-chart-k {
   font-family: 'JetBrains Mono', monospace; font-size: 9.5px;
   letter-spacing: .1em; text-transform: uppercase; color: var(--mut);
@@ -1236,6 +1247,22 @@ svg.proj { display:block; width:100%; height:152px; }
 .credit-empty .ce-form {
   text-align: left; margin-top: 16px; padding-top: 15px;
   border-top: 1px solid var(--line2);
+}
+.credit-meta .cm-tx { text-align: left; }
+
+/* ── card terms row + settings entry point ── */
+.credit-meta {
+  margin-top: 12px; padding-top: 11px;
+  border-top: 1px solid var(--line2);
+  display: flex; align-items: center; gap: 10px;
+}
+.credit-meta .cm-tx { flex: 1; min-width: 0; }
+.credit-meta .cm-l {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--mut);
+}
+.credit-meta .cm-v {
+  font-size: 12.5px; color: var(--ink); margin-top: 2px; font-weight: 500;
 }
 
 /* primary action in credit colour */

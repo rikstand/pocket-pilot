@@ -61,6 +61,10 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
   const [balOpen, setBalOpen] = useState(false)
   const [balStr,  setBalStr]  = useState('')
 
+  // card settings sheet
+  const [settingsOpen,  setSettingsOpen]  = useState(false)
+  const [settingsError, setSettingsError] = useState('')
+
   useEffect(() => {
     async function load() {
       setLoading(true)
@@ -279,9 +283,32 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
     } catch (e: any) { alert('Could not update balance: ' + e.message) }
     finally { setSaving(false) }
   }
-  async function saveSpend(newSpendCents: number) {
-    try { await updateCreditAccount(card.id, { assumed_spend_cents: newSpendCents }); reload() }
-    catch (e: any) { alert('Could not update: ' + e.message) }
+  function openSettings() {
+    setFName(card.name)
+    setFApr(String(card.apr_basis_points / 100))
+    setFMin(String(Number(card.min_payment_pct)))
+    setFSpend(String(card.assumed_spend_cents / 100))
+    setSettingsError('')
+    setSettingsOpen(true)
+  }
+
+  async function saveSettings() {
+    const aprBps     = Math.round(parseFloat(fApr || '0') * 100)
+    const minPct     = parseFloat(fMin || '0')
+    const spendCents = Math.max(0, Math.round(parseFloat(fSpend || '0') * 100))
+    if (!fName.trim())          { setSettingsError('Give the card a name.'); return }
+    if (!aprBps || minPct <= 0) { setSettingsError('Rate and minimum payment are required.'); return }
+    setSaving(true); setSettingsError('')
+    try {
+      await updateCreditAccount(card.id, {
+        name: fName.trim(),
+        apr_basis_points: aprBps,
+        min_payment_pct: minPct,
+        assumed_spend_cents: spendCents,
+      })
+      setSettingsOpen(false); reload()
+    } catch (e: any) { setSettingsError(e.message) }
+    finally { setSaving(false) }
   }
 
   /* payoff curve — minimum-only baseline against the selected strategy */
@@ -314,8 +341,8 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
         <div className="credit-bal">
           <div className="credit-bal-hdr">
             <div className="credit-bal-title">{card.name} · balance</div>
-            <span className="act" style={{ cursor:'pointer' }}
-              onClick={() => { setBalStr(String(balanceCents / 100)); setBalOpen(true) }}>update →</span>
+            <button className="credit-act" type="button"
+              onClick={() => { setBalStr(String(balanceCents / 100)); setBalOpen(true) }}>update →</button>
           </div>
           <div className="credit-bal-amt">{fmt(balanceCents, false)}</div>
           <div className="credit-bal-sub">
@@ -347,6 +374,16 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
               <div className="cl-lbl">Assumed new spend</div>
               <div className="cl-val">{card.assumed_spend_cents > 0 ? fmt(card.assumed_spend_cents, false) : 'none'}</div>
             </div>
+          </div>
+
+          <div className="credit-meta">
+            <div className="cm-tx">
+              <div className="cm-l">Card terms</div>
+              <div className="cm-v">
+                {(card.apr_basis_points / 100).toFixed(2)}% p.a. · minimum {Number(card.min_payment_pct)}% monthly
+              </div>
+            </div>
+            <button className="credit-act" type="button" onClick={openSettings}>edit →</button>
           </div>
         </div>
 
@@ -452,7 +489,8 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
             </button>
             <div className="credit-subact">
               committed {fmt(card.strategy_extra_cents, false)}/cycle extra ·{' '}
-              <span className="act" style={{ cursor:'pointer' }} onClick={doUncommit}>uncommit</span>
+              <button className="credit-act" type="button"
+                style={{ color:'var(--floor)' }} onClick={doUncommit}>uncommit</button>
             </div>
           </>
         ) : (
@@ -511,14 +549,7 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
           })}
         </div>
 
-        <div style={{ padding:'14px 16px 24px' }}>
-          <button className="addbtn" onClick={() => {
-            const v = prompt('Assumed spend per cycle ($)', String(card.assumed_spend_cents / 100))
-            if (v != null) saveSpend(Math.max(0, Math.round(parseFloat(v || '0') * 100)))
-          }}>
-            Change assumed spend
-          </button>
-        </div>
+        <div style={{ height:24 }} />
 
       </div>
 
@@ -545,6 +576,68 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
               <button onClick={() => setBalOpen(false)}>Cancel</button>
               <button className="pri" onClick={saveBalance} disabled={saving}>
                 {saving ? 'Saving…' : 'Save balance'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── card settings ── */}
+      {settingsOpen && (
+        <div className="ov" onClick={() => setSettingsOpen(false)}>
+          <div className="sheet" onClick={e => e.stopPropagation()}>
+            <button className="xbtn" onClick={() => setSettingsOpen(false)}>×</button>
+            <div className="grab" />
+            <h3>Card settings</h3>
+            <p className="sd">
+              Changing the rate or minimum recalculates every projection on this page. If a
+              strategy is committed, its credit line updates from the next cycle onward.
+            </p>
+
+            <div className="field">
+              <label>Card name</label>
+              <div className="inrow">
+                <input type="text" value={fName} onChange={e => setFName(e.target.value)} placeholder="e.g. Visa" />
+              </div>
+            </div>
+
+            <div style={{ display:'flex', gap:9 }}>
+              <div className="field" style={{ flex:1, minWidth:0 }}>
+                <label>Rate p.a.</label>
+                <div className="inrow">
+                  <input type="number" inputMode="decimal" step="0.1" value={fApr} onChange={e => setFApr(e.target.value)} />
+                  <span className="pre">%</span>
+                </div>
+              </div>
+              <div className="field" style={{ flex:1, minWidth:0 }}>
+                <label>Min payment</label>
+                <div className="inrow">
+                  <input type="number" inputMode="decimal" step="0.5" value={fMin} onChange={e => setFMin(e.target.value)} />
+                  <span className="pre">%</span>
+                </div>
+              </div>
+            </div>
+            <div className="hint" style={{ marginTop:-8, marginBottom:14 }}>
+              Minimum is a monthly percentage of the balance. Pocket Pilot pro-rates it to your cycle length.
+            </div>
+
+            <div className="field">
+              <label>Assumed spend per cycle</label>
+              <div className="inrow">
+                <span className="pre">$</span>
+                <input type="number" inputMode="decimal" value={fSpend} onChange={e => setFSpend(e.target.value)} placeholder="0" />
+              </div>
+              <div className="hint">
+                What you expect to put on the card each cycle. At $0 every payoff date here assumes
+                you never use the card again.
+              </div>
+            </div>
+
+            {settingsError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:8 }}>{settingsError}</p>}
+
+            <div className="navrow">
+              <button onClick={() => setSettingsOpen(false)}>Cancel</button>
+              <button className="pri" onClick={saveSettings} disabled={saving}>
+                {saving ? 'Saving…' : 'Save changes'}
               </button>
             </div>
           </div>
