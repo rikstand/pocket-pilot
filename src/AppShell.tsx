@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { useAccount } from './lib/AccountContext'
 
-export type Page = 'cycle' | 'forecast' | 'expenses' | 'wishlist' | 'settings'
+export type Page = 'cycle' | 'forecast' | 'expenses' | 'wishlist' | 'credit' | 'settings'
 
 interface AppShellProps {
   active: Page
@@ -159,6 +159,9 @@ export default function AppShell({ active, onNavigate, darkMode, onToggleDark, o
             </div>
             <div className={`drawer-item${active === 'wishlist' ? ' active' : ''}`} onClick={() => go('wishlist')}>
               <div className="di wish">☆</div><div className="dt">Wishlist</div>
+            </div>
+            <div className={`drawer-item${active === 'credit' ? ' active' : ''}`} onClick={() => go('credit')}>
+              <div className="di crd">▭</div><div className="dt">Credit</div>
             </div>
             <div className="drawer-div" />
             <div className={`drawer-item${active === 'settings' ? ' active' : ''}`} onClick={() => go('settings')}>

@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { supabase } from './lib/supabase'
 import { getExpenses, getLayBys } from './lib/repository'
 import { ExpenseIcon, guessIcon, iconLabel, ICON_GROUPS } from './lib/icons'
+import { parseDate, formatDate } from './engine/dates'
+import { byOldest, latestVersion } from './lib/versions'
 
 const FREQUENCIES = ['weekly', 'fortnightly', 'monthly', 'annually', 'once'] as const
 type Frequency = typeof FREQUENCIES[number]
@@ -21,11 +23,16 @@ const MODE_META: Record<Mode, { iconClass: string; chip: string; chipLabel: stri
   budget:   { iconClass: 'base', chip: 'bl',   chipLabel: 'baseline', col: 'var(--mut)',  sft: 'var(--line2)' },
 }
 
+/** Local calendar date as YYYY-MM-DD. Never toISOString() — that returns UTC. */
+function todayStr(): string {
+  return formatDate(new Date())
+}
+
 function fmt(cents: number) {
   return '$' + (Math.abs(cents) / 100).toLocaleString('en-NZ', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 }
 function fmtDate(d: string) {
-  return new Date(d + 'T00:00:00').toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+  return parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
 }
 function toFn(cents: number, freq: string): number {
   if (freq === 'weekly')      return cents * 2
@@ -47,13 +54,34 @@ function cycleDetail(cents: number, freq: string, isEstimate: boolean): string {
   return `${raw}/${abbr} → ${norm}/fn`
 }
 
+/** Chronological — oldest payment first. Used for lay-by payment strips. */
+function sortedVersions(exp: any): any[] {
+  return [...(exp.expense_amount_versions ?? [])].sort(byOldest)
+}
+
+/**
+ * A lay-by is "finished" when every scheduled payment date is strictly in the
+ * past. Strict `<` keeps it visible on its final payment day.
+ *
+ * NOTE: this is derived from dates, not verified payment. A missed final
+ * payment looks identical to a completed one — hence the section reads
+ * "Finished", not "Paid off". Revisit when scheduled-vs-actual lands.
+ */
+function isLaybyFinished(exp: any): boolean {
+  const versions = exp.expense_amount_versions ?? []
+  if (versions.length === 0) return false
+  const t = todayStr()
+  return versions.every((v: any) => v.effective_from < t)
+}
+
 export default function ExpensesPage({ userId, accountId }: { userId: string; accountId: string; onBack?: () => void }) {
   const [expenses, setExpenses] = useState<any[]>([])
   const [layBys,   setLayBys]   = useState<any[]>([])
   const [loading,  setLoading]  = useState(true)
   const [saving,   setSaving]   = useState(false)
 
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  // 'completed' seeded closed — finished lay-bys are archive, not working set
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set(['completed']))
 
   const [sheet,      setSheet]      = useState<Sheet>(null)
   const [editingExp, setEditingExp] = useState<any>(null)
@@ -102,8 +130,7 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
   }
 
   function openEdit(exp: any) {
-    const v = (exp.expense_amount_versions ?? [])
-      .sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
+    const v = latestVersion(exp.expense_amount_versions)
     setName(exp.name)
     setAmount(v ? String(v.amount_cents / 100) : '')
     setFrequency(exp.frequency as Frequency)
@@ -141,13 +168,12 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
           .update({ name: name.trim(), frequency, anchor_date: anchorDate, mode, icon })
           .eq('id', editingExp.id)
         if (e1) throw e1
-        const oldV = (editingExp.expense_amount_versions ?? [])
-          .sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
+        const oldV = latestVersion(editingExp.expense_amount_versions)
         const newCents = Math.round(parseFloat(amount) * 100)
         if (!oldV || oldV.amount_cents !== newCents) {
           const { error: e2 } = await supabase
             .from('expense_amount_versions')
-            .insert({ expense_id: editingExp.id, amount_cents: newCents, effective_from: new Date().toISOString().split('T')[0] })
+            .insert({ expense_id: editingExp.id, amount_cents: newCents, effective_from: todayStr() })
           if (e2) throw e2
         }
       }
@@ -177,12 +203,13 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
   const fixedExps  = recurring.filter(e => (e.mode ?? 'fixed') === 'fixed' && !e.lay_by_id)
   const varExps    = recurring.filter(e => e.mode === 'variable')
   const budgetExps = recurring.filter(e => e.mode === 'budget')
-  const laybyExps  = recurring.filter(e => !!e.lay_by_id)
+
+  const laybyAll   = recurring.filter(e => !!e.lay_by_id)
+  const laybyExps  = laybyAll.filter(e => !isLaybyFinished(e))
+  const laybyDone  = laybyAll.filter(e =>  isLaybyFinished(e))
 
   function latestCents(exp: any): number {
-    const v = (exp.expense_amount_versions ?? [])
-      .sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
-    return v?.amount_cents ?? 0
+    return latestVersion(exp.expense_amount_versions)?.amount_cents ?? 0
   }
   function groupTotalFn(exps: any[]): number {
     return exps.reduce((sum, e) => sum + toFn(latestCents(e), e.frequency), 0)
@@ -191,6 +218,7 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
   const fixedTotal  = groupTotalFn(fixedExps)
   const varTotal    = groupTotalFn(varExps)
   const budgetTotal = groupTotalFn(budgetExps)
+  // finished lay-bys deliberately excluded — that money isn't going out any more
   const laybyTotal  = groupTotalFn(laybyExps)
 
   const m = sheet ? MODE_META[mode] : MODE_META['fixed']
@@ -200,16 +228,15 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
     const layby = layBys.find((l: any) => l.id === exp.lay_by_id)
     const target = layby?.target_amount_cents ?? 0
     const totalPayments = layby?.payments_total ?? 0
-    const todayStr = new Date().toISOString().split('T')[0]
-    const sorted = [...(exp.expense_amount_versions ?? [])]
-      .sort((a: any, b: any) => a.effective_from < b.effective_from ? -1 : 1)
+    const today = todayStr()
+    const sorted = sortedVersions(exp)
 
     let cumulative = 0
     const cells = sorted.map((v: any, i: number) => {
       cumulative += v.amount_cents
       const remaining = Math.max(0, target - cumulative)
       const isLast = i === sorted.length - 1
-      const state: 'past' | 'future' = v.effective_from <= todayStr ? 'past' : 'future'
+      const state: 'past' | 'future' = v.effective_from <= today ? 'past' : 'future'
       return { date: v.effective_from, amountCents: v.amount_cents, remainingCents: remaining, state, isLast, paymentNumber: i + 1 }
     })
 
@@ -246,41 +273,49 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
     )
   }
 
-  function renderLaybyRow(exp: any) {
+  function renderLaybyRow(exp: any, done = false) {
     const cents   = latestCents(exp)
     const expIcon = exp.icon || 'gift'
     const layby   = layBys.find((l: any) => l.id === exp.lay_by_id)
     const totalPayments = layby?.payments_total ?? 1
     const targetCents   = layby?.target_amount_cents ?? 0
-    const todayStr      = new Date().toISOString().split('T')[0]
-    const sortedVersions = [...(exp.expense_amount_versions ?? [])]
-      .sort((a: any, b: any) => a.effective_from < b.effective_from ? -1 : 1)
-    const paidCount = sortedVersions.filter((v: any) => v.effective_from <= todayStr).length
-    const paidCents = sortedVersions.filter((v: any) => v.effective_from <= todayStr).reduce((s: number, v: any) => s + v.amount_cents, 0)
+    const today   = todayStr()
+    const sorted  = sortedVersions(exp)
+    const paidCount = sorted.filter((v: any) => v.effective_from <= today).length
+    const paidCents = sorted.filter((v: any) => v.effective_from <= today).reduce((s: number, v: any) => s + v.amount_cents, 0)
     const remainingCents = Math.max(0, targetCents - paidCents)
     const progress = totalPayments > 0 ? Math.min(paidCount / totalPayments, 1) : 0
+    const lastDate = sorted[sorted.length - 1]?.effective_from ?? null
+
+    const detail = done
+      ? `${totalPayments} payments · last ${lastDate ? fmtDate(lastDate) : '—'}`
+      : `${paidCount} of ${totalPayments} · ${fmt(remainingCents)} left · ${exp.frequency}`
+
     return (
       <div key={exp.id} className="exp-row" onClick={() => setLaybyExp(exp)}>
         <div className="ri" style={{ background: 'var(--event-s)', color: 'var(--event)' }}><ExpenseIcon name={expIcon} size={16} /></div>
         <div className="rm">
           <div className="rn">{exp.name}</div>
-          <div className="rd">{paidCount} of {totalPayments} · {fmt(remainingCents)} left · {exp.frequency}</div>
-          <div className="exp-prog"><div className="fill" style={{ width: `${Math.round(progress * 100)}%`, background: 'var(--event)' }} /></div>
+          <div className="rd">{detail}</div>
+          {!done && (
+            <div className="exp-prog"><div className="fill" style={{ width: `${Math.round(progress * 100)}%`, background: 'var(--event)' }} /></div>
+          )}
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div className="rv">−{fmt(cents)}</div>
-          <div className="rf">PER PAYMENT</div>
+          <div className="rv">{done ? fmt(targetCents) : '−' + fmt(cents)}</div>
+          <div className="rf">{done ? 'TOTAL' : 'PER PAYMENT'}</div>
         </div>
       </div>
     )
   }
 
-  type SectionDef = { key: string; label: string; color: string; exps: any[]; total: number; isLayby?: boolean }
+  type SectionDef = { key: string; label: string; color: string; exps: any[]; total: number; isLayby?: boolean; isDone?: boolean }
   const sections: SectionDef[] = [
-    { key: 'fixed',    label: 'Fixed',     color: 'var(--acc)',   exps: fixedExps,  total: fixedTotal },
-    { key: 'variable', label: 'Estimates', color: 'var(--warn)',  exps: varExps,    total: varTotal },
-    { key: 'budget',   label: 'Budget',    color: 'var(--mut)',   exps: budgetExps, total: budgetTotal },
-    { key: 'layby',    label: 'Lay-bys',   color: 'var(--event)', exps: laybyExps,  total: laybyTotal, isLayby: true },
+    { key: 'fixed',     label: 'Fixed',     color: 'var(--acc)',   exps: fixedExps,  total: fixedTotal },
+    { key: 'variable',  label: 'Estimates', color: 'var(--warn)',  exps: varExps,    total: varTotal },
+    { key: 'budget',    label: 'Budget',    color: 'var(--mut)',   exps: budgetExps, total: budgetTotal },
+    { key: 'layby',     label: 'Lay-bys',   color: 'var(--event)', exps: laybyExps,  total: laybyTotal, isLayby: true },
+    { key: 'completed', label: 'Finished',  color: 'var(--faint)', exps: laybyDone,  total: 0, isLayby: true, isDone: true },
   ].filter(s => s.exps.length > 0)
 
   return (
@@ -311,19 +346,21 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
           {sections.map(sec => {
             const isOpen = !collapsed.has(sec.key)
             return (
-              <div key={sec.key} className="exp-sec">
+              <div key={sec.key} className={`exp-sec${sec.isDone ? ' done' : ''}`}>
                 <div className="exp-sec-hd" onClick={() => toggleSection(sec.key)}>
                   <div className="lbl" style={{ color: sec.color }}>
                     {sec.label} <span className="cnt">{sec.exps.length}</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center' }}>
-                    <span className="tot" style={{ color: sec.color }}>−{fmt(sec.total)}</span>
+                    {!sec.isDone && <span className="tot" style={{ color: sec.color }}>−{fmt(sec.total)}</span>}
                     <span className={`chv${isOpen ? ' up' : ''}`}>▾</span>
                   </div>
                 </div>
                 {isOpen && (
                   <div className="exp-rows">
-                    {sec.isLayby ? sec.exps.map(exp => renderLaybyRow(exp)) : sec.exps.map(exp => renderRow(exp))}
+                    {sec.isLayby
+                      ? sec.exps.map(exp => renderLaybyRow(exp, sec.isDone))
+                      : sec.exps.map(exp => renderRow(exp))}
                   </div>
                 )}
               </div>

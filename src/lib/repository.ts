@@ -211,6 +211,216 @@ export async function deleteWishlistItem(itemId: string) {
   if (error) throw error
 }
 
+// --- CREDIT ACCOUNTS ---
+// A card's balance lives in credit_balance_snapshots, not on the account row.
+// getCreditAccount() folds the latest snapshot in as currentBalanceCents so
+// callers get one object shaped like the engine's CreditAccount type.
+export async function getCreditAccount(accountId: string) {
+  const { data, error } = await supabase
+    .from('credit_accounts')
+    .select('*')
+    .eq('account_id', accountId)
+    .eq('is_active', true)
+    .order('created_at')
+    .limit(1)
+  if (error) throw error
+  const card = data?.[0]
+  if (!card) return null
+
+  const snapshot = await getLatestCreditSnapshot(card.id)
+  return {
+    ...card,
+    current_balance_cents: snapshot?.balance_cents ?? 0,
+    balance_as_of: snapshot?.as_of_date ?? null,
+    balance_source: snapshot?.source ?? null,
+  }
+}
+
+export async function createCreditAccount(
+  accountId: string,
+  fields: {
+    name: string
+    apr_basis_points: number
+    min_payment_pct: number
+    min_payment_floor_cents: number
+    assumed_spend_cents: number
+  },
+  openingBalanceCents: number,
+  asOfDate: string
+) {
+  const { data: card, error: e1 } = await supabase
+    .from('credit_accounts')
+    .insert({ account_id: accountId, ...fields })
+    .select()
+    .single()
+  if (e1) throw e1
+
+  const { error: e2 } = await supabase
+    .from('credit_balance_snapshots')
+    .insert({
+      credit_account_id: card.id,
+      account_id: accountId,
+      balance_cents: openingBalanceCents,
+      as_of_date: asOfDate,
+      source: 'initial',
+    })
+  if (e2) throw e2
+
+  return card
+}
+
+export async function updateCreditAccount(
+  creditAccountId: string,
+  fields: {
+    name?: string
+    apr_basis_points?: number
+    min_payment_pct?: number
+    min_payment_floor_cents?: number
+    assumed_spend_cents?: number
+  }
+) {
+  const { data, error } = await supabase
+    .from('credit_accounts')
+    .update(fields)
+    .eq('id', creditAccountId)
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+// Committing a strategy is what lets the credit line reach the forecast.
+// Until this runs, the Credit page is a simulator and projectCycles() ignores
+// the card entirely.
+export async function commitCreditStrategy(creditAccountId: string, extraCents: number) {
+  const { data, error } = await supabase
+    .from('credit_accounts')
+    .update({
+      strategy_extra_cents: extraCents,
+      strategy_committed: true,
+      strategy_committed_at: new Date().toISOString(),
+    })
+    .eq('id', creditAccountId)
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function uncommitCreditStrategy(creditAccountId: string) {
+  const { data, error } = await supabase
+    .from('credit_accounts')
+    .update({ strategy_committed: false, strategy_committed_at: null })
+    .eq('id', creditAccountId)
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function deleteCreditAccount(creditAccountId: string) {
+  const { error } = await supabase
+    .from('credit_accounts')
+    .update({ is_active: false })
+    .eq('id', creditAccountId)
+  if (error) throw error
+}
+
+// --- CREDIT BALANCE SNAPSHOTS ---
+// Append-only, same shape as expense_amount_versions: never overwrite, always
+// add a dated row. Manual updates and cycle-close updates take this one path.
+export async function getLatestCreditSnapshot(creditAccountId: string) {
+  const { data, error } = await supabase
+    .from('credit_balance_snapshots')
+    .select('*')
+    .eq('credit_account_id', creditAccountId)
+    .order('as_of_date', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(1)
+  if (error) throw error
+  return data?.[0] ?? null
+}
+
+export async function getCreditSnapshots(creditAccountId: string) {
+  const { data, error } = await supabase
+    .from('credit_balance_snapshots')
+    .select('*')
+    .eq('credit_account_id', creditAccountId)
+    .order('as_of_date', { ascending: false })
+  if (error) throw error
+  return data
+}
+
+export async function addCreditSnapshot(
+  creditAccountId: string,
+  accountId: string,
+  balanceCents: number,
+  asOfDate: string,
+  source: 'manual' | 'cycle_close' | 'initial' = 'manual',
+  projectedBalanceCents?: number
+) {
+  const { data, error } = await supabase
+    .from('credit_balance_snapshots')
+    .insert({
+      credit_account_id: creditAccountId,
+      account_id: accountId,
+      balance_cents: balanceCents,
+      as_of_date: asOfDate,
+      source,
+      projected_balance_cents: projectedBalanceCents ?? null,
+    })
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+// --- CREDIT EXTRA OVERRIDES ---
+// Adjusts only the discretionary extra, for one cycle. There is deliberately
+// no equivalent for the minimum: it is contractual, and the app should not
+// help normalise skipping it.
+export async function getCreditExtraOverrides(creditAccountId: string) {
+  const { data, error } = await supabase
+    .from('credit_extra_overrides')
+    .select('*')
+    .eq('credit_account_id', creditAccountId)
+    .order('cycle_start')
+  if (error) throw error
+  return data
+}
+
+export async function setCreditExtraOverride(
+  creditAccountId: string,
+  accountId: string,
+  cycleStart: string,
+  extraCents: number
+) {
+  const { data, error } = await supabase
+    .from('credit_extra_overrides')
+    .upsert(
+      {
+        credit_account_id: creditAccountId,
+        account_id: accountId,
+        cycle_start: cycleStart,
+        extra_cents: extraCents,
+      },
+      { onConflict: 'credit_account_id,cycle_start' }
+    )
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function clearCreditExtraOverride(creditAccountId: string, cycleStart: string) {
+  const { error } = await supabase
+    .from('credit_extra_overrides')
+    .delete()
+    .eq('credit_account_id', creditAccountId)
+    .eq('cycle_start', cycleStart)
+  if (error) throw error
+}
+
 // --- BUDGET SPEND ENTRIES ---
 export async function getBudgetSpendEntries(accountId: string) {
   const { data, error } = await supabase

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from './lib/supabase'
 import { upsertProfile, createAccount } from './lib/repository'
+import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
 
 const FREQUENCIES = ['weekly', 'fortnightly', 'monthly', 'annually', 'once'] as const
 type Frequency = typeof FREQUENCIES[number]
@@ -210,16 +211,24 @@ export default function SetupPage({
         if (e4) throw e4
       }
 
+      // First cycle window. This row anchors the entire perpetuation chain —
+      // every later cycle derives from it — so a one-day error here propagates
+      // forever. All arithmetic goes through dates.ts: `new Date('YYYY-MM-DD')`
+      // parses as UTC midnight, and toISOString() converts back to UTC, so the
+      // old local-setter round-trip could land a day off at month/DST boundaries.
       const cycleAnchor = skipIncome ? cycleStartDate : incomeAnchor
-      const start = new Date(cycleAnchor)
-      const end   = new Date(start)
-      if (!skipIncome) {
-        if      (incomeFrequency === 'weekly')      end.setDate(end.getDate() + 6)
-        else if (incomeFrequency === 'fortnightly') end.setDate(end.getDate() + 13)
-        else if (incomeFrequency === 'monthly')   { end.setMonth(end.getMonth() + 1); end.setDate(end.getDate() - 1) }
-        else                                      { end.setFullYear(end.getFullYear() + 1); end.setDate(end.getDate() - 1) }
+      const startDate   = parseDate(cycleAnchor)
+      let endDate: Date
+      if (skipIncome) {
+        endDate = addDays(startDate, 13)
+      } else if (incomeFrequency === 'weekly') {
+        endDate = addDays(startDate, 6)
+      } else if (incomeFrequency === 'fortnightly') {
+        endDate = addDays(startDate, 13)
+      } else if (incomeFrequency === 'monthly') {
+        endDate = addDays(addMonths(startDate, 1), -1)
       } else {
-        end.setDate(end.getDate() + 13)
+        endDate = addDays(addYears(startDate, 1), -1)
       }
 
       const { error: e5 } = await supabase
@@ -227,8 +236,8 @@ export default function SetupPage({
         .insert({
           profile_id:            userId,
           account_id:            accountId,
-          start_date:            start.toISOString().split('T')[0],
-          end_date:              end.toISOString().split('T')[0],
+          start_date:            formatDate(startDate),
+          end_date:              formatDate(endDate),
           opening_balance_cents: openingCents,
         })
       if (e5) throw e5

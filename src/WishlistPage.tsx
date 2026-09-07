@@ -7,6 +7,8 @@ import {
 } from './lib/repository'
 import { useAccount } from './lib/AccountContext'
 import { projectCycles } from './engine/index'
+import { parseDate, formatDate } from './engine/dates'
+import { byNewest, latestVersion } from './lib/versions'
 
 function fmt(cents: number, showCents = true) {
   const abs = Math.abs(cents)
@@ -17,9 +19,11 @@ function fmt(cents: number, showCents = true) {
   return (cents < 0 ? '−' : '') + '$' + str
 }
 function fmtDate(d: string) {
-  return new Date(d + 'T00:00:00').toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+  return parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
 }
-function today() { return new Date().toISOString().split('T')[0] }
+/** Local calendar date. toISOString() returns UTC — a day behind until noon NZ,
+ *  which would have started the whole projection a cycle-boundary early. */
+function today() { return formatDate(new Date()) }
 
 function resolveActive(items: any[], cycles: any[], floorCents: number) {
   const reserved = cycles.map(() => 0)
@@ -79,12 +83,17 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
         setItems(wishlist)
 
         const engineIncome = income.map((src: any) => {
-          const v = (src.income_amount_versions ?? []).sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
+          const v = latestVersion(src.income_amount_versions)
           return { id: src.id, name: src.name, frequency: src.frequency, anchorDate: src.anchor_date, amountCents: v?.amount_cents ?? 0, isPotential: src.is_potential ?? false, isPrimary: src.is_primary ?? false }
         })
         const engineExpenses = expenses.map((exp: any) => {
-          const versions = (exp.expense_amount_versions ?? []).map((v: any) => ({ amountCents: v.amount_cents, effectiveFrom: v.effective_from }))
-          const latest = versions.sort((a: any, b: any) => a.effectiveFrom > b.effectiveFrom ? -1 : 1)[0]
+          // Sort the raw rows (which carry created_at) BEFORE mapping, so the
+          // tiebreak survives the projection into engine shape. Order handed to
+          // the engine stays newest-first, exactly as before.
+          const versions = [...(exp.expense_amount_versions ?? [])]
+            .sort(byNewest)
+            .map((v: any) => ({ amountCents: v.amount_cents, effectiveFrom: v.effective_from }))
+          const latest = versions[0]
           return { id: exp.id, name: exp.name, frequency: exp.frequency, anchorDate: exp.anchor_date, amountCents: latest?.amountCents ?? 0, amountVersions: versions, mode: exp.mode ?? 'fixed', endDate: exp.end_date ?? undefined }
         })
 

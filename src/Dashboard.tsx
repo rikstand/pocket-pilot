@@ -6,6 +6,7 @@ import { useAccount } from './lib/AccountContext'
 import { projectCycles } from './engine/index'
 import { getOccurrencesInRange } from './engine/recurrence'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
+import { byNewest, byOldest, latestVersion, versionForDate } from './lib/versions'
 import { ExpenseIcon, guessIcon } from './lib/icons'
 
 function fmt(cents: number, showCents = true) {
@@ -17,11 +18,11 @@ function fmt(cents: number, showCents = true) {
   return (cents < 0 ? '−' : '') + '$' + str
 }
 function fmtDate(d: string) {
-  return new Date(d + 'T00:00:00').toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+  return parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
 }
 function daysUntil(dateStr: string) {
   const now = new Date(); now.setHours(0,0,0,0)
-  return Math.max(0, Math.round((new Date(dateStr + 'T00:00:00').getTime() - now.getTime()) / 86400000))
+  return Math.max(0, Math.round((parseDate(dateStr).getTime() - now.getTime()) / 86400000))
 }
 function today() { return formatDate(new Date()) }
 function findCurrentIdx(cycles: any[]) {
@@ -31,14 +32,6 @@ function findCurrentIdx(cycles: any[]) {
 }
 function addOneDay(dateStr: string): string {
   return formatDate(addDays(parseDate(dateStr), 1))
-}
-function versionForCycle(versions: any[], cycleStart: string): any {
-  const all = versions ?? []
-  const applicable = all
-    .filter((v: any) => v.effective_from <= cycleStart)
-    .sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)
-  if (applicable.length > 0) return applicable[0]
-  return [...all].sort((a: any, b: any) => a.effective_from < b.effective_from ? -1 : 1)[0]
 }
 function chipStyle(cls: string): { color: string, borderColor: string, background: string } | undefined {
   if (cls === 'evt') return { color: 'var(--event)', borderColor: 'var(--event)', background: 'var(--event-s)' }
@@ -177,7 +170,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         const floorCents = activeAccount?.safety_floor_cents ?? 0
 
         const engineIncome = income.map((src: any) => {
-          const v = (src.income_amount_versions ?? []).sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
+          const v = latestVersion(src.income_amount_versions)
           return {
             id: src.id, name: src.name, frequency: src.frequency,
             anchorDate: src.anchor_date,
@@ -188,11 +181,16 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         })
 
         const engineExpenses = expenses.map((exp: any) => {
-          const versions = (exp.expense_amount_versions ?? []).map((v: any) => ({
-            amountCents: v.amount_cents,
-            effectiveFrom: v.effective_from,
-          }))
-          const latest = versions.sort((a: any, b: any) => a.effectiveFrom > b.effectiveFrom ? -1 : 1)[0]
+          // Sort the raw rows (which carry created_at) BEFORE mapping into engine
+          // shape, so the created_at tiebreak survives. The order handed to the
+          // engine stays newest-first, exactly as it was before.
+          const versions = [...(exp.expense_amount_versions ?? [])]
+            .sort(byNewest)
+            .map((v: any) => ({
+              amountCents: v.amount_cents,
+              effectiveFrom: v.effective_from,
+            }))
+          const latest = versions[0]
           return {
             id: exp.id, name: exp.name, frequency: exp.frequency,
             anchorDate: exp.anchor_date,
@@ -314,7 +312,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     for (const src of rawIncome) {
       const occs = getOccurrencesInRange(src.anchor_date, src.frequency, cycle.startDate, cycle.endDate)
       if (!occs.length) continue
-      const v = (src.income_amount_versions ?? []).sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
+      const v = latestVersion(src.income_amount_versions)
       const unitCents = v?.amount_cents ?? 0
       const isOneOffIncome = src.frequency === 'once'
       cards.push({
@@ -329,6 +327,9 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         oneOff: isOneOffIncome, oneOffKind: 'income', incomeId: src.id,
         isPotential: src.is_potential ?? false,
         oneOffDateStr: fmtDate(occs[0]),
+        // raw ISO date — the formatted oneOffDateStr can't be written back to
+        // the DB, and a one-off edit needs a real effective_from
+        oneOffDate: occs[0],
         // FIX: was hardcoded to 0/0, which meant the income edit sheet had no
         // "currently $X" to show and no baseline to diff a scoped edit against.
         expenseId: null, unitCents, originalUnitCents: unitCents,
@@ -339,7 +340,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, cycle.startDate, cycle.endDate, exp.end_date ?? undefined)
       if (!occs.length) continue
 
-      const v         = versionForCycle(exp.expense_amount_versions, cycle.startDate)
+      const v         = versionForDate(exp.expense_amount_versions, cycle.startDate)
       const unitCents = v?.amount_cents ?? 0
       const total     = unitCents * occs.length
       const mode      = exp.mode ?? 'fixed'
@@ -374,8 +375,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         act = null
 
         const layby = rawLayBys.find((l: any) => l.id === exp.lay_by_id)
-        const sortedVersions = [...(exp.expense_amount_versions ?? [])]
-          .sort((a: any, b: any) => a.effective_from < b.effective_from ? -1 : 1)
+        const sortedVersions = [...(exp.expense_amount_versions ?? [])].sort(byOldest)
         const lastOccDate = occs[occs.length - 1]
         const idx = sortedVersions.findIndex((sv: any) => sv.effective_from === lastOccDate)
         const paymentNumber  = idx >= 0 ? idx + 1 : sortedVersions.length
@@ -405,6 +405,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         expenseId: exp.id,
         oneOff: isOneOffExp, oneOffKind: 'expense',
         oneOffDateStr: fmtDate(occs[0]),
+        oneOffDate: occs[0],
         laybyPct,
         unitCents,
         originalUnitCents: unitCents,
@@ -431,8 +432,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, activeCycle.startDate, activeCycle.endDate, exp.end_date ?? undefined)
       if (!occs.length) continue
       const isLayby = !!exp.lay_by_id
-      const sortedVersions = [...(exp.expense_amount_versions ?? [])]
-        .sort((a: any, b: any) => a.effective_from < b.effective_from ? -1 : 1)
+      const sortedVersions = [...(exp.expense_amount_versions ?? [])].sort(byOldest)
       const layby = isLayby ? rawLayBys.find((l: any) => l.id === exp.lay_by_id) : null
 
       for (const occDate of occs) {
@@ -447,7 +447,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
           const totalPayments = layby?.payments_total ?? sortedVersions.length
           subLabel = `payment ${idx >= 0 ? idx + 1 : '?'} of ${totalPayments}`
         } else {
-          const v = versionForCycle(exp.expense_amount_versions, occDate)
+          const v = versionForDate(exp.expense_amount_versions, occDate)
           amountCents = v?.amount_cents ?? 0
           subLabel = 'fixed'
         }
@@ -472,7 +472,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     .map(exp => {
       const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, activeCycle.startDate, activeCycle.endDate)
       if (!occs.length) return null
-      const v = versionForCycle(exp.expense_amount_versions, activeCycle.startDate)
+      const v = versionForDate(exp.expense_amount_versions, activeCycle.startDate)
       return { id: exp.id, name: exp.name, estimatedCents: (v?.amount_cents ?? 0) * occs.length }
     })
     .filter(Boolean) as { id: string, name: string, estimatedCents: number }[]
@@ -488,7 +488,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // cycle opens pre-pay — the engine then counts it as income on payday.
   const nextCycleStartDate = addOneDay(activeCycle.endDate)
   const scheduledPayCents  = primaryIncome
-    ? (versionForCycle(primaryIncome.income_amount_versions, nextCycleStartDate)?.amount_cents ?? 0)
+    ? (versionForDate(primaryIncome.income_amount_versions, nextCycleStartDate)?.amount_cents ?? 0)
     : 0
   const payLandedCents    = closePayLanded ? Math.round(parseFloat(closePayAmount || '0') * 100) : 0
   const adjustedRealCents = closeRealCents - payLandedCents
@@ -650,6 +650,17 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     finally { setAddSaving(false) }
   }
 
+  // Amount changes are written as a NEW version row rather than updated in
+  // place. The old code ran an UPDATE filtered only by expense_id /
+  // income_source_id — no effective_from — so every version row for the parent
+  // was rewritten to the new amount, flattening any history the record had
+  // accumulated. Inserting also matches how every other edit path in the app
+  // works, and leaves the trail an activity log will want.
+  //
+  // effective_from is the occurrence's own date, not today: a future-dated
+  // one-off written at today's date would be superseded by the original row
+  // sitting on the later anchor date, and versionForDate would return the stale
+  // amount for the cycle that actually contains the occurrence.
   async function saveOneOffEdits() {
     const amountCents = Math.round(parseFloat(oneOffAmt || '0') * 100)
     if (!oneOffName.trim() || !amountCents) {
@@ -657,28 +668,41 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     }
     setOneOffSaving(true); setOneOffError('')
     try {
+      const effectiveFrom = oneOffItem.oneOffDate
+      const amountChanged = amountCents !== oneOffItem.unitCents
+
       if (oneOffItem.oneOffKind === 'income') {
         const { error: e1 } = await supabase
           .from('income_sources')
           .update({ name: oneOffName.trim(), is_potential: !oneOffCertain })
           .eq('id', oneOffItem.incomeId)
         if (e1) throw e1
-        const { error: e2 } = await supabase
-          .from('income_amount_versions')
-          .update({ amount_cents: amountCents })
-          .eq('income_source_id', oneOffItem.incomeId)
-        if (e2) throw e2
+        if (amountChanged) {
+          const { error: e2 } = await supabase
+            .from('income_amount_versions')
+            .insert({
+              income_source_id: oneOffItem.incomeId,
+              amount_cents: amountCents,
+              effective_from: effectiveFrom,
+            })
+          if (e2) throw e2
+        }
       } else {
         const { error: e1 } = await supabase
           .from('expenses')
           .update({ name: oneOffName.trim() })
           .eq('id', oneOffItem.expenseId)
         if (e1) throw e1
-        const { error: e2 } = await supabase
-          .from('expense_amount_versions')
-          .update({ amount_cents: amountCents })
-          .eq('expense_id', oneOffItem.expenseId)
-        if (e2) throw e2
+        if (amountChanged) {
+          const { error: e2 } = await supabase
+            .from('expense_amount_versions')
+            .insert({
+              expense_id: oneOffItem.expenseId,
+              amount_cents: amountCents,
+              effective_from: effectiveFrom,
+            })
+          if (e2) throw e2
+        }
       }
       setOneOffItem(null); reload()
     } catch (e: any) { setOneOffError(e.message) }
