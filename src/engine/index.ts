@@ -5,10 +5,13 @@ export {
   stepCredit,
   projectCreditPayoff,
   maxAffordableExtraCents,
+  projectBalanceForward,
+  elapsedCyclesBetween,
   creditItemDelta,
 } from './credit'
 export type {
   CreditAccountModel,
+  MinimumDueSchedule,
   CreditCycleLine,
   CreditProjection,
 } from './credit'

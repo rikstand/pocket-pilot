@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from './lib/supabase'
 import { getExpenses, getLayBys } from './lib/repository'
+import { formatMoney, moneyFormatter, currencySymbol } from './lib/money'
+import { useAccount } from './lib/AccountContext'
 import { ExpenseIcon, guessIcon, iconLabel, ICON_GROUPS } from './lib/icons'
 import { parseDate, formatDate } from './engine/dates'
 import { byOldest, latestVersion } from './lib/versions'
@@ -28,9 +30,7 @@ function todayStr(): string {
   return formatDate(new Date())
 }
 
-function fmt(cents: number) {
-  return '$' + (Math.abs(cents) / 100).toLocaleString('en-NZ', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
-}
+
 function fmtDate(d: string) {
   return parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
 }
@@ -44,7 +44,9 @@ function toFn(cents: number, freq: string): number {
 const FREQ_SHORT: Record<string, string> = {
   weekly: 'wk', fortnightly: 'fn', monthly: 'mo', annually: 'yr', once: 'one-off',
 }
-function cycleDetail(cents: number, freq: string, isEstimate: boolean): string {
+// Runs outside the component, so the currency has to be handed to it.
+function cycleDetail(cents: number, freq: string, isEstimate: boolean, currencyCode?: string | null): string {
+  const fmt = (c: number) => formatMoney(c, currencyCode, false)
   const prefix = isEstimate ? '~' : ''
   const raw = prefix + fmt(cents)
   const abbr = FREQ_SHORT[freq] || freq
@@ -75,6 +77,11 @@ function isLaybyFinished(exp: any): boolean {
 }
 
 export default function ExpensesPage({ userId, accountId }: { userId: string; accountId: string; onBack?: () => void }) {
+  const { activeAccount } = useAccount()
+  // Amounts follow the account's currency — see lib/money.ts
+  const currencyCode = activeAccount?.currency_code
+  const fmt = moneyFormatter(currencyCode)
+  const sym = currencySymbol(currencyCode)
   const [expenses, setExpenses] = useState<any[]>([])
   const [layBys,   setLayBys]   = useState<any[]>([])
   const [loading,  setLoading]  = useState(true)
@@ -263,7 +270,7 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
         <div className="ri" style={{ background: em.sft, color: em.col }}><ExpenseIcon name={expIcon} size={16} /></div>
         <div className="rm">
           <div className="rn">{exp.name}</div>
-          <div className="rd">{cycleDetail(cents, exp.frequency, isEstimate)}</div>
+          <div className="rd">{cycleDetail(cents, exp.frequency, isEstimate, currencyCode)}</div>
         </div>
         <div style={{ textAlign: 'right' }}>
           <div className="rv">−{fmt(fnCents)}</div>
@@ -410,7 +417,7 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
             </div>
             <div className="field">
               <label>{mode === 'variable' ? 'Estimated amount' : 'Amount'}</label>
-              <div className="inrow"><span className="pre">$</span>
+              <div className="inrow"><span className="pre">{sym}</span>
                 <input type="number" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0" />
               </div>
             </div>

@@ -9,6 +9,7 @@ import ExpensesPage from './ExpensesPage'
 import AppShell, { type Page } from './AppShell'
 import WishlistPage from './WishlistPage'
 import CreditPage from './CreditPage'
+import SettingsPage from './SettingsPage'
 
 function AuthedApp({ userId }: { userId: string }) {
   const { activeAccount, loading: accountLoading, reloadAccounts } = useAccount()
@@ -72,9 +73,7 @@ function AuthedApp({ userId }: { userId: string }) {
         <CreditPage key={'credit-' + dataVersion} userId={userId} accountId={activeAccount.id} />
       )}
       {page === 'settings' && (
-        <div className="scrollarea" style={{ padding: 24 }}>
-          <p style={{ color: 'var(--mut)' }}>Settings — not built yet.</p>
-        </div>
+        <SettingsPage key={'settings-' + dataVersion} userId={userId} accountId={activeAccount.id} />
       )}
     </AppShell>
   )

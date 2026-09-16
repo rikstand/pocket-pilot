@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from './lib/supabase'
 import { upsertProfile, createAccount } from './lib/repository'
+import { CURRENCIES, formatMoney } from './lib/money'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
 
 const FREQUENCIES = ['weekly', 'fortnightly', 'monthly', 'annually', 'once'] as const
@@ -18,28 +19,6 @@ const MODE_META: Record<Mode, { icon: string; iconClass: string; chip: string; c
   budget:   { icon: '≈', iconClass: 'base', chip: 'bl',   chipLabel: 'baseline' },
 }
 
-const CURRENCIES = [
-  { code: 'NZD', label: 'New Zealand Dollar', symbol: '$' },
-  { code: 'AUD', label: 'Australian Dollar',  symbol: '$' },
-  { code: 'USD', label: 'US Dollar',          symbol: '$' },
-  { code: 'GBP', label: 'British Pound',      symbol: '£' },
-  { code: 'EUR', label: 'Euro',               symbol: '€' },
-  { code: 'CAD', label: 'Canadian Dollar',    symbol: '$' },
-  { code: 'SGD', label: 'Singapore Dollar',   symbol: '$' },
-  { code: 'JPY', label: 'Japanese Yen',       symbol: '¥' },
-  { code: 'ZAR', label: 'South African Rand', symbol: 'R' },
-  { code: 'AED', label: 'UAE Dirham',         symbol: 'د.إ' },
-  { code: 'INR', label: 'Indian Rupee',       symbol: '₹' },
-  { code: 'MXN', label: 'Mexican Peso',       symbol: '$' },
-  { code: 'BRL', label: 'Brazilian Real',     symbol: 'R$' },
-  { code: 'CHF', label: 'Swiss Franc',        symbol: 'Fr' },
-  { code: 'SEK', label: 'Swedish Krona',      symbol: 'kr' },
-  { code: 'NOK', label: 'Norwegian Krone',    symbol: 'kr' },
-  { code: 'DKK', label: 'Danish Krone',       symbol: 'kr' },
-  { code: 'HKD', label: 'Hong Kong Dollar',   symbol: '$' },
-  { code: 'KRW', label: 'South Korean Won',   symbol: '₩' },
-  { code: 'CNY', label: 'Chinese Yuan',       symbol: '¥' },
-]
 
 interface ExpenseDraft {
   id: string
@@ -50,9 +29,7 @@ interface ExpenseDraft {
   mode: Mode
 }
 
-function fmt(cents: number) {
-  return '$' + (cents / 100).toLocaleString('en-NZ', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
-}
+
 
 export default function SetupPage({
   userId,
@@ -108,6 +85,8 @@ export default function SetupPage({
   }, [darkMode])
 
   const selectedCurrency = CURRENCIES.find(c => c.code === currencyCode) ?? CURRENCIES[0]
+  // Live preview uses whatever currency is being picked, not a fixed dollar.
+  const fmt = (cents: number) => formatMoney(cents, currencyCode, false)
 
   function openAddExpense() {
     setExpEditId(null)

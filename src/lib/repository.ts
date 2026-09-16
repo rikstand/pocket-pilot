@@ -142,6 +142,7 @@ export async function getWishlistItems(accountId: string) {
 
 export async function addWishlistItem(
   accountId: string,
+  profileId: string,
   name: string,
   amountCents: number,
   notes?: string
@@ -157,7 +158,7 @@ export async function addWishlistItem(
 
   const { data, error } = await supabase
     .from('wishlist_items')
-    .insert({ account_id: accountId, name, amount_cents: amountCents, notes, rank: nextRank })
+    .insert({ profile_id: profileId,account_id: accountId, name, amount_cents: amountCents, notes, rank: nextRank })
     .select()
     .single()
   if (error) throw error
@@ -244,6 +245,8 @@ export async function createCreditAccount(
     min_payment_pct: number
     min_payment_floor_cents: number
     assumed_spend_cents: number
+    payment_frequency?: 'per_cycle' | 'monthly'
+    payment_anchor_date?: string | null
   },
   openingBalanceCents: number,
   asOfDate: string
@@ -277,6 +280,8 @@ export async function updateCreditAccount(
     min_payment_pct?: number
     min_payment_floor_cents?: number
     assumed_spend_cents?: number
+    payment_frequency?: 'per_cycle' | 'monthly'
+    payment_anchor_date?: string | null
   }
 ) {
   const { data, error } = await supabase

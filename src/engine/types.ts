@@ -50,6 +50,13 @@ export interface CreditAccount {
   strategyExtraCents: number     // committed extra above the minimum
   strategyCommitted: boolean     // nothing reaches the forecast until true
   currentBalanceCents: number    // from the latest balance snapshot
+
+  // When the payment is actually due. 'per_cycle' shares the monthly minimum
+  // across every cycle, which is what the app did before due dates existed.
+  // 'monthly' puts the whole minimum in the cycle containing the due date and
+  // none in the others — which is how most cards really work.
+  paymentFrequency: 'per_cycle' | 'monthly'
+  paymentAnchorDate?: string     // the due date; only the day of month matters
 }
 
 // Adjusts ONLY the extra portion, for one cycle. The minimum is contractual

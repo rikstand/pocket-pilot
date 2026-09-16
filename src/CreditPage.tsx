@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAccount } from './lib/AccountContext'
+import { moneyFormatter, currencySymbol } from './lib/money'
 import {
   getIncomeSources, getExpenses, getCycles,
   getCreditAccount, createCreditAccount, updateCreditAccount,
@@ -7,19 +8,15 @@ import {
   addCreditSnapshot, getCreditSnapshots,
 } from './lib/repository'
 import { projectCycles } from './engine/index'
-import { projectCreditPayoff, maxAffordableExtraCents } from './engine/credit'
+import {
+  projectCreditPayoff, maxAffordableExtraCents,
+  projectBalanceForward, elapsedCyclesBetween,
+} from './engine/credit'
 import type { CreditAccountModel, CreditProjection } from './engine/credit'
 import { parseDate, formatDate, addDays } from './engine/dates'
+import { getOccurrencesInRange } from './engine/recurrence'
 
 /* ── formatting ───────────────────────────────────────────────────── */
-function fmt(cents: number, showCents = true) {
-  const abs = Math.abs(cents)
-  const n = abs / 100
-  const str = showCents
-    ? n.toLocaleString('en-NZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : n.toLocaleString('en-NZ', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
-  return (cents < 0 ? '−' : '') + '$' + str
-}
 function fmtDate(d: string) {
   return parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
 }
@@ -36,6 +33,10 @@ type StrategyKey = 'minimum' | 'extra' | 'max'
 
 export default function CreditPage({ accountId }: { userId: string; accountId: string }) {
   const { activeAccount } = useAccount()
+
+  // Amounts follow the account's currency — see lib/money.ts
+  const fmt = moneyFormatter(activeAccount?.currency_code)
+  const sym = currencySymbol(activeAccount?.currency_code)
   const floorCents = activeAccount?.safety_floor_cents ?? 0
 
   const [card,      setCard]      = useState<any>(null)
@@ -55,6 +56,8 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
   const [fApr,   setFApr]   = useState('21.9')
   const [fMin,   setFMin]   = useState('3')
   const [fSpend, setFSpend] = useState('0')
+  const [fFreq,  setFFreq]  = useState<'per_cycle' | 'monthly'>('monthly')
+  const [fDueDay, setFDueDay] = useState('15')
   const [formError, setFormError] = useState('')
 
   // update-balance sheet
@@ -181,7 +184,7 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
             </div>
             <div className="field">
               <label>Current balance</label>
-              <div className="inrow"><span className="pre">$</span>
+              <div className="inrow"><span className="pre">{sym}</span>
                 <input type="number" inputMode="decimal" value={fBal} onChange={e => setFBal(e.target.value)} placeholder="0" />
               </div>
             </div>
@@ -197,7 +200,7 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
             </div>
             <div className="field" style={{ marginBottom:0 }}>
               <label>Assumed spend per cycle</label>
-              <div className="inrow"><span className="pre">$</span>
+              <div className="inrow"><span className="pre">{sym}</span>
                 <input type="number" inputMode="decimal" value={fSpend} onChange={e => setFSpend(e.target.value)} placeholder="0" />
               </div>
               <div className="hint">What you expect to put on the card each cycle. Leave at $0 only if you've stopped using it — otherwise every payoff date here is optimistic.</div>
@@ -220,22 +223,71 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
     minPaymentPct:        Number(card.min_payment_pct),
     minPaymentFloorCents: card.min_payment_floor_cents,
     assumedSpendCents:    card.assumed_spend_cents,
+    paymentFrequency:     card.payment_frequency ?? 'per_cycle',
   }
-  const balanceCents = card.current_balance_cents ?? 0
+  const measuredCents = card.current_balance_cents ?? 0
 
   const cycleDays = cycles.length > 0
     ? Math.round((parseDate(cycles[0].endDate).getTime() - parseDate(cycles[0].startDate).getTime()) / 86400000) + 1
     : 14
 
+  // ── which cycles actually carry a minimum ─────────────────────────
+  // The payoff projection runs far beyond the cycles we have dates for, so
+  // work each cycle's window out arithmetically and ask the same recurrence
+  // code the engine uses. That keeps this page and the forecast in agreement
+  // instead of quietly disagreeing past the horizon.
+  const firstCycleStart = cycles[0]?.startDate ?? todayStr()
+  const isMonthlyCard = (card.payment_frequency ?? 'per_cycle') === 'monthly'
+    && !!card.payment_anchor_date
+
+  // `offset` is counted from the current cycle and may be negative, because
+  // catching up a stale balance walks through cycles that have already been.
+  const dueInCycleOffset = (offset: number): boolean => {
+    if (!isMonthlyCard) return true
+    const start = addDays(parseDate(firstCycleStart), offset * cycleDays)
+    const end   = addDays(start, cycleDays - 1)
+    return getOccurrencesInRange(
+      card.payment_anchor_date, 'monthly', formatDate(start), formatDate(end)
+    ).length > 0
+  }
+
+  // Forward from now.
+  const minimumDue = isMonthlyCard ? (i: number) => dueInCycleOffset(i) : undefined
+
+  // ── keeping the balance current ───────────────────────────────────
+  // A measured balance is only true on the day it was taken. Work out how many
+  // cycles have passed since, then run the card forward that many cycles so the
+  // figure shown matches what the forecast is already using.
+  const elapsedCycles = card.balance_as_of && cycles[0]?.startDate
+    ? elapsedCyclesBetween(
+        parseDate(card.balance_as_of).getTime(),
+        parseDate(cycles[0].startDate).getTime(),
+        cycleDays
+      )
+    : 0
+
+  // Catching up runs through PAST cycles, so step i here is
+  // (elapsedCycles - i) cycles before the current one — not cycle i ahead of it.
+  const minimumDueWhileCatchingUp = isMonthlyCard
+    ? (i: number) => dueInCycleOffset(i - elapsedCycles)
+    : undefined
+
+  const drift = projectBalanceForward(
+    measuredCents, model,
+    card.strategy_committed ? card.strategy_extra_cents : 0,
+    cycleDays, elapsedCycles, minimumDueWhileCatchingUp
+  )
+  const balanceCents = drift.balanceCents
+
   // Surplus baseline, card excluded — see the projection call above.
   const surplusSeries = cycles.map(c => c.committedClosingBalanceCents)
 
   const extraCents = Math.max(0, Math.round(parseFloat(extraStr || '0') * 100))
-  const maxExtraCents = maxAffordableExtraCents(balanceCents, model, cycleDays, surplusSeries, floorCents)
+  const maxExtraCents = maxAffordableExtraCents(balanceCents, model, cycleDays, surplusSeries, floorCents, minimumDue)
 
-  const minProj: CreditProjection = projectCreditPayoff(balanceCents, model, 0, cycleDays)
-  const extProj: CreditProjection = projectCreditPayoff(balanceCents, model, extraCents, cycleDays)
-  const maxProj: CreditProjection = projectCreditPayoff(balanceCents, model, maxExtraCents, cycleDays)
+  const minProj: CreditProjection = projectCreditPayoff(balanceCents, model, 0, cycleDays, undefined, minimumDue)
+  const extProj: CreditProjection = projectCreditPayoff(balanceCents, model, extraCents, cycleDays, undefined, minimumDue)
+  const maxProj: CreditProjection = projectCreditPayoff(balanceCents, model, maxExtraCents, cycleDays, undefined, minimumDue)
   const active = strategy === 'minimum' ? minProj : strategy === 'max' ? maxProj : extProj
   const activeExtra = strategy === 'minimum' ? 0 : strategy === 'max' ? maxExtraCents : extraCents
 
@@ -250,10 +302,13 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
     return `${proj.cyclesToPayoff} cycles · ${years < 1 ? Math.round(years * 12) + ' months' : years.toFixed(1) + ' years'}`
   }
 
-  // Variance: what the model expected against what was last entered.
+  // The difference is measured at the moment a balance is saved: what the app
+  // had predicted for that day, against what was actually entered. It is stored
+  // on the row so it stays true afterwards, instead of being recalculated
+  // against a prediction that has since moved on.
   const lastSnap = snapshots[0]
   const projectedAtSnap = lastSnap?.projected_balance_cents ?? null
-  const varianceCents = projectedAtSnap != null ? balanceCents - projectedAtSnap : null
+  const varianceCents = projectedAtSnap != null ? lastSnap.balance_cents - projectedAtSnap : null
 
   // Stale when the newest snapshot predates the current cycle.
   const currentCycleStart = cycles[0]?.startDate
@@ -276,8 +331,9 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
     if (isNaN(cents) || cents < 0) return
     setSaving(true)
     try {
-      // Record what the model expected, so variance is a subtraction later
-      // rather than a separate reconciliation system.
+      // Save what the app predicted for today — the last measurement carried
+      // forward, NOT the previous entry. Storing the previous entry is what made
+      // this comparison meaningless before.
       await addCreditSnapshot(card.id, accountId, cents, todayStr(), 'manual', balanceCents)
       setBalOpen(false); reload()
     } catch (e: any) { alert('Could not update balance: ' + e.message) }
@@ -288,6 +344,8 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
     setFApr(String(card.apr_basis_points / 100))
     setFMin(String(Number(card.min_payment_pct)))
     setFSpend(String(card.assumed_spend_cents / 100))
+    setFFreq(card.payment_frequency ?? 'per_cycle')
+    setFDueDay(card.payment_anchor_date ? String(parseDate(card.payment_anchor_date).getDate()) : '15')
     setSettingsError('')
     setSettingsOpen(true)
   }
@@ -300,11 +358,22 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
     if (!aprBps || minPct <= 0) { setSettingsError('Rate and minimum payment are required.'); return }
     setSaving(true); setSettingsError('')
     try {
+      // Store the due date as a real date so it works with the same recurrence
+      // code as every other expense. Only the day of the month matters.
+      let anchor: string | null = null
+      if (fFreq === 'monthly') {
+        const day = Math.min(28, Math.max(1, parseInt(fDueDay || '1', 10)))
+        const now = new Date()
+        anchor = formatDate(new Date(now.getFullYear(), now.getMonth(), day))
+      }
+
       await updateCreditAccount(card.id, {
         name: fName.trim(),
         apr_basis_points: aprBps,
         min_payment_pct: minPct,
         assumed_spend_cents: spendCents,
+        payment_frequency: fFreq,
+        payment_anchor_date: anchor,
       })
       setSettingsOpen(false); reload()
     } catch (e: any) { setSettingsError(e.message) }
@@ -347,16 +416,32 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
           <div className="credit-bal-amt">{fmt(balanceCents, false)}</div>
           <div className="credit-bal-sub">
             {lastSnap
-              ? <>Updated <b>{fmtDate(lastSnap.as_of_date)}</b>{card.assumed_spend_cents > 0 && <> · assuming {fmt(card.assumed_spend_cents, false)}/cycle new spend</>}</>
+              ? elapsedCycles > 0
+                ? <>Projected · last measured <b>{fmt(measuredCents, false)}</b> on {fmtDate(lastSnap.as_of_date)}</>
+                : <>Measured <b>{fmtDate(lastSnap.as_of_date)}</b>{card.assumed_spend_cents > 0 && <> · assuming {fmt(card.assumed_spend_cents, false)}/cycle new spend</>}</>
               : <>No balance recorded yet</>}
-            {isStale && <span className="credit-stale">not updated this cycle</span>}
+            {isStale && <span className="credit-stale">not measured this cycle</span>}
           </div>
+
+          {elapsedCycles > 0 && (
+            <div className="credit-var">
+              Since {fmtDate(lastSnap.as_of_date)} this assumes {fmt(drift.interestCents, false)} interest
+              {drift.paidCents > 0 && <> and {fmt(drift.paidCents, false)} paid</>}
+              {drift.spentCents > 0 && <> and {fmt(drift.spentCents, false)} new spend</>}.
+              {' '}<b>Update it</b> to replace the estimate with a real figure.
+            </div>
+          )}
 
           {varianceCents != null && (
             <div className={`credit-var${Math.abs(varianceCents) < 100 ? ' match' : ''}`}>
               {Math.abs(varianceCents) < 100
-                ? <>Matched the projection when you last updated it.</>
-                : <>Model expected <b>{fmt(projectedAtSnap!, false)}</b> — you entered {fmt(balanceCents, false)}, a {varianceCents > 0 ? '+' : '−'}{fmt(Math.abs(varianceCents), false)} difference.</>}
+                ? <>Your last measured balance matched what was predicted.</>
+                : <>
+                    On {fmtDate(lastSnap.as_of_date)} this predicted <b>{fmt(projectedAtSnap!, false)}</b> and the real
+                    balance was {fmt(lastSnap.balance_cents, false)} — {varianceCents > 0 ? 'more' : 'less'} owing
+                    than expected by {fmt(Math.abs(varianceCents), false)}.
+                    {varianceCents > 0 && card.assumed_spend_cents === 0 && <> Possibly new spending, which is currently assumed to be none.</>}
+                  </>}
             </div>
           )}
 
@@ -381,6 +466,9 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
               <div className="cm-l">Card terms</div>
               <div className="cm-v">
                 {(card.apr_basis_points / 100).toFixed(2)}% p.a. · minimum {Number(card.min_payment_pct)}% monthly
+                {isMonthlyCard
+                  ? <> · due {parseDate(card.payment_anchor_date).getDate()}{'th'} of the month</>
+                  : <> · paid every cycle</>}
               </div>
             </div>
             <button className="credit-act" type="button" onClick={openSettings}>edit →</button>
@@ -566,11 +654,15 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
             </p>
             <div className="field">
               <label>Balance today</label>
-              <div className="inrow"><span className="pre">$</span>
+              <div className="inrow"><span className="pre">{sym}</span>
                 <input type="number" inputMode="decimal" value={balStr}
                   onChange={e => setBalStr(e.target.value)} placeholder="0" />
               </div>
-              <div className="hint">Model currently projects {fmt(balanceCents, false)}.</div>
+              <div className="hint">
+                {elapsedCycles > 0
+                  ? <>Currently projecting {fmt(balanceCents, false)}, carried forward from the {fmt(measuredCents, false)} you measured on {fmtDate(lastSnap.as_of_date)}. Your real figure replaces the estimate.</>
+                  : <>Currently holding {fmt(balanceCents, false)}.</>}
+              </div>
             </div>
             <div className="navrow">
               <button onClick={() => setBalOpen(false)}>Cancel</button>
@@ -600,6 +692,36 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
               </div>
             </div>
 
+            <div className="field">
+              <label>How you pay it</label>
+              <div className="floor-presets">
+                <button className={fFreq === 'monthly' ? 'on' : ''}
+                  onClick={() => setFFreq('monthly')}>Monthly, on a due date</button>
+                <button className={fFreq === 'per_cycle' ? 'on' : ''}
+                  onClick={() => setFFreq('per_cycle')}>Every cycle</button>
+              </div>
+              <p className="hint">
+                {fFreq === 'monthly'
+                  ? 'One bill a month, so the minimum lands in some cycles and not others. This is how most cards work.'
+                  : 'Assumes you pay something every cycle, sharing the monthly minimum across them.'}
+              </p>
+            </div>
+
+            {fFreq === 'monthly' && (
+              <div className="field">
+                <label>Payment due day</label>
+                <div className="inrow">
+                  <input type="number" inputMode="numeric" min={1} max={28}
+                    value={fDueDay} onChange={e => setFDueDay(e.target.value)} />
+                  <span className="pre">of each month</span>
+                </div>
+                <p className="hint">
+                  Capped at 28 so it falls in every month. If your real due date is later,
+                  use 28 — the difference is at most a few days.
+                </p>
+              </div>
+            )}
+
             <div style={{ display:'flex', gap:9 }}>
               <div className="field" style={{ flex:1, minWidth:0 }}>
                 <label>Rate p.a.</label>
@@ -623,7 +745,7 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
             <div className="field">
               <label>Assumed spend per cycle</label>
               <div className="inrow">
-                <span className="pre">$</span>
+                <span className="pre">{sym}</span>
                 <input type="number" inputMode="decimal" value={fSpend} onChange={e => setFSpend(e.target.value)} placeholder="0" />
               </div>
               <div className="hint">

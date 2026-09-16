@@ -1,22 +1,17 @@
 import { useEffect, useState, useRef } from 'react'
 import type { CSSProperties } from 'react'
 import { supabase } from './lib/supabase'
-import { getIncomeSources, getExpenses, getCycles, getLayBys, getBudgetSpendEntries, addBudgetSpendEntry, updateBudgetSpendEntry, deleteBudgetSpendEntry } from './lib/repository'
+import { getIncomeSources, getExpenses, getCycles, getLayBys, getBudgetSpendEntries, addBudgetSpendEntry, updateBudgetSpendEntry, deleteBudgetSpendEntry,
+  getCreditAccount, getCreditExtraOverrides,
+} from './lib/repository'
 import { useAccount } from './lib/AccountContext'
+import { moneyFormatter, currencySymbol } from './lib/money'
 import { projectCycles } from './engine/index'
 import { getOccurrencesInRange } from './engine/recurrence'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
 import { byNewest, byOldest, latestVersion, versionForDate } from './lib/versions'
 import { ExpenseIcon, guessIcon } from './lib/icons'
 
-function fmt(cents: number, showCents = true) {
-  const abs = Math.abs(cents)
-  const n = abs / 100
-  const str = showCents
-    ? n.toLocaleString('en-NZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : n.toLocaleString('en-NZ', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
-  return (cents < 0 ? '−' : '') + '$' + str
-}
 function fmtDate(d: string) {
   return parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
 }
@@ -57,6 +52,10 @@ function computeLaybySchedule(
 
 export default function Dashboard({ userId, accountId, variant }: { userId: string, accountId: string, variant: 'cycle' | 'forecast' }) {
   const { activeAccount } = useAccount()
+
+  // Amounts follow the account's currency — see lib/money.ts
+  const fmt = moneyFormatter(activeAccount?.currency_code)
+  const sym = currencySymbol(activeAccount?.currency_code)
   const [cycles,      setCycles]      = useState<any[]>([])
   const [rawExpenses, setRawExpenses] = useState<any[]>([])
   const [rawIncome,   setRawIncome]   = useState<any[]>([])
@@ -146,8 +145,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const [incomeEditSaving,    setIncomeEditSaving]    = useState(false)
   const [incomeEditError,     setIncomeEditError]     = useState('')
 
+  const [rawCredit, setRawCredit] = useState<any>(null)
+
   const [openSecs, setOpenSecs] = useState<Record<string, boolean>>({
-    income: true, fixed: true, var: true, budget: true,
+    income: true, fixed: true, var: true, budget: true, credit: true,
   })
   function toggleSec(k: string) { setOpenSecs(p => ({ ...p, [k]: !p[k] })) }
 
@@ -155,13 +156,21 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     async function load() {
       setLoading(true)
       try {
-        const [income, expenses, storedCycles, layBys, budgetEntries] = await Promise.all([
+        const [income, expenses, storedCycles, layBys, budgetEntries, creditCard] = await Promise.all([
           getIncomeSources(accountId),
           getExpenses(accountId),
           getCycles(accountId),
           getLayBys(accountId),
           getBudgetSpendEntries(accountId),
+          getCreditAccount(accountId),
         ])
+        setRawCredit(creditCard)
+
+        // Overrides only exist once a card does, so this is a second round-trip
+        // rather than part of the Promise.all above.
+        const creditOverrideRows = creditCard
+          ? await getCreditExtraOverrides(creditCard.id)
+          : []
         setRawIncome(income)
         setRawExpenses(expenses)
         setRawLayBys(layBys)
@@ -206,6 +215,30 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         const latestClosed = closedCycles[closedCycles.length - 1]
         const projectFrom  = openCycles[0] ?? storedCycles[storedCycles.length - 1]
 
+        // The card only reaches the projection once its strategy is committed —
+        // the engine gates on strategyCommitted, but shaping it here keeps that
+        // rule visible at the call site too.
+        const engineCredit = creditCard ? {
+          id: creditCard.id,
+          name: creditCard.name,
+          aprBasisPoints: creditCard.apr_basis_points,
+          minPaymentPct: Number(creditCard.min_payment_pct),
+          minPaymentFloorCents: creditCard.min_payment_floor_cents,
+          assumedSpendCents: creditCard.assumed_spend_cents,
+          strategyExtraCents: creditCard.strategy_extra_cents,
+          strategyCommitted: creditCard.strategy_committed,
+          currentBalanceCents: creditCard.current_balance_cents ?? 0,
+          // When the payment is due. Without a due date the engine keeps the
+          // old behaviour of charging a share of the minimum every cycle.
+          paymentFrequency: creditCard.payment_frequency ?? 'per_cycle',
+          paymentAnchorDate: creditCard.payment_anchor_date ?? undefined,
+        } : null
+
+        const engineCreditOverrides = (creditOverrideRows ?? []).map((o: any) => ({
+          cycleStart: o.cycle_start,
+          extraCents: o.extra_cents,
+        }))
+
         const projected = projectCycles({
           incomeSources: engineIncome,
           expenses: engineExpenses,
@@ -213,6 +246,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
           startDate: projectFrom?.start_date ?? today(),
           numCycles: 6,
           safetyFloorCents: floorCents,
+          creditAccount: engineCredit,
+          creditOverrides: engineCreditOverrides,
         })
 
         let cyclesWithHistory: any[] = projected
@@ -228,6 +263,13 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
             fixedExpensesCents: 0,
             variableExpensesCents: 0,
             budgetExpensesCents: 0,
+            creditOpeningBalanceCents: 0,
+            creditAssumedSpendCents: 0,
+            creditInterestCents: 0,
+            creditMinimumCents: 0,
+            creditExtraCents: 0,
+            creditPaymentCents: 0,
+            creditClosingBalanceCents: 0,
             isHistorical: true,
           }
           cyclesWithHistory = [historicalCycle, ...projected]
@@ -938,6 +980,23 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const fixedTotalCents  = fixedCards.reduce((s, c) => s + (c.totalCents ?? 0), 0)
   const varTotalCents    = varCards.reduce((s, c) => s + (c.totalCents ?? 0), 0)
   const budgetTotalCents = budgetCards.reduce((s, c) => s + (c.totalCents ?? 0), 0)
+  // ── credit line for the focused cycle ──────────────────────────────
+  // Derived from the cycle result, not from buildCards(): a credit payment is
+  // not an expense row, so it never enters the `cards` array. Rendering it as
+  // its own section keeps that distinction visible rather than disguising a
+  // derived value as a stored one.
+  const creditPaymentCents = activeCycle.creditPaymentCents ?? 0
+  const creditMinimumCents = activeCycle.creditMinimumCents ?? 0
+  const creditExtraCents   = activeCycle.creditExtraCents ?? 0
+  const creditLeftCents    = activeCycle.creditClosingBalanceCents ?? 0
+  const creditOpeningCents = activeCycle.creditOpeningBalanceCents ?? 0
+  const showCredit         = !activeCycle.isHistorical && creditPaymentCents > 0
+  // Progress is against the balance when the strategy was committed, not the
+  // original purchase — a revolving balance has no single starting point.
+  const creditPct = rawCredit?.current_balance_cents
+    ? Math.min(100, Math.max(0, Math.round((1 - creditLeftCents / rawCredit.current_balance_cents) * 100)))
+    : 0
+
   const aboveFloor   = activeCycle.committedClosingBalanceCents - floorCents
   const status       = cycleStatus(activeIdx)
   const editAmountCents = Math.round(parseFloat(editAmount || '0') * 100)
@@ -956,6 +1015,9 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // any fixed/lay-by payment that had already happened earlier in the cycle.
   // We add back the unspent portion of the budget baseline, since "available to spend"
   // only counts budget spend actually logged, not the full baseline.
+  // availableToSpendCents needs no change for credit: committedClosingBalanceCents
+  // already has the card payment netted out by the engine, so the headline
+  // number is correct the moment a strategy is committed.
   const availableToSpendCents = activeCycle.committedClosingBalanceCents + (budgetTotalCents - budgetSpentSoFarCents)
   const daysToNextCycle = daysUntil(addOneDay(activeCycle.endDate))
 
@@ -1222,6 +1284,42 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
           </>
         )}
 
+        {showCredit && (
+          <>
+            <div className="section-hdr sh-crd tappable" onClick={() => toggleSec('credit')}>
+              <span className="sh-label">Credit payments</span>
+              <span className="sh-right">
+                <span className="sh-total">−{fmt(creditPaymentCents, false)}</span>
+                <span className={`chv${openSecs.credit ? ' up' : ''}`}>▾</span>
+              </span>
+            </div>
+            {openSecs.credit && (
+              <div className="cards">
+                <div className="card">
+                  <div className="ic crd">▭</div>
+                  <div className="tx">
+                    <div className="nm">
+                      {rawCredit?.name ?? 'Credit card'}
+                      <span className="chip drv">derived</span>
+                    </div>
+                    <div className="dt">
+                      min {fmt(creditMinimumCents, false)}
+                      {creditExtraCents > 0 && <> + extra {fmt(creditExtraCents, false)}</>}
+                      {' · '}{fmt(creditLeftCents, false)} left of {fmt(creditOpeningCents, false)}
+                    </div>
+                    <div className="act-row">
+                      <div className="exp-prog" style={{ flex: 1, marginTop: 0 }}>
+                        <div className="fill" style={{ width: creditPct + '%', background: 'var(--credit)' }} />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="vl">−{fmt(creditPaymentCents, false)}</div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
         {varCards.length > 0 && (
           <>
             <div className="section-hdr sh-var tappable" onClick={() => toggleSec('var')}>
@@ -1280,7 +1378,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                       </div>
                       <div className={`budg-quickadd${quickAddOpen ? ' on' : ''}`}>
                         <div className="budg-qa-inner">
-                          <span className="pre">$</span>
+                          <span className="pre">{sym}</span>
                           <input
                             type="number" inputMode="decimal" placeholder="0.00"
                             value={quickAddAmount} onChange={e => setQuickAddAmount(e.target.value)}
@@ -1346,7 +1444,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               <p className="sd">{editScope === 'occurrence' ? 'One-off — reverts to original next cycle.' : `Permanent from ${fmtDate(activeCycle.startDate)} onward.`}</p>
               <div className="field">
                 <label>{editCard.name} — currently {editCard.unitCents ? fmt(editCard.unitCents, false) : '—'}</label>
-                <div className="inrow"><span className="pre">$</span>
+                <div className="inrow"><span className="pre">{sym}</span>
                   <input type="number" inputMode="decimal" value={editAmount} onChange={e => setEditAmount(e.target.value)} />
                 </div>
               </div>
@@ -1372,7 +1470,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
             <p className="sd">Lock in the real figure — this cycle stops being an estimate. Next cycle reverts to the estimate.</p>
             <div className="field">
               <label>Actual amount for this cycle</label>
-              <div className="inrow"><span className="pre">$</span>
+              <div className="inrow"><span className="pre">{sym}</span>
                 <input type="number" inputMode="decimal" value={varAmount} onChange={e => setVarAmount(e.target.value)} />
               </div>
               {varCard.estimatedCents > 0 && <p className="hint">Was estimated at {fmt(varCard.estimatedCents, false)}.</p>}
@@ -1417,7 +1515,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               </p>
               <div className="field">
                 <label>Amount — currently {fmt(incomeEditItem.unitCents, false)}</label>
-                <div className="inrow"><span className="pre">$</span>
+                <div className="inrow"><span className="pre">{sym}</span>
                   <input type="number" inputMode="decimal" value={incomeEditAmount} onChange={e => setIncomeEditAmount(e.target.value)} />
                 </div>
               </div>
@@ -1465,7 +1563,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                 : varExpensesInCycle.map(e => (
                     <div key={e.id} className="field">
                       <label>{e.name} — estimated {fmt(e.estimatedCents, false)}</label>
-                      <div className="inrow"><span className="pre">$</span>
+                      <div className="inrow"><span className="pre">{sym}</span>
                         <input type="number" inputMode="decimal" value={closeVarActuals[e.id] || ''}
                           onChange={ev => setCloseVarActuals(p => ({ ...p, [e.id]: ev.target.value }))} />
                       </div>
@@ -1488,7 +1586,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               {closePayLanded === true && (
                 <div className="field">
                   <label>Amount that landed{primaryIncome ? ` — ${primaryIncome.name}` : ''}</label>
-                  <div className="inrow"><span className="pre">$</span>
+                  <div className="inrow"><span className="pre">{sym}</span>
                     <input type="number" inputMode="decimal" value={closePayAmount} onChange={e => setClosePayAmount(e.target.value)} />
                   </div>
                   <p className="hint">Defaults to your scheduled pay. Change it if the deposit differed.</p>
@@ -1500,7 +1598,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               <p className="sd">Whatever your bank says wins — it becomes next cycle's opening balance.</p>
               <div className="field">
                 <label>Actual balance right now</label>
-                <div className="inrow"><span className="pre">$</span>
+                <div className="inrow"><span className="pre">{sym}</span>
                   <input type="number" inputMode="decimal" value={closeRealBalance} onChange={e => setCloseRealBalance(e.target.value)} placeholder="0.00" />
                 </div>
                 <p className="hint">We projected {fmt(activeCycle.committedClosingBalanceCents, false)}.</p>
@@ -1572,7 +1670,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                 <div className="inrow"><input type="text" value={oneoffName} onChange={e => setOneoffName(e.target.value)} placeholder="e.g. Car registration" /></div>
               </div>
               <div className="field"><label>Amount</label>
-                <div className="inrow"><span className="pre">$</span>
+                <div className="inrow"><span className="pre">{sym}</span>
                   <input type="number" inputMode="decimal" value={oneoffAmount} onChange={e => setOneoffAmount(e.target.value)} placeholder="0" />
                 </div>
               </div>
@@ -1596,7 +1694,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                 <div className="inrow"><input type="text" value={incomeName} onChange={e => setIncomeName(e.target.value)} placeholder="e.g. Tax return" /></div>
               </div>
               <div className="field"><label>Amount</label>
-                <div className="inrow"><span className="pre">$</span>
+                <div className="inrow"><span className="pre">{sym}</span>
                   <input type="number" inputMode="decimal" value={incomeAmount} onChange={e => setIncomeAmount(e.target.value)} placeholder="0" />
                 </div>
               </div>
@@ -1628,7 +1726,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                 <div className="inrow"><input type="text" value={laybyName} onChange={e => setLaybyName(e.target.value)} placeholder="e.g. Winter coat" /></div>
               </div>
               <div className="field"><label>Total</label>
-                <div className="inrow"><span className="pre">$</span>
+                <div className="inrow"><span className="pre">{sym}</span>
                   <input type="number" inputMode="decimal" value={laybyTotal} onChange={e => setLaybyTotal(e.target.value)} placeholder="0" />
                 </div>
               </div>
@@ -1722,7 +1820,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               <div className="inrow"><input type="text" value={oneOffName} onChange={e => setOneOffName(e.target.value)} /></div>
             </div>
             <div className="field"><label>Amount</label>
-              <div className="inrow"><span className="pre">$</span>
+              <div className="inrow"><span className="pre">{sym}</span>
                 <input type="number" inputMode="decimal" value={oneOffAmt} onChange={e => setOneOffAmt(e.target.value)} />
               </div>
             </div>

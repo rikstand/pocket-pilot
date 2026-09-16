@@ -134,7 +134,18 @@ export function projectCycles(input: CycleInput): CycleResult[] {
       const extraForCycle = getExtraForCycle(
         creditOverrides, cycleStart, creditAccount!.strategyExtraCents
       )
-      const line = stepCredit(cardBalance, creditAccount!, extraForCycle, days)
+
+      // A monthly card only bills once a month. Use the same recurrence code
+      // every other expense uses to ask whether the due date lands in this
+      // cycle — so some cycles carry the minimum and some carry none.
+      const minimumIsDue =
+        creditAccount!.paymentFrequency === 'monthly' && creditAccount!.paymentAnchorDate
+          ? getOccurrencesInRange(
+              creditAccount!.paymentAnchorDate, 'monthly', cycleStart, cycleEnd
+            ).length > 0
+          : true
+
+      const line = stepCredit(cardBalance, creditAccount!, extraForCycle, days, minimumIsDue)
 
       creditOpeningBalanceCents = line.openingBalanceCents
       creditAssumedSpendCents   = line.assumedSpendCents

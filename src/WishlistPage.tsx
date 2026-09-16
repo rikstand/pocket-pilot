@@ -6,18 +6,11 @@ import {
   commitWishlistItem, uncommitWishlistItem, deleteWishlistItem,
 } from './lib/repository'
 import { useAccount } from './lib/AccountContext'
+import { moneyFormatter, currencySymbol } from './lib/money'
 import { projectCycles } from './engine/index'
 import { parseDate, formatDate } from './engine/dates'
 import { byNewest, latestVersion } from './lib/versions'
 
-function fmt(cents: number, showCents = true) {
-  const abs = Math.abs(cents)
-  const n = abs / 100
-  const str = showCents
-    ? n.toLocaleString('en-NZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : n.toLocaleString('en-NZ', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
-  return (cents < 0 ? '−' : '') + '$' + str
-}
 function fmtDate(d: string) {
   return parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
 }
@@ -49,6 +42,10 @@ function resolveActive(items: any[], cycles: any[], floorCents: number) {
 
 export default function WishlistPage({ userId, accountId }: { userId: string; accountId: string }) {
   const { activeAccount } = useAccount()
+
+  // Amounts follow the account's currency — see lib/money.ts
+  const fmt = moneyFormatter(activeAccount?.currency_code)
+  const sym = currencySymbol(activeAccount?.currency_code)
   const [items,     setItems]     = useState<any[]>([])
   const [cycles,    setCycles]    = useState<any[]>([])
   const [loading,   setLoading]   = useState(true)
@@ -137,7 +134,7 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
     if (!addName.trim() || !cents) { setAddError('Name and cost are required.'); return }
     setAddSaving(true); setAddError('')
     try {
-      await addWishlistItem(accountId, addName.trim(), cents)
+      await addWishlistItem(accountId,userId, addName.trim(), cents)
       setAddOpen(false); reload()
     } catch (e: any) { setAddError(e.message) }
     finally { setAddSaving(false) }
@@ -299,7 +296,7 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
             </div>
             <div className="field">
               <label>Cost</label>
-              <div className="inrow"><span className="pre">$</span><input type="number" inputMode="decimal" value={addAmount} onChange={e => setAddAmount(e.target.value)} placeholder="0" /></div>
+              <div className="inrow"><span className="pre">{sym}</span><input type="number" inputMode="decimal" value={addAmount} onChange={e => setAddAmount(e.target.value)} placeholder="0" /></div>
             </div>
             {addError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:8 }}>{addError}</p>}
             <div className="navrow">

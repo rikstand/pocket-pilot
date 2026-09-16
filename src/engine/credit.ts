@@ -27,7 +27,23 @@ export interface CreditAccountModel {
   minPaymentPct: number         // monthly, e.g. 3 = 3% of balance
   minPaymentFloorCents: number  // e.g. 1000 = $10
   assumedSpendCents: number     // expected new spending per cycle
+
+  // How the card is actually paid.
+  //   'per_cycle' — a payment every cycle, the monthly minimum shared across
+  //                 them. This is what the app did before due dates existed,
+  //                 and stays the default so nothing changes by surprise.
+  //   'monthly'   — one bill a month on a fixed day. The FULL monthly minimum
+  //                 falls due in whichever cycle contains that day, and no
+  //                 minimum is due in the others.
+  paymentFrequency?: 'per_cycle' | 'monthly'
 }
+
+/**
+ * Tells the projection which cycles carry a minimum payment.
+ * Given a cycle's position in the run (0 = first), returns true if a payment
+ * is due. Omit it and every cycle carries one, which is the old behaviour.
+ */
+export type MinimumDueSchedule = (cycleIndex: number) => boolean
 
 export interface CreditCycleLine {
   openingBalanceCents: number
@@ -74,8 +90,15 @@ export function minimumDueCents(
 ): number {
   if (balanceCents <= 0) return 0
   const monthlyMin = balanceCents * (account.minPaymentPct / 100)
-  const prorated = Math.round(monthlyMin * (days / DAYS_PER_MONTH))
-  return Math.min(balanceCents, Math.max(prorated, account.minPaymentFloorCents))
+
+  // Billed monthly: the whole month's minimum falls due in one go, so it is
+  // NOT divided by the cycle length. Sharing it out would understate what the
+  // card actually asks for on the due date.
+  const due = account.paymentFrequency === 'monthly'
+    ? Math.round(monthlyMin)
+    : Math.round(monthlyMin * (days / DAYS_PER_MONTH))
+
+  return Math.min(balanceCents, Math.max(due, account.minPaymentFloorCents))
 }
 
 /**
@@ -89,7 +112,8 @@ export function stepCredit(
   openingBalanceCents: number,
   account: CreditAccountModel,
   extraCents: number,
-  days: number
+  days: number,
+  minimumIsDue = true
 ): CreditCycleLine {
   const opening = Math.max(0, openingBalanceCents)
 
@@ -110,7 +134,9 @@ export function stepCredit(
   const interest = cycleInterestCents(afterSpend, account.aprBasisPoints, days)
   const beforePayment = afterSpend + interest
 
-  const minimum = minimumDueCents(beforePayment, account, days)
+  // On a monthly card, cycles without the due date carry no minimum — but any
+  // extra you have chosen still goes out, because that is your own schedule.
+  const minimum = minimumIsDue ? minimumDueCents(beforePayment, account, days) : 0
   const headroom = Math.max(0, beforePayment - minimum)
   const extra = Math.min(Math.max(0, extraCents), headroom)
   const payment = minimum + extra
@@ -139,7 +165,8 @@ export function projectCreditPayoff(
   account: CreditAccountModel,
   extraCents: number,
   cycleDays: number,
-  maxCycles: number = MAX_PROJECTION_CYCLES
+  maxCycles: number = MAX_PROJECTION_CYCLES,
+  minimumDue?: MinimumDueSchedule
 ): CreditProjection {
   const lines: CreditCycleLine[] = []
   let balance = Math.max(0, startingBalanceCents)
@@ -158,7 +185,7 @@ export function projectCreditPayoff(
       }
     }
 
-    const line = stepCredit(balance, account, extraCents, cycleDays)
+    const line = stepCredit(balance, account, extraCents, cycleDays, minimumDue ? minimumDue(i) : true)
     lines.push(line)
     totalInterest += line.interestCents
     totalPaid += line.paymentCents
@@ -206,7 +233,8 @@ export function maxAffordableExtraCents(
   account: CreditAccountModel,
   cycleDays: number,
   cycleSurplusCents: number[],
-  safetyFloorCents: number
+  safetyFloorCents: number,
+  minimumDue?: MinimumDueSchedule
 ): number {
   if (cycleSurplusCents.length === 0) return 0
 
@@ -217,7 +245,7 @@ export function maxAffordableExtraCents(
   const fits = (extra: number): boolean => {
     const proj = projectCreditPayoff(
       startingBalanceCents, account, extra, cycleDays,
-      Math.min(cycleSurplusCents.length, 400)
+      Math.min(cycleSurplusCents.length, 400), minimumDue
     )
     let cumulativePaidCents = 0
     for (let i = 0; i < proj.lines.length && i < cycleSurplusCents.length; i++) {
@@ -239,6 +267,64 @@ export function maxAffordableExtraCents(
   return Math.floor(lo / 100) * 100
 }
 
+
+/**
+ * Work out what the balance should be NOW, starting from a dated measurement.
+ *
+ * A balance you typed in is only true on the day you typed it. Interest keeps
+ * accruing, payments keep going out and spending keeps happening whether or
+ * not anyone opens the app. So the last measurement is not today's balance —
+ * it is the starting point for working out today's balance.
+ *
+ * This is what makes the comparison on the Credit page meaningful. Because the
+ * projected figure is a genuine prediction, the gap between it and a freshly
+ * measured balance actually tells you something: more spending than assumed,
+ * or a payment that did not go out.
+ *
+ * ASSUMPTION: the minimum is always paid, even when no strategy is committed,
+ * because it is required by the card agreement. The chosen extra is only
+ * assumed once a strategy is committed. If a minimum was genuinely missed, the
+ * projection reads low and the next measurement shows it as unexpected debt.
+ */
+export function projectBalanceForward(
+  measuredBalanceCents: number,
+  account: CreditAccountModel,
+  extraCents: number,
+  cycleDays: number,
+  elapsedCycles: number,
+  minimumDue?: MinimumDueSchedule
+): { balanceCents: number; interestCents: number; paidCents: number; spentCents: number } {
+  let balance = Math.max(0, measuredBalanceCents)
+  let interest = 0
+  let paid = 0
+  let spent = 0
+
+  for (let i = 0; i < Math.max(0, elapsedCycles); i++) {
+    if (balance <= 0 && account.assumedSpendCents <= 0) break
+    const line = stepCredit(balance, account, extraCents, cycleDays, minimumDue ? minimumDue(i) : true)
+    interest += line.interestCents
+    paid     += line.paymentCents
+    spent    += line.assumedSpendCents
+    balance   = line.closingBalanceCents
+  }
+
+  return { balanceCents: balance, interestCents: interest, paidCents: paid, spentCents: spent }
+}
+
+/**
+ * How many whole cycles have passed between two dates.
+ * Both times are milliseconds; the caller parses the dates.
+ */
+export function elapsedCyclesBetween(
+  fromMs: number,
+  toMs: number,
+  cycleDays: number
+): number {
+  if (cycleDays <= 0) return 0
+  const days = Math.floor((toMs - fromMs) / 86400000)
+  return Math.max(0, Math.floor(days / cycleDays))
+}
+
 /**
  * What adding `itemCostCents` to the card does to a committed payoff plan.
  *
@@ -251,7 +337,8 @@ export function creditItemDelta(
   itemCostCents: number,
   account: CreditAccountModel,
   extraCents: number,
-  cycleDays: number
+  cycleDays: number,
+  minimumDue?: MinimumDueSchedule
 ): {
   before: CreditProjection
   after: CreditProjection
@@ -259,8 +346,8 @@ export function creditItemDelta(
   extraCyclesInDebt: number | null
   realCostCents: number
 } {
-  const before = projectCreditPayoff(currentBalanceCents, account, extraCents, cycleDays)
-  const after = projectCreditPayoff(currentBalanceCents + itemCostCents, account, extraCents, cycleDays)
+  const before = projectCreditPayoff(currentBalanceCents, account, extraCents, cycleDays, undefined, minimumDue)
+  const after = projectCreditPayoff(currentBalanceCents + itemCostCents, account, extraCents, cycleDays, undefined, minimumDue)
 
   const extraInterestCents = Math.max(0, after.totalInterestCents - before.totalInterestCents)
   const extraCyclesInDebt =

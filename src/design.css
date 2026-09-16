@@ -21,9 +21,6 @@ body[data-theme="dark"]  { background: #0e1016; color: #e7e9ee; }
   --floor:#e0476a; --floor-s:#fceaee;
   --event:#9b3fd1; --event-s:#f5e9fb;
   --ground:#e9e6df; --groundln:#cfccc3; --pot:#c07e12;
-  /* credit — deliberately NOT --floor, which already means "breach".
-     A permanently red credit section would read as an alert every cycle. */
-  --credit:#0d7d8c; --credit-s:#e3f2f4;
 }
 [data-theme="dark"] {
   --bg:#0e1016; --bg2:#171a22; --elev:#191c25;
@@ -35,7 +32,6 @@ body[data-theme="dark"]  { background: #0e1016; color: #e7e9ee; }
   --floor:#ff6584; --floor-s:#2a141b;
   --event:#cd86f0; --event-s:#231630;
   --ground:#14161d; --groundln:#22252e; --pot:#f0b64b;
-  --credit:#4ec5d6; --credit-s:#12272c;
 }
 
 /* === SHELL === */
@@ -152,7 +148,6 @@ svg.proj { display:block; width:100%; height:152px; }
 .sh-var .sh-label { color: var(--warn); }
 .sh-bud .sh-label { color: var(--mut); }
 .sh-inc .sh-label { color: var(--pos); }
-.sh-crd .sh-label { color: var(--credit); }
 
 /* accordion behaviour on dashboard section headers:
    whole header is tappable, chevron sits after the total */
@@ -185,7 +180,6 @@ svg.proj { display:block; width:100%; height:152px; }
 .ic.cont { background:var(--floor-s);color:var(--floor); }
 .ic.evt  { background:var(--event-s);color:var(--event); }
 .ic.pot  { background:transparent; border:1.5px dashed var(--pot); color:var(--pot); }
-.ic.crd  { background:var(--credit-s); color:var(--credit); }
 
 /* text column — left-aligned, never centred */
 .card .tx {
@@ -237,8 +231,6 @@ svg.proj { display:block; width:100%; height:152px; }
 .chip.bl   { color:var(--mut);   background:var(--line2); }
 .chip.cf   { color:var(--pos);   border-color:var(--pos);   background:var(--pos-s); }
 .chip.pt   { color:var(--pot);   border-color:var(--pot); }
-.chip.crd  { color:var(--credit); border-color:var(--credit); background:var(--credit-s); }
-.chip.drv  { color:var(--mut);   border-color:var(--line); background:var(--line2); }
 
 /* value */
 .card .vl { font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:15px; text-align:right; white-space:nowrap; flex-shrink:0; }
@@ -727,7 +719,6 @@ svg.proj { display:block; width:100%; height:152px; }
 .di.fc  { background: var(--pos-s); color: var(--pos); }
 .di.exp { background: var(--acc-s); color: var(--acc); }
 .di.wish{ background: #faf1de; color: #b8860b; }
-.di.crd { background: var(--credit-s); color: var(--credit); }
 .di.set { background: var(--line2); color: var(--mut); }
 [data-theme="dark"] .di.wish { background: #2b2413; color: #e0b355; }
 .drawer-div { height: 1px; background: var(--line); margin: 10px 0; }
@@ -1110,14 +1101,73 @@ svg.proj { display:block; width:100%; height:152px; }
 .exp-sec.done .exp-row { opacity: .6; }
 
 /* ══════════════════════════════════════════════════════════════════
-   CREDIT PAGE
-   Added by feat/credit-page. Reuses .card, .cards, .section-hdr,
-   .modeopt, .field and .chip wholesale — only the balance card,
-   the extra-payment slider and the payoff curve are new.
+   SETTINGS — safety floor
+   ══════════════════════════════════════════════════════════════════ */
+.floor-presets {
+  display: flex; gap: 7px; flex-wrap: wrap; margin: 2px 0 4px;
+  text-align: left;
+}
+.floor-presets button {
+  border: 1px solid var(--line); background: var(--bg2); color: var(--mut);
+  border-radius: 9px; padding: 7px 12px; cursor: pointer;
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px; font-weight: 600;
+  transition: border-color .15s, color .15s;
+}
+.floor-presets button:hover { border-color: var(--acc); }
+.floor-presets button.on { border-color: var(--acc); background: var(--acc-s); color: var(--acc); }
+
+.floor-impact {
+  margin: 16px 16px 0; background: var(--elev);
+  border: 1px solid var(--line); border-radius: 14px; padding: 13px 14px;
+  text-align: left;   /* explicit: never inherit any centering */
+}
+.floor-impact .fi-k {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--mut);
+  margin-bottom: 9px;
+}
+.floor-impact .fi-row {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12.5px; padding: 4px 0;
+}
+.floor-impact .fi-row .l { color: var(--mut); flex: 1; }
+.floor-impact .fi-row .v {
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600; color: var(--ink);
+}
+.floor-impact .fi-row .v.bad  { color: var(--floor); }
+.floor-impact .fi-row .v.warn { color: var(--warn); }
+.floor-impact .fi-row .v.good { color: var(--pos); }
+
+/* ══════════════════════════════════════════════════════════════════
+   CREDIT
+   Append this to the END of src/design.css.
+
+   This block was lost when design.css was replaced with a version built
+   from a pre-credit copy. Everything here is additive — it changes no
+   existing rule.
    ══════════════════════════════════════════════════════════════════ */
 
-/* Action link. .card .tx .act is scoped to cards, so the Credit page needs
-   its own — same type treatment, credit colour. */
+/* ── tokens ───────────────────────────────────────────────────────
+   Deliberately NOT --floor, which already means "breach". A permanently
+   red credit section would read as an alert every cycle. */
+:root {
+  --credit: #0d7d8c;
+  --credit-s: #e3f2f4;
+}
+[data-theme="dark"] {
+  --credit: #4ec5d6;
+  --credit-s: #12272c;
+}
+
+/* ── icons and headers ── */
+.di.crd { background: var(--credit-s); color: var(--credit); }
+.ic.crd { background: var(--credit-s); color: var(--credit); }
+.sh-crd .sh-label { color: var(--credit); }
+.chip.crd { color: var(--credit); border-color: var(--credit); background: var(--credit-s); }
+.chip.drv { color: var(--mut); border-color: var(--line); background: var(--line2); }
+
+/* ── action link ──────────────────────────────────────────────────
+   .card .tx .act is scoped to cards, so the Credit page needs its own. */
 .credit-act {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px; font-weight: 600; letter-spacing: .03em;
@@ -1155,7 +1205,6 @@ svg.proj { display:block; width:100%; height:152px; }
 .credit-line .cl-val.bad  { color: var(--floor); }
 .credit-line .cl-val.good { color: var(--pos); }
 
-/* stale badge — balance not refreshed at recent closes */
 .credit-stale {
   display: inline-block; font-family: 'JetBrains Mono', monospace;
   font-size: 8.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
@@ -1163,7 +1212,6 @@ svg.proj { display:block; width:100%; height:152px; }
   color: var(--warn); border: 1px solid var(--warn); background: var(--warn-s);
 }
 
-/* variance between the balance entered and the balance projected */
 .credit-var {
   margin-top: 10px; font-size: 11.5px; line-height: 1.45;
   border-radius: 9px; padding: 8px 11px;
@@ -1171,6 +1219,19 @@ svg.proj { display:block; width:100%; height:152px; }
 }
 .credit-var.match { background: var(--pos-s); color: var(--pos); border-left-color: var(--pos); }
 .credit-var b { font-weight: 700; }
+
+/* ── card terms row ── */
+.credit-meta {
+  margin-top: 12px; padding-top: 11px;
+  border-top: 1px solid var(--line2);
+  display: flex; align-items: center; gap: 10px;
+}
+.credit-meta .cm-tx { flex: 1; min-width: 0; text-align: left; }
+.credit-meta .cm-l {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--mut);
+}
+.credit-meta .cm-v { font-size: 12.5px; color: var(--ink); margin-top: 2px; font-weight: 500; }
 
 /* ── strategy amount, right-aligned inside .modeopt ── */
 .strat-amt {
@@ -1221,7 +1282,7 @@ svg.proj { display:block; width:100%; height:152px; }
   border-radius: 14px; padding: 10px 12px; height: 104px;
 }
 .credit-chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.credit-chart .base-ln { fill: none; stroke: var(--line); stroke-width: 2.5; stroke-linecap: round; }
+.credit-chart .base-ln  { fill: none; stroke: var(--line);   stroke-width: 2.5; stroke-linecap: round; }
 .credit-chart .strat-ln { fill: none; stroke: var(--credit); stroke-width: 2.5; stroke-linecap: round; }
 .credit-chart .zero-dot { fill: var(--pos); }
 .credit-chart-legend {
@@ -1248,24 +1309,8 @@ svg.proj { display:block; width:100%; height:152px; }
   text-align: left; margin-top: 16px; padding-top: 15px;
   border-top: 1px solid var(--line2);
 }
-.credit-meta .cm-tx { text-align: left; }
 
-/* ── card terms row + settings entry point ── */
-.credit-meta {
-  margin-top: 12px; padding-top: 11px;
-  border-top: 1px solid var(--line2);
-  display: flex; align-items: center; gap: 10px;
-}
-.credit-meta .cm-tx { flex: 1; min-width: 0; }
-.credit-meta .cm-l {
-  font-family: 'JetBrains Mono', monospace; font-size: 9px;
-  letter-spacing: .1em; text-transform: uppercase; color: var(--mut);
-}
-.credit-meta .cm-v {
-  font-size: 12.5px; color: var(--ink); margin-top: 2px; font-weight: 500;
-}
-
-/* primary action in credit colour */
+/* ── primary action ── */
 .credit-btn {
   margin: 14px 16px 4px; display: block; width: calc(100% - 32px);
   border: none; border-radius: 13px; background: var(--credit); color: #fff;
