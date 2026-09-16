@@ -3,10 +3,14 @@ import type { CSSProperties } from 'react'
 import { supabase } from './lib/supabase'
 import { getIncomeSources, getExpenses, getCycles, getLayBys, getBudgetSpendEntries, addBudgetSpendEntry, updateBudgetSpendEntry, deleteBudgetSpendEntry,
   getCreditAccount, getCreditExtraOverrides,
+  setCreditExtraOverride, clearCreditExtraOverride,
+  getCreditCyclePayments, confirmCreditPayment, unconfirmCreditPayment,
+  updateCreditStrategyExtra,
 } from './lib/repository'
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
 import { projectCycles } from './engine/index'
+import { creditModelFrom, buildMinimumDueSchedule, dueDateInCycle, runCardForward } from './lib/creditSchedule'
 import { getOccurrencesInRange } from './engine/recurrence'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
 import { byNewest, byOldest, latestVersion, versionForDate } from './lib/versions'
@@ -145,7 +149,14 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const [incomeEditSaving,    setIncomeEditSaving]    = useState(false)
   const [incomeEditError,     setIncomeEditError]     = useState('')
 
-  const [rawCredit, setRawCredit] = useState<any>(null)
+  const [rawCredit,     setRawCredit]     = useState<any>(null)
+  const [creditPaid,    setCreditPaid]    = useState<any[]>([])
+
+  // adjust sheet
+  const [adjOpen,   setAdjOpen]   = useState(false)
+  const [adjExtra,  setAdjExtra]  = useState(0)
+  const [adjScope,  setAdjScope]  = useState<'once' | 'always'>('once')
+  const [adjSaving, setAdjSaving] = useState(false)
 
   const [openSecs, setOpenSecs] = useState<Record<string, boolean>>({
     income: true, fixed: true, var: true, budget: true, credit: true,
@@ -168,9 +179,13 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
         // Overrides only exist once a card does, so this is a second round-trip
         // rather than part of the Promise.all above.
-        const creditOverrideRows = creditCard
-          ? await getCreditExtraOverrides(creditCard.id)
-          : []
+        const [creditOverrideRows, creditPaidRows] = creditCard
+          ? await Promise.all([
+              getCreditExtraOverrides(creditCard.id),
+              getCreditCyclePayments(creditCard.id),
+            ])
+          : [[], []]
+        setCreditPaid(creditPaidRows ?? [])
         setRawIncome(income)
         setRawExpenses(expenses)
         setRawLayBys(layBys)
@@ -989,13 +1004,122 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const creditMinimumCents = activeCycle.creditMinimumCents ?? 0
   const creditExtraCents   = activeCycle.creditExtraCents ?? 0
   const creditLeftCents    = activeCycle.creditClosingBalanceCents ?? 0
-  const creditOpeningCents = activeCycle.creditOpeningBalanceCents ?? 0
   const showCredit         = !activeCycle.isHistorical && creditPaymentCents > 0
   // Progress is against the balance when the strategy was committed, not the
   // original purchase — a revolving balance has no single starting point.
   const creditPct = rawCredit?.current_balance_cents
     ? Math.min(100, Math.max(0, Math.round((1 - creditLeftCents / rawCredit.current_balance_cents) * 100)))
     : 0
+
+  // ── credit: what state is this cycle's payment in? ────────────────
+  // Three states, and only one action is ever offered:
+  //   before the due date  -> adjust
+  //   due date passed      -> confirm it went out
+  //   confirmed            -> nothing, and the cycle is locked
+  const creditCycleDays = activeCycle.endDate && activeCycle.startDate
+    ? Math.round((parseDate(activeCycle.endDate).getTime() - parseDate(activeCycle.startDate).getTime()) / 86400000) + 1
+    : 14
+
+  const creditDueDate = rawCredit ? dueDateInCycle(rawCredit, activeCycle.startDate, creditCycleDays) : null
+  const creditIsPaid  = creditPaid.some((p: any) => p.cycle_start === activeCycle.startDate)
+  const creditDuePassed = !!creditDueDate && creditDueDate < today()
+  const creditState: 'before' | 'due' | 'paid' =
+    creditIsPaid ? 'paid' : creditDuePassed ? 'due' : 'before'
+
+  // ── what a different top-up would do ──────────────────────────────
+  // Recomputed live while the sheet is open. Two things move together: the
+  // card clears sooner or later, and the account has more or less left in it —
+  // and because payments accumulate, a bigger one can break a cycle further
+  // out rather than this one.
+  const creditModel = rawCredit ? creditModelFrom(rawCredit) : null
+  const creditMinDue = rawCredit
+    ? buildMinimumDueSchedule(rawCredit, activeCycle.startDate, creditCycleDays)
+    : () => true
+  const standingExtra = rawCredit?.strategy_extra_cents ?? 0
+  const cardBalanceNow = activeCycle.creditOpeningBalanceCents ?? 0
+
+  function creditWhatIf(extra: number, scope: 'once' | 'always') {
+    if (!creditModel) return null
+    const extraFor = (i: number) => (scope === 'always' ? extra : (i === 0 ? extra : standingExtra))
+    return runCardForward(cardBalanceNow, creditModel, extraFor, creditCycleDays, creditMinDue)
+  }
+
+  const creditPlanNow = creditWhatIf(creditExtraCents, 'always')
+  const creditPlanNew = adjOpen ? creditWhatIf(adjExtra, adjScope) : null
+
+  // Account balances under the candidate plan. Start from what the forecast
+  // already says, then apply the DIFFERENCE in cumulative payments — payments
+  // add up, so cycle 5 carries five of them, not one.
+  const creditBankSeries: number[] = (() => {
+    if (!creditPlanNew || !creditPlanNow) return []
+    const out: number[] = []
+    let deltaSoFar = 0
+    for (let i = 0; i < Math.min(cycles.length, 12); i++) {
+      const wasPay = creditPlanNow.lines[i]?.paymentCents ?? 0
+      const nowPay = creditPlanNew.lines[i]?.paymentCents ?? 0
+      deltaSoFar += (nowPay - wasPay)
+      out.push((cycles[i]?.committedClosingBalanceCents ?? 0) - deltaSoFar)
+    }
+    return out
+  })()
+
+  const creditWorstBank = creditBankSeries.length ? Math.min(...creditBankSeries) : 0
+  const creditWorstIdx  = creditBankSeries.indexOf(creditWorstBank)
+
+  function creditCurve(plan: { lines: { closingBalanceCents: number }[] } | null): string {
+    if (!plan) return ''
+    const pts = [cardBalanceNow, ...plan.lines.map(l => l.closingBalanceCents)].slice(0, 40)
+    const max = Math.max(cardBalanceNow, 1)
+    const span = Math.max(pts.length - 1, 1)
+    return pts.map((b, i) =>
+      `${i ? 'L' : 'M'}${((i / span) * 300).toFixed(1)} ${(46 - (Math.max(b, 0) / max) * 46).toFixed(1)}`
+    ).join(' ')
+  }
+
+  function openCreditAdjust() {
+    setAdjExtra(creditExtraCents)
+    setAdjScope('once')
+    setAdjOpen(true)
+  }
+
+  async function saveCreditAdjust() {
+    if (!rawCredit) return
+    setAdjSaving(true)
+    try {
+      if (adjScope === 'always') {
+        // New standing amount. Clear this cycle's exception too, otherwise the
+        // old one-off would override the plan you just set.
+        await updateCreditStrategyExtra(rawCredit.id, adjExtra)
+        await clearCreditExtraOverride(rawCredit.id, activeCycle.startDate)
+      } else if (adjExtra === standingExtra) {
+        // Back in line with the plan — drop the exception rather than storing
+        // a copy of a number that already lives on the plan.
+        await clearCreditExtraOverride(rawCredit.id, activeCycle.startDate)
+      } else {
+        await setCreditExtraOverride(rawCredit.id, accountId, activeCycle.startDate, adjExtra)
+      }
+      setAdjOpen(false)
+      reload()
+    } catch (e: any) {
+      alert('Could not save: ' + e.message)
+    } finally { setAdjSaving(false) }
+  }
+
+  async function markCreditPaid() {
+    if (!rawCredit) return
+    try {
+      await confirmCreditPayment(rawCredit.id, accountId, activeCycle.startDate)
+      reload()
+    } catch (e: any) { alert('Could not confirm: ' + e.message) }
+  }
+
+  async function undoCreditPaid() {
+    if (!rawCredit) return
+    try {
+      await unconfirmCreditPayment(rawCredit.id, activeCycle.startDate)
+      reload()
+    } catch (e: any) { alert('Could not undo: ' + e.message) }
+  }
 
   const aboveFloor   = activeCycle.committedClosingBalanceCents - floorCents
   const status       = cycleStatus(activeIdx)
@@ -1300,17 +1424,34 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                   <div className="tx">
                     <div className="nm">
                       {rawCredit?.name ?? 'Credit card'}
-                      <span className="chip drv">derived</span>
+                      {creditState === 'paid'
+                        ? <span className="chip pd">paid ✓</span>
+                        : creditState === 'due'
+                          ? <span className="chip due">not confirmed</span>
+                          : <span className="chip drv">planned</span>}
+                      {creditExtraCents !== standingExtra && creditState !== 'paid' && (
+                        <span className="chip drv">this cycle only</span>
+                      )}
                     </div>
                     <div className="dt">
                       min {fmt(creditMinimumCents, false)}
                       {creditExtraCents > 0 && <> + extra {fmt(creditExtraCents, false)}</>}
-                      {' · '}{fmt(creditLeftCents, false)} left of {fmt(creditOpeningCents, false)}
+                      {' · '}{fmt(creditLeftCents, false)} left
+                      {creditDueDate && <> · due {fmtDate(creditDueDate)}</>}
                     </div>
                     <div className="act-row">
                       <div className="exp-prog" style={{ flex: 1, marginTop: 0 }}>
                         <div className="fill" style={{ width: creditPct + '%', background: 'var(--credit)' }} />
                       </div>
+                      {creditState === 'before' && (
+                        <span className="act" onClick={openCreditAdjust}>adjust →</span>
+                      )}
+                      {creditState === 'due' && (
+                        <span className="act" style={{ color: 'var(--floor)' }} onClick={markCreditPaid}>confirm →</span>
+                      )}
+                      {creditState === 'paid' && (
+                        <span className="act" style={{ color: 'var(--mut)' }} onClick={undoCreditPaid}>undo</span>
+                      )}
                     </div>
                   </div>
                   <div className="vl">−{fmt(creditPaymentCents, false)}</div>
@@ -1851,6 +1992,112 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
             }}>
               {oneOffDeleting ? 'Removing…' : oneOffItem.oneOffKind === 'income' ? 'Delete this income' : 'Delete this expense'}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── adjust the credit top-up ── */}
+      {adjOpen && creditModel && (
+        <div className="ov" onClick={e => { if (e.target === e.currentTarget) setAdjOpen(false) }}>
+          <div className="sheet">
+            <button className="xbtn" onClick={() => setAdjOpen(false)}>×</button>
+            <div className="grab" />
+            <h3>Adjust your payment</h3>
+            <p className="sd">
+              The minimum is set by your card agreement. Anything above it is your choice,
+              and it moves when the card is paid off.
+            </p>
+
+            <div className="cr-locked">
+              <div className="cl-ic">🔒</div>
+              <div className="cl-tx">
+                <div className="cl-n">Minimum due</div>
+                <div className="cl-d">
+                  {creditPlanNew?.lines[0]?.minimumCents
+                    ? <>due {creditDueDate ? fmtDate(creditDueDate) : 'this cycle'}</>
+                    : <>none due this cycle</>}
+                </div>
+              </div>
+              <div className="cl-v">{fmt(creditPlanNew?.lines[0]?.minimumCents ?? 0, false)}</div>
+            </div>
+
+            <div className="cr-dial">
+              <div className="cr-dial-top">
+                <span className="l">Extra on top</span>
+                <span className="v">{fmt(adjExtra, false)}</span>
+              </div>
+              <input type="range" min={0} max={Math.max(aboveFloor + creditExtraCents, 1000)} step={500}
+                value={Math.min(adjExtra, Math.max(aboveFloor + creditExtraCents, 1000))}
+                onChange={e => setAdjExtra(parseInt(e.target.value, 10))} />
+              <div className="cr-dial-ends">
+                <span>{fmt(0, false)}</span>
+                <span>{fmt(Math.max(aboveFloor + creditExtraCents, 0), false)} spare</span>
+              </div>
+            </div>
+
+            {/* card balance falling */}
+            <div className="cr-chart-k"><span>Card balance</span>
+              <span>{creditPlanNew?.cyclesToPayoff
+                ? `clear in ${creditPlanNew.cyclesToPayoff} cycles`
+                : 'never clears'}</span>
+            </div>
+            <div className="cr-chart">
+              <svg viewBox="0 0 300 46" preserveAspectRatio="none">
+                <line x1="0" y1="46" x2="300" y2="46" stroke="var(--line)" strokeWidth="1" />
+                <path className="cr-ln-was" d={creditCurve(creditPlanNow)} />
+                <path className="cr-ln-now" d={creditCurve(creditPlanNew)} />
+              </svg>
+            </div>
+
+            {/* account balance, cycle by cycle */}
+            <div className="cr-chart-k" style={{ marginTop: 12 }}>
+              <span>Your account, after paying</span>
+              <span>lowest {fmt(creditWorstBank, false)}</span>
+            </div>
+            <div className="cr-bars">
+              {creditBankSeries.map((v, i) => {
+                const top = Math.max(...creditBankSeries, floorCents * 1.5, 1)
+                const cls = v < 0 ? 'breach' : v < floorCents ? 'low' : ''
+                return (
+                  <div key={i} className={`cr-bar ${cls}`}
+                    style={{ height: Math.max((Math.max(v, 0) / top) * 44, 3) + 'px' }}>
+                    <span className="cr-bx">{i + 1}</span>
+                  </div>
+                )
+              })}
+            </div>
+
+            {creditWorstBank < floorCents ? (
+              <div className="cr-warn">
+                <b>Cycle {creditWorstIdx + 1} drops to {fmt(creditWorstBank, false)}</b>
+                {creditWorstBank < 0
+                  ? <> — that would overdraw the account.</>
+                  : <>, under your {fmt(floorCents, false)} floor.</>}
+                {' '}Paying this much clears the card sooner, but a later cycle carries the cost.
+              </div>
+            ) : (
+              <div className="cr-ok">
+                Every cycle stays above your floor — lowest is <b>{fmt(creditWorstBank, false)}</b>
+                {' '}at cycle {creditWorstIdx + 1}.
+              </div>
+            )}
+
+            <div className="cr-scope">
+              <button className={adjScope === 'once' ? 'on' : ''} onClick={() => setAdjScope('once')}>
+                Just this cycle<small>one-off change</small>
+              </button>
+              <button className={adjScope === 'always' ? 'on' : ''} onClick={() => setAdjScope('always')}>
+                From now on<small>changes your plan</small>
+              </button>
+            </div>
+
+            <div className="navrow">
+              <button onClick={() => setAdjOpen(false)}>Cancel</button>
+              <button className="pri" style={{ background: 'var(--credit)' }}
+                onClick={saveCreditAdjust} disabled={adjSaving}>
+                {adjSaving ? 'Saving…' : 'Apply'}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -312,6 +312,19 @@ export async function commitCreditStrategy(creditAccountId: string, extraCents: 
   return data
 }
 
+// Change the standing extra without touching whether a strategy is committed.
+// Used when adjusting from the Cycle screen with "from now on".
+export async function updateCreditStrategyExtra(creditAccountId: string, extraCents: number) {
+  const { data, error } = await supabase
+    .from('credit_accounts')
+    .update({ strategy_extra_cents: extraCents })
+    .eq('id', creditAccountId)
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
 export async function uncommitCreditStrategy(creditAccountId: string) {
   const { data, error } = await supabase
     .from('credit_accounts')
@@ -420,6 +433,45 @@ export async function setCreditExtraOverride(
 export async function clearCreditExtraOverride(creditAccountId: string, cycleStart: string) {
   const { error } = await supabase
     .from('credit_extra_overrides')
+    .delete()
+    .eq('credit_account_id', creditAccountId)
+    .eq('cycle_start', cycleStart)
+  if (error) throw error
+}
+
+// --- CREDIT CYCLE PAYMENTS ---
+// A row here means "the payment for this cycle has gone out". Once that is
+// true, later changes to the plan must not rewrite that cycle.
+export async function getCreditCyclePayments(creditAccountId: string) {
+  const { data, error } = await supabase
+    .from('credit_cycle_payments')
+    .select('*')
+    .eq('credit_account_id', creditAccountId)
+    .order('cycle_start')
+  if (error) throw error
+  return data
+}
+
+export async function confirmCreditPayment(
+  creditAccountId: string,
+  accountId: string,
+  cycleStart: string
+) {
+  const { data, error } = await supabase
+    .from('credit_cycle_payments')
+    .upsert(
+      { credit_account_id: creditAccountId, account_id: accountId, cycle_start: cycleStart },
+      { onConflict: 'credit_account_id,cycle_start' }
+    )
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function unconfirmCreditPayment(creditAccountId: string, cycleStart: string) {
+  const { error } = await supabase
+    .from('credit_cycle_payments')
     .delete()
     .eq('credit_account_id', creditAccountId)
     .eq('cycle_start', cycleStart)
