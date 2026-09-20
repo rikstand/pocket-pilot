@@ -478,6 +478,140 @@ export async function unconfirmCreditPayment(creditAccountId: string, cycleStart
   if (error) throw error
 }
 
+// --- SAVINGS GOALS ---
+// A savings goal is a real commitment: money leaves your spendable balance
+// each cycle, like a lay-by payment. It exists because "you could afford this
+// in March" assumes you never spend the money in between.
+export async function getSavingsGoals(accountId: string) {
+  const { data, error } = await supabase
+    .from('savings_goals')
+    .select('*')
+    .eq('account_id', accountId)
+    .eq('is_active', true)
+    .order('created_at')
+  if (error) throw error
+  return data
+}
+
+export async function createSavingsGoal(
+  accountId: string,
+  fields: {
+    name: string
+    target_cents: number
+    per_cycle_cents: number
+    cycles_total: number
+    start_cycle_start: string
+    wishlist_item_id?: string | null
+  }
+) {
+  const { data, error } = await supabase
+    .from('savings_goals')
+    .insert({ account_id: accountId, ...fields })
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function updateSavingsGoal(
+  goalId: string,
+  fields: {
+    name?: string
+    per_cycle_cents?: number
+    cycles_total?: number
+    adjusted_total_cents?: number | null
+    adjusted_at?: string | null
+    status?: 'active' | 'completed' | 'cancelled'
+  }
+) {
+  const { data, error } = await supabase
+    .from('savings_goals')
+    .update(fields)
+    .eq('id', goalId)
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function deleteSavingsGoal(goalId: string) {
+  const { error } = await supabase
+    .from('savings_goals')
+    .update({ is_active: false })
+    .eq('id', goalId)
+  if (error) throw error
+}
+
+// --- SAVINGS CONTRIBUTIONS ---
+// One row per cycle where the money actually went in. The row existing is the
+// confirmation — no amount is stored, because what was meant to go in is
+// already known from the goal.
+export async function getSavingsContributions(goalId: string) {
+  const { data, error } = await supabase
+    .from('savings_contributions')
+    .select('*')
+    .eq('savings_goal_id', goalId)
+    .order('cycle_start')
+  if (error) throw error
+  return data
+}
+
+export async function getAllSavingsContributions(accountId: string) {
+  const { data, error } = await supabase
+    .from('savings_contributions')
+    .select('*')
+    .eq('account_id', accountId)
+    .order('cycle_start')
+  if (error) throw error
+  return data
+}
+
+export async function confirmSavingsContribution(
+  goalId: string,
+  accountId: string,
+  cycleStart: string
+) {
+  const { data, error } = await supabase
+    .from('savings_contributions')
+    .upsert(
+      { savings_goal_id: goalId, account_id: accountId, cycle_start: cycleStart },
+      { onConflict: 'savings_goal_id,cycle_start' }
+    )
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function unconfirmSavingsContribution(goalId: string, cycleStart: string) {
+  const { error } = await supabase
+    .from('savings_contributions')
+    .delete()
+    .eq('savings_goal_id', goalId)
+    .eq('cycle_start', cycleStart)
+  if (error) throw error
+}
+
+// Links a wishlist item to how it is being paid for.
+export async function setWishlistPaymentMethod(
+  itemId: string,
+  method: 'cash' | 'savings' | 'layby' | 'credit',
+  savingsGoalId?: string | null
+) {
+  const { data, error } = await supabase
+    .from('wishlist_items')
+    .update({
+      status: 'committed',
+      payment_method: method,
+      savings_goal_id: savingsGoalId ?? null,
+    })
+    .eq('id', itemId)
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
 // --- BUDGET SPEND ENTRIES ---
 export async function getBudgetSpendEntries(accountId: string) {
   const { data, error } = await supabase

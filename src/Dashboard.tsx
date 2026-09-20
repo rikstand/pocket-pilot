@@ -11,6 +11,7 @@ import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
 import { projectCycles } from './engine/index'
 import { creditModelFrom, buildMinimumDueSchedule, dueDateInCycle, runCardForward } from './lib/creditSchedule'
+import { cycleTickLabel, cycleDateLabel, baseYearOf } from './lib/forecast'
 import { getOccurrencesInRange } from './engine/recurrence'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
 import { byNewest, byOldest, latestVersion, versionForDate } from './lib/versions'
@@ -1065,6 +1066,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
   const creditWorstBank = creditBankSeries.length ? Math.min(...creditBankSeries) : 0
   const creditWorstIdx  = creditBankSeries.indexOf(creditWorstBank)
+  const creditBaseYear  = baseYearOf(cycles)
 
   function creditCurve(plan: { lines: { closingBalanceCents: number }[] } | null): string {
     if (!plan) return ''
@@ -2061,7 +2063,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                 return (
                   <div key={i} className={`cr-bar ${cls}`}
                     style={{ height: Math.max((Math.max(v, 0) / top) * 44, 3) + 'px' }}>
-                    <span className="cr-bx">{i + 1}</span>
+                    <span className="cr-bx">{cycles[i] ? cycleTickLabel(cycles[i].startDate, creditBaseYear) : ''}</span>
                   </div>
                 )
               })}
@@ -2069,7 +2071,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
             {creditWorstBank < floorCents ? (
               <div className="cr-warn">
-                <b>Cycle {creditWorstIdx + 1} drops to {fmt(creditWorstBank, false)}</b>
+                <b>The cycle starting {cycles[creditWorstIdx] ? cycleDateLabel(cycles[creditWorstIdx].startDate, creditBaseYear) : '—'} drops to {fmt(creditWorstBank, false)}</b>
                 {creditWorstBank < 0
                   ? <> — that would overdraw the account.</>
                   : <>, under your {fmt(floorCents, false)} floor.</>}
@@ -2078,7 +2080,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
             ) : (
               <div className="cr-ok">
                 Every cycle stays above your floor — lowest is <b>{fmt(creditWorstBank, false)}</b>
-                {' '}at cycle {creditWorstIdx + 1}.
+                {' '}in the cycle starting {cycles[creditWorstIdx] ? cycleDateLabel(cycles[creditWorstIdx].startDate, creditBaseYear) : '—'}.
               </div>
             )}
 

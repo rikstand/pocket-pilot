@@ -1,15 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
-import {
-  getIncomeSources, getExpenses, getCycles, getWishlistItems,
-  updateAccount,
-} from './lib/repository'
-import { projectCycles } from './engine/index'
-import { formatDate } from './engine/dates'
-
-// Never toISOString() — this app runs at UTC+12 and that has caused real bugs.
-function todayStr() { return formatDate(new Date()) }
+import { getWishlistItems, updateAccount } from './lib/repository'
+import { loadForecast } from './lib/forecast'
 
 const PROJECT_CYCLES = 6
 
@@ -38,50 +31,15 @@ export default function SettingsPage({ accountId }: { userId: string; accountId:
     async function load() {
       setLoading(true)
       try {
-        const [income, expenses, storedCycles, wish] = await Promise.all([
-          getIncomeSources(accountId),
-          getExpenses(accountId),
-          getCycles(accountId),
+        const [wish, forecast] = await Promise.all([
           getWishlistItems(accountId),
+          // Floor of 0 so the impact panel can recompute breaches against a
+          // candidate floor without re-running the engine on every keystroke.
+          // Closing balances do not depend on the floor; only the flag does.
+          loadForecast(accountId, 0, { numCycles: PROJECT_CYCLES, safetyFloorCents: 0 }),
         ])
         setWishlist(wish.filter((w: any) => w.status === 'active'))
-
-        const engineIncome = income.map((src: any) => {
-          const v = (src.income_amount_versions ?? [])
-            .sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
-          return {
-            id: src.id, name: src.name, frequency: src.frequency,
-            anchorDate: src.anchor_date, amountCents: v?.amount_cents ?? 0,
-            isPotential: src.is_potential ?? false, isPrimary: src.is_primary ?? false,
-          }
-        })
-        const engineExpenses = expenses.map((exp: any) => {
-          const versions = (exp.expense_amount_versions ?? [])
-            .map((v: any) => ({ amountCents: v.amount_cents, effectiveFrom: v.effective_from }))
-          const latest = [...versions].sort((a: any, b: any) => a.effectiveFrom > b.effectiveFrom ? -1 : 1)[0]
-          return {
-            id: exp.id, name: exp.name, frequency: exp.frequency,
-            anchorDate: exp.anchor_date, amountCents: latest?.amountCents ?? 0,
-            amountVersions: versions, mode: exp.mode ?? 'fixed',
-            endDate: exp.end_date ?? undefined,
-          }
-        })
-
-        const openCycles  = storedCycles.filter((c: any) => !c.is_closed)
-        const projectFrom = openCycles[0] ?? storedCycles[storedCycles.length - 1]
-
-        // Projected with a ZERO floor so the impact panel can be recomputed
-        // against any candidate floor without re-running the engine on every
-        // keystroke. The engine's own breach flag is floor-dependent; the
-        // closing balances it returns are not.
-        setCycles(projectCycles({
-          incomeSources: engineIncome,
-          expenses: engineExpenses,
-          openingBalanceCents: projectFrom?.opening_balance_cents ?? 0,
-          startDate: projectFrom?.start_date ?? todayStr(),
-          numCycles: PROJECT_CYCLES,
-          safetyFloorCents: 0,
-        }))
+        setCycles(forecast.cycles)
       } catch (e: any) { setError(e.message) }
       finally { setLoading(false) }
     }

@@ -1403,8 +1403,9 @@ svg.proj { display:block; width:100%; height:152px; }
 .cr-bar.low    { background: var(--warn);  opacity: .85; }
 .cr-bar.breach { background: var(--floor); opacity: .95; }
 .cr-bar .cr-bx {
-  position: absolute; bottom: -14px; left: 0; right: 0; text-align: center;
-  font-family: 'JetBrains Mono', monospace; font-size: 7.5px; color: var(--faint);
+  position: absolute; bottom: -15px; left: -6px; right: -6px; text-align: center;
+  font-family: 'JetBrains Mono', monospace; font-size: 7px; color: var(--faint);
+  letter-spacing: -.02em; white-space: nowrap; overflow: hidden;
 }
 
 /* verdict */
@@ -1429,3 +1430,132 @@ svg.proj { display:block; width:100%; height:152px; }
 }
 .cr-scope button.on { border-color: var(--credit); background: var(--credit-s); color: var(--credit); }
 .cr-scope button.on small { color: var(--credit); }
+
+/* ══════════════════════════════════════════════════════════════════
+   WISHLIST — how to pay
+   ══════════════════════════════════════════════════════════════════ */
+
+.pay-seg { display: flex; gap: 7px; margin-bottom: 14px; }
+.pay-seg button {
+  flex: 1; border: 1px solid var(--line); background: var(--bg2); color: var(--mut);
+  border-radius: 12px; padding: 11px 8px; cursor: pointer;
+  font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600; line-height: 1.3;
+}
+.pay-seg button small {
+  display: block; font-family: 'JetBrains Mono', monospace;
+  font-size: 8.5px; color: var(--mut); font-weight: 500; margin-top: 3px; line-height: 1.35;
+}
+.pay-seg button.on.sv { border-color: var(--pos);   background: var(--pos-s);   color: var(--pos); }
+.pay-seg button.on.lb { border-color: var(--event); background: var(--event-s); color: var(--event); }
+.pay-seg button.on small { color: inherit; opacity: .85; }
+
+.pay-hero {
+  background: var(--elev); border: 1px solid var(--line);
+  border-radius: 14px; padding: 14px 15px; text-align: left;
+}
+.pay-hero .ph-k {
+  font-family: 'JetBrains Mono', monospace; font-size: 9.5px;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--mut);
+}
+.pay-hero .ph-v {
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600;
+  font-size: 24px; letter-spacing: -.02em; line-height: 1.15; margin-top: 4px;
+}
+.pay-hero .ph-s { font-size: 12.5px; color: var(--mut); margin-top: 5px; }
+.pay-hero .ph-s b { color: var(--ink); }
+
+.pay-controls { display: flex; gap: 9px; margin-top: 13px; }
+.pay-controls .pc { flex: 1; min-width: 0; }
+.pay-controls .pc label {
+  display: block; font-family: 'JetBrains Mono', monospace; font-size: 9.5px;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--mut); margin-bottom: 6px;
+}
+.pay-controls .stepper {
+  display: flex; align-items: center; border: 1px solid var(--line);
+  background: var(--bg2); border-radius: 11px; overflow: hidden;
+}
+.pay-controls .stepper button {
+  border: none; background: transparent; color: var(--acc);
+  font-size: 17px; font-weight: 600; width: 38px; height: 40px; cursor: pointer;
+}
+.pay-controls .stepper .v {
+  flex: 1; text-align: center;
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 15px;
+}
+
+/* one bar per cycle, so a break further out is visible before committing */
+.pay-bars-k {
+  display: flex; justify-content: space-between; gap: 8px; margin: 16px 0 6px;
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  letter-spacing: .09em; text-transform: uppercase; color: var(--mut);
+}
+.pay-bars {
+  display: flex; gap: 4px; align-items: flex-end;
+  background: var(--bg2); border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px 11px 20px; height: 82px;
+}
+.pay-bar {
+  flex: 1; border-radius: 3px 3px 0 0; position: relative;
+  background: var(--pos); opacity: .5;
+}
+.pay-bar.low    { background: var(--warn);  opacity: .85; }
+.pay-bar.breach { background: var(--floor); opacity: .95; }
+.pay-bar .pb-x {
+  position: absolute; bottom: -15px; left: -6px; right: -6px; text-align: center;
+  font-family: 'JetBrains Mono', monospace; font-size: 7px; color: var(--faint);
+  letter-spacing: -.02em; white-space: nowrap; overflow: hidden;
+}
+
+/* the app knows the forecast, so it can suggest a plan that works */
+.pay-suggest {
+  display: flex; align-items: center; gap: 10px; margin-top: 11px;
+  border-radius: 9px; padding: 9px 11px; font-size: 12px; line-height: 1.45;
+  background: var(--acc-s); color: var(--acc); border-left: 2px solid var(--acc);
+}
+.pay-suggest .ps-x { flex: 1; }
+.pay-suggest b { font-weight: 700; }
+.pay-suggest button {
+  border: 1px solid var(--acc); background: var(--bg2); color: var(--acc);
+  border-radius: 8px; padding: 6px 10px; cursor: pointer; white-space: nowrap;
+  font-family: 'JetBrains Mono', monospace; font-size: 9.5px; font-weight: 600;
+}
+
+.pay-note {
+  margin-top: 11px; border-radius: 9px; padding: 9px 11px;
+  font-size: 12.5px; line-height: 1.45; text-align: left;
+  background: var(--pos-s); color: var(--pos); border-left: 2px solid var(--pos);
+}
+.pay-note.warn { background: var(--warn-s);  color: var(--warn);  border-left-color: var(--warn); }
+.pay-note.bad  { background: var(--floor-s); color: var(--floor); border-left-color: var(--floor); }
+.pay-note b { font-weight: 700; }
+
+/* savings goals on the cycle screen */
+.ic.sav { background: var(--pos-s); color: var(--pos); }
+.chip.sav { color: var(--pos); border-color: var(--pos); background: var(--pos-s); }
+
+/* floor line across the cycle bars — without it the colours mean nothing */
+.pay-bars { position: relative; }
+.pay-floor {
+  position: absolute; left: 11px; right: 11px;
+  border-top: 1px dashed var(--floor); opacity: .65; pointer-events: none;
+}
+.pay-floor span {
+  position: absolute; right: 0; transform: translateY(-11px);
+  font-family: 'JetBrains Mono', monospace; font-size: 7.5px;
+  letter-spacing: .04em; color: var(--floor);
+}
+
+/* stepper unit, so "8" is not left meaning nothing on its own */
+.pay-controls .stepper .v small {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  color: var(--mut); font-weight: 500; margin-left: 2px;
+}
+.pay-controls .stepper button:disabled { color: var(--faint); cursor: default; }
+
+/* what this will do — left-aligned with the rest of the sheet, above the
+   buttons rather than stranded underneath them */
+.pay-what {
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line2);
+  font-size: 12.5px; color: var(--mut); line-height: 1.45; text-align: left;
+}
+.pay-what b { color: var(--ink); font-weight: 600; }
