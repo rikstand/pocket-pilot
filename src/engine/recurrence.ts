@@ -28,9 +28,16 @@ export function getOccurrencesInRange(
     else if (frequency === 'monthly') current = addMonths(current, -1)
     else if (frequency === 'annually') current = addYears(current, -1)
   }
-  // Walk forward collecting dates in range
+  // Walk forward collecting dates in range.
+  //
+  // `current >= anchor` is what stops something being charged before it
+  // starts. Finding the pattern means stepping BACKWARDS from the anchor until
+  // we are before the window, and those wound-back dates are real dates the
+  // loop would otherwise collect. Anything anchored in the future would pick up
+  // a phantom occurrence in the current cycle — a four-payment lay-by starting
+  // next fortnight billed five times.
   while (current <= end) {
-    if (current >= start) results.push(formatDate(current))
+    if (current >= start && current >= anchor) results.push(formatDate(current))
     if (frequency === 'weekly') current = addDays(current, 7)
     else if (frequency === 'fortnightly') current = addDays(current, 14)
     else if (frequency === 'monthly') current = addMonths(current, 1)
