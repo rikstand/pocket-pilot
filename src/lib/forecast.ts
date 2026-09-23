@@ -23,19 +23,29 @@
 
 import {
   getIncomeSources, getExpenses, getCycles, getCreditAccount, getCreditExtraOverrides,
+  getBudgetSpendEntries, getSavingsGoals, getAllSavingsContributions, getAllSavingsOverrides,
 } from './repository'
 import { projectCycles } from '../engine/index'
-import type { CycleResult, IncomeSource, Expense, CreditAccount, CreditExtraOverride } from '../engine/types'
+import type {
+  CycleResult, IncomeSource, Expense, CreditAccount, CreditExtraOverride,
+  BudgetSpendEntry, SavingsGoal,
+} from '../engine/types'
 import { formatDate, parseDate } from '../engine/dates'
+import { byNewest, latestVersion } from './versions'
 
 // Never toISOString() — this app runs at UTC+12 and that has caused real bugs.
 function todayStr() { return formatDate(new Date()) }
 
-/** Income rows → what the engine expects. */
+/**
+ * Income rows → what the engine expects.
+ *
+ * Uses lib/versions rather than sorting here, so every page picks the same
+ * amount. Sorting on effective_from alone loses the created_at tiebreak, which
+ * decides between two versions dated the same day.
+ */
 export function toEngineIncome(rows: any[]): IncomeSource[] {
   return rows.map((src: any) => {
-    const latest = (src.income_amount_versions ?? [])
-      .sort((a: any, b: any) => (a.effective_from > b.effective_from ? -1 : 1))[0]
+    const latest = latestVersion(src.income_amount_versions)
     return {
       id: src.id,
       name: src.name,
@@ -51,10 +61,13 @@ export function toEngineIncome(rows: any[]): IncomeSource[] {
 /** Expense rows → what the engine expects, versions and all. */
 export function toEngineExpenses(rows: any[]): Expense[] {
   return rows.map((exp: any) => {
-    const versions = (exp.expense_amount_versions ?? [])
+    // Sort the RAW rows (which carry created_at) before mapping into engine
+    // shape, so the created_at tiebreak survives. The order handed to the
+    // engine stays newest-first.
+    const versions = [...(exp.expense_amount_versions ?? [])]
+      .sort(byNewest)
       .map((v: any) => ({ amountCents: v.amount_cents, effectiveFrom: v.effective_from }))
-    const latest = [...versions]
-      .sort((a: any, b: any) => (a.effectiveFrom > b.effectiveFrom ? -1 : 1))[0]
+    const latest = versions[0]
     return {
       id: exp.id,
       name: exp.name,
@@ -99,6 +112,57 @@ export function toEngineCreditOverrides(rows: any[]): CreditExtraOverride[] {
   }))
 }
 
+/** Logged budget spend → what the engine expects. */
+export function toEngineBudgetSpend(rows: any[]): BudgetSpendEntry[] {
+  return (rows ?? []).map((e: any) => ({
+    expenseId: e.expense_id,
+    amountCents: e.amount_cents,
+    spentDate: e.spent_date,
+  }))
+}
+
+/**
+ * Savings goal rows → what the engine expects.
+ *
+ * The important part is savedSoFarCents. A goal's progress is what has actually
+ * been CONFIRMED, not what was planned — that is the whole point of deriving
+ * savings rather than storing them as an expense. A corrected total (you dipped
+ * into it, or put extra in) wins over the confirmations, because it is a
+ * statement about reality rather than about the plan.
+ */
+export function toEngineSavings(
+  goalRows: any[],
+  contributionRows: any[],
+  overrideRows: any[]
+): SavingsGoal[] {
+  return (goalRows ?? [])
+    .filter((g: any) => g.status === 'active' && g.is_active !== false)
+    .map((g: any) => {
+      const overrides = (overrideRows ?? [])
+        .filter((o: any) => o.savings_goal_id === g.id)
+        .map((o: any) => ({ cycleStart: o.cycle_start, amountCents: o.amount_cents }))
+
+      // Each confirmed cycle counts for whatever that cycle's amount was —
+      // the override if there was one, otherwise the standing amount.
+      const confirmed = (contributionRows ?? [])
+        .filter((c: any) => c.savings_goal_id === g.id)
+        .reduce((sum: number, c: any) => {
+          const ov = overrides.find(o => o.cycleStart === c.cycle_start)
+          return sum + (ov ? ov.amountCents : g.per_cycle_cents)
+        }, 0)
+
+      return {
+        id: g.id,
+        name: g.name,
+        targetCents: g.target_cents,
+        perCycleCents: g.per_cycle_cents,
+        startCycleStart: g.start_cycle_start,
+        savedSoFarCents: g.adjusted_total_cents ?? confirmed,
+        overrides,
+      }
+    })
+}
+
 export interface ForecastResult {
   cycles: CycleResult[]
   /** The raw rows, for pages that need more than the projection. */
@@ -107,6 +171,10 @@ export interface ForecastResult {
   storedCycles: any[]
   creditCard: any | null
   creditOverrideRows: any[]
+  budgetSpendRows: any[]
+  savingsGoalRows: any[]
+  savingsContributionRows: any[]
+  savingsOverrideRows: any[]
   /** The cycle the projection starts from — the first open one. */
   projectFrom: any | null
 }
@@ -136,11 +204,18 @@ export async function loadForecast(
 ): Promise<ForecastResult> {
   const numCycles = options.numCycles ?? 27
 
-  const [incomeRows, expenseRows, storedCycles, creditCard] = await Promise.all([
+  const [
+    incomeRows, expenseRows, storedCycles, creditCard, budgetSpendRows,
+    savingsGoalRows, savingsContributionRows, savingsOverrideRows,
+  ] = await Promise.all([
     getIncomeSources(accountId),
     getExpenses(accountId),
     getCycles(accountId),
     getCreditAccount(accountId),
+    getBudgetSpendEntries(accountId),
+    getSavingsGoals(accountId),
+    getAllSavingsContributions(accountId),
+    getAllSavingsOverrides(accountId),
   ])
 
   // Overrides only exist once a card does, so this is a second round trip
@@ -161,6 +236,8 @@ export async function loadForecast(
     safetyFloorCents: options.safetyFloorCents ?? floorCents,
     creditAccount: toEngineCredit(creditCard),
     creditOverrides: toEngineCreditOverrides(creditOverrideRows),
+    budgetSpend: toEngineBudgetSpend(budgetSpendRows),
+    savingsGoals: toEngineSavings(savingsGoalRows, savingsContributionRows, savingsOverrideRows),
   })
 
   return {
@@ -170,6 +247,10 @@ export async function loadForecast(
     storedCycles,
     creditCard,
     creditOverrideRows,
+    budgetSpendRows,
+    savingsGoalRows,
+    savingsContributionRows,
+    savingsOverrideRows,
     projectFrom,
   }
 }
@@ -204,4 +285,84 @@ export function cycleDateLabel(startDate: string, baseYear: number): string {
 /** The year the projection starts in — everything is labelled relative to it. */
 export function baseYearOf(cycles: { startDate: string }[]): number {
   return cycles[0] ? parseDate(cycles[0].startDate).getFullYear() : new Date().getFullYear()
+}
+
+/* ── is a budget baseline still right? ────────────────────────────────
+ *
+ * The other half of the same problem. Overspending now shows up in the
+ * forecast; this is for the opposite case — a baseline set higher than you
+ * ever actually spend, which makes every cycle look tighter than it is and
+ * pushes wishlist items out of reach for no real reason.
+ *
+ * The app does not quietly switch to using averages. A budget is a ceiling,
+ * and a forecast built on averages would call things affordable right up until
+ * the month you actually spend your limit. Instead it says what it sees and
+ * leaves the baseline to you.
+ */
+
+export interface BaselineCheck {
+  expenseId: string
+  name: string
+  baselineCents: number      // per cycle, as set
+  averageCents: number       // per cycle, as actually spent
+  cyclesCounted: number
+  overBy: number             // how much higher the baseline is, as a fraction
+}
+
+/** Fewer than this and an average is noise, not a pattern. */
+const MIN_CYCLES_FOR_ADVICE = 4
+/** Ignore small gaps — a baseline should have some headroom in it. */
+const MIN_GAP = 0.2
+
+export function baselineChecks(
+  expenseRows: any[],
+  budgetSpendRows: any[],
+  storedCycles: any[]
+): BaselineCheck[] {
+  const closed = (storedCycles ?? []).filter((c: any) => c.is_closed)
+  if (closed.length < MIN_CYCLES_FOR_ADVICE) return []
+
+  const out: BaselineCheck[] = []
+
+  for (const exp of expenseRows ?? []) {
+    if ((exp.mode ?? 'fixed') !== 'budget') continue
+
+    const latest = latestVersion(exp.expense_amount_versions)
+    const baseline = latest?.amount_cents ?? 0
+    if (baseline <= 0) continue
+
+    // Only count cycles that have actually closed — a part-finished cycle
+    // would drag the average down and make every budget look generous.
+    let total = 0
+    let counted = 0
+    for (const cyc of closed) {
+      const spent = (budgetSpendRows ?? [])
+        .filter((e: any) =>
+          e.expense_id === exp.id &&
+          e.spent_date >= cyc.start_date &&
+          e.spent_date <= cyc.end_date)
+        .reduce((sum: number, e: any) => sum + e.amount_cents, 0)
+      total += spent
+      counted++
+    }
+
+    if (counted < MIN_CYCLES_FOR_ADVICE) continue
+
+    const average = Math.round(total / counted)
+    const gap = (baseline - average) / baseline
+    if (gap < MIN_GAP) continue
+
+    out.push({
+      expenseId: exp.id,
+      name: exp.name,
+      baselineCents: baseline,
+      averageCents: average,
+      cyclesCounted: counted,
+      overBy: gap,
+    })
+  }
+
+  // Biggest gap first — that is the one distorting the forecast most.
+  return out.sort((a, b) =>
+    (b.baselineCents - b.averageCents) - (a.baselineCents - a.averageCents))
 }

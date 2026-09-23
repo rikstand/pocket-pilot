@@ -1,20 +1,29 @@
 import { useEffect, useState, useRef } from 'react'
 import type { CSSProperties } from 'react'
 import { supabase } from './lib/supabase'
-import { getIncomeSources, getExpenses, getCycles, getLayBys, getBudgetSpendEntries, addBudgetSpendEntry, updateBudgetSpendEntry, deleteBudgetSpendEntry,
-  getCreditAccount, getCreditExtraOverrides,
-  setCreditExtraOverride, clearCreditExtraOverride,
-  getCreditCyclePayments, confirmCreditPayment, unconfirmCreditPayment,
+import {
+  getLayBys,
+  getBudgetSpendEntries,
+  addBudgetSpendEntry,
+  updateBudgetSpendEntry,
+  deleteBudgetSpendEntry,
+  setCreditExtraOverride,
+  clearCreditExtraOverride,
+  getSavingsGoals, getAllSavingsContributions,
+  confirmSavingsContribution, unconfirmSavingsContribution,
+  setSavingsOverride, clearSavingsOverride, updateSavingsGoal,
+  getCreditCyclePayments,
+  confirmCreditPayment,
+  unconfirmCreditPayment,
   updateCreditStrategyExtra,
 } from './lib/repository'
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
-import { projectCycles } from './engine/index'
 import { creditModelFrom, buildMinimumDueSchedule, dueDateInCycle, runCardForward } from './lib/creditSchedule'
-import { cycleTickLabel, cycleDateLabel, baseYearOf } from './lib/forecast'
+import { loadForecast, cycleTickLabel, cycleDateLabel, baseYearOf, baselineChecks } from './lib/forecast'
 import { getOccurrencesInRange } from './engine/recurrence'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
-import { byNewest, byOldest, latestVersion, versionForDate } from './lib/versions'
+import { byOldest, latestVersion, versionForDate } from './lib/versions'
 import { ExpenseIcon, guessIcon } from './lib/icons'
 
 function fmtDate(d: string) {
@@ -133,6 +142,23 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const [laybyResult,    setLaybyResult]    = useState<any>(null)
 
   const [rawBudgetEntries, setRawBudgetEntries] = useState<any[]>([])
+  const [rawStoredCycles,  setRawStoredCycles]  = useState<any[]>([])
+  const [dismissedBaseline, setDismissedBaseline] = useState<string[]>([])
+
+  // How far the Forecast page looks ahead. Cycle stays on the near term — a
+  // year of cycles is not what you want when deciding about this fortnight.
+  const [horizonCycles, setHorizonCycles] = useState(6)
+
+  // savings
+  const [savingsGoals,   setSavingsGoals]   = useState<any[]>([])
+  const [savingsDone,    setSavingsDone]    = useState<any[]>([])
+  const [savTarget,      setSavTarget]      = useState<any>(null)   // goal detail
+  const [savAdjust,      setSavAdjust]      = useState<any>(null)   // change amount
+  const [savAdjAmount,   setSavAdjAmount]   = useState('')
+  const [savAdjScope,    setSavAdjScope]    = useState<'once' | 'always'>('once')
+  const [savFixTotal,    setSavFixTotal]    = useState<any>(null)   // correct total
+  const [savFixAmount,   setSavFixAmount]   = useState('')
+  const [savBusy,        setSavBusy]        = useState(false)
   const [openQuickAdd,     setOpenQuickAdd]     = useState<string | null>(null)
   const [quickAddAmount,   setQuickAddAmount]   = useState('')
   const [logItem,          setLogItem]          = useState<any>(null)
@@ -160,7 +186,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const [adjSaving, setAdjSaving] = useState(false)
 
   const [openSecs, setOpenSecs] = useState<Record<string, boolean>>({
-    income: true, fixed: true, var: true, budget: true, credit: true,
+    income: true, fixed: true, var: true, budget: true, savings: true, credit: true,
   })
   function toggleSec(k: string) { setOpenSecs(p => ({ ...p, [k]: !p[k] })) }
 
@@ -168,103 +194,48 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     async function load() {
       setLoading(true)
       try {
-        const [income, expenses, storedCycles, layBys, budgetEntries, creditCard] = await Promise.all([
-          getIncomeSources(accountId),
-          getExpenses(accountId),
-          getCycles(accountId),
+        const floorCents = activeAccount?.safety_floor_cents ?? 0
+
+        // One shared loader builds the projection for every screen. Before this,
+        // the Cycle screen, Wishlist and Settings each had their own copy of the
+        // mapping, and two of them had quietly drifted — Wishlist forecast a
+        // bigger balance because its copy never loaded the credit card.
+        const [layBys, budgetEntries, forecast] = await Promise.all([
           getLayBys(accountId),
           getBudgetSpendEntries(accountId),
-          getCreditAccount(accountId),
+          loadForecast(accountId, floorCents, { numCycles: variant === 'forecast' ? horizonCycles : 6 }),
         ])
+
+        const {
+          cycles: projected,
+          incomeRows: income,
+          expenseRows: expenses,
+          storedCycles,
+          creditCard,
+        } = forecast
+
         setRawCredit(creditCard)
 
-        // Overrides only exist once a card does, so this is a second round-trip
-        // rather than part of the Promise.all above.
-        const [creditOverrideRows, creditPaidRows] = creditCard
-          ? await Promise.all([
-              getCreditExtraOverrides(creditCard.id),
-              getCreditCyclePayments(creditCard.id),
-            ])
-          : [[], []]
+        // Payment confirmations only exist once a card does.
+        const creditPaidRows = creditCard
+          ? await getCreditCyclePayments(creditCard.id)
+          : []
         setCreditPaid(creditPaidRows ?? [])
+
+        const [goalRows, contribRows] = await Promise.all([
+          getSavingsGoals(accountId),
+          getAllSavingsContributions(accountId),
+        ])
+        setSavingsGoals(goalRows ?? [])
+        setSavingsDone(contribRows ?? [])
         setRawIncome(income)
         setRawExpenses(expenses)
         setRawLayBys(layBys)
         setRawBudgetEntries(budgetEntries)
+        setRawStoredCycles(storedCycles)
 
-        const floorCents = activeAccount?.safety_floor_cents ?? 0
-
-        const engineIncome = income.map((src: any) => {
-          const v = latestVersion(src.income_amount_versions)
-          return {
-            id: src.id, name: src.name, frequency: src.frequency,
-            anchorDate: src.anchor_date,
-            amountCents: v?.amount_cents ?? 0,
-            isPotential: src.is_potential ?? false,
-            isPrimary: src.is_primary ?? false,
-          }
-        })
-
-        const engineExpenses = expenses.map((exp: any) => {
-          // Sort the raw rows (which carry created_at) BEFORE mapping into engine
-          // shape, so the created_at tiebreak survives. The order handed to the
-          // engine stays newest-first, exactly as it was before.
-          const versions = [...(exp.expense_amount_versions ?? [])]
-            .sort(byNewest)
-            .map((v: any) => ({
-              amountCents: v.amount_cents,
-              effectiveFrom: v.effective_from,
-            }))
-          const latest = versions[0]
-          return {
-            id: exp.id, name: exp.name, frequency: exp.frequency,
-            anchorDate: exp.anchor_date,
-            amountCents: latest?.amountCents ?? 0,
-            amountVersions: versions,
-            mode: exp.mode ?? 'fixed',
-            endDate: exp.end_date ?? undefined,
-          }
-        })
-
-        const openCycles   = storedCycles.filter((c: any) => !c.is_closed)
         const closedCycles = storedCycles.filter((c: any) => c.is_closed)
         const latestClosed = closedCycles[closedCycles.length - 1]
-        const projectFrom  = openCycles[0] ?? storedCycles[storedCycles.length - 1]
-
-        // The card only reaches the projection once its strategy is committed —
-        // the engine gates on strategyCommitted, but shaping it here keeps that
-        // rule visible at the call site too.
-        const engineCredit = creditCard ? {
-          id: creditCard.id,
-          name: creditCard.name,
-          aprBasisPoints: creditCard.apr_basis_points,
-          minPaymentPct: Number(creditCard.min_payment_pct),
-          minPaymentFloorCents: creditCard.min_payment_floor_cents,
-          assumedSpendCents: creditCard.assumed_spend_cents,
-          strategyExtraCents: creditCard.strategy_extra_cents,
-          strategyCommitted: creditCard.strategy_committed,
-          currentBalanceCents: creditCard.current_balance_cents ?? 0,
-          // When the payment is due. Without a due date the engine keeps the
-          // old behaviour of charging a share of the minimum every cycle.
-          paymentFrequency: creditCard.payment_frequency ?? 'per_cycle',
-          paymentAnchorDate: creditCard.payment_anchor_date ?? undefined,
-        } : null
-
-        const engineCreditOverrides = (creditOverrideRows ?? []).map((o: any) => ({
-          cycleStart: o.cycle_start,
-          extraCents: o.extra_cents,
-        }))
-
-        const projected = projectCycles({
-          incomeSources: engineIncome,
-          expenses: engineExpenses,
-          openingBalanceCents: projectFrom?.opening_balance_cents ?? 0,
-          startDate: projectFrom?.start_date ?? today(),
-          numCycles: 6,
-          safetyFloorCents: floorCents,
-          creditAccount: engineCredit,
-          creditOverrides: engineCreditOverrides,
-        })
 
         let cyclesWithHistory: any[] = projected
         if (latestClosed) {
@@ -301,7 +272,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       finally { setLoading(false) }
     }
     load()
-  }, [accountId, reloadKey])
+  }, [accountId, reloadKey, horizonCycles, variant])
 
   useEffect(() => {
     if (pillsRef.current) {
@@ -995,7 +966,19 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const incomeTotalCents = incomeCards.filter(c => !c.ghost).reduce((s, c) => s + (c.totalCents ?? 0), 0)
   const fixedTotalCents  = fixedCards.reduce((s, c) => s + (c.totalCents ?? 0), 0)
   const varTotalCents    = varCards.reduce((s, c) => s + (c.totalCents ?? 0), 0)
+  // Past roughly three months the projection is built entirely on today's
+  // income and expenses. Drawing it as firmly as next fortnight would claim
+  // more than the app knows, so it fades.
+  const farFromIdx = currentIdx + 7
+
   const budgetTotalCents = budgetCards.reduce((s, c) => s + (c.totalCents ?? 0), 0)
+
+  // Budgets set higher than you ever actually spend make every cycle look
+  // tighter than it is, and push wishlist items out of reach for no real
+  // reason. The app does not quietly start forecasting on averages — a budget
+  // is a ceiling — it just says when the ceiling no longer matches reality.
+  const baselineAdvice = baselineChecks(rawExpenses, rawBudgetEntries, rawStoredCycles)
+    .filter(b => !dismissedBaseline.includes(b.expenseId))
   // ── credit line for the focused cycle ──────────────────────────────
   // Derived from the cycle result, not from buildCards(): a credit payment is
   // not an expense row, so it never enters the `cards` array. Rendering it as
@@ -1005,6 +988,45 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const creditMinimumCents = activeCycle.creditMinimumCents ?? 0
   const creditExtraCents   = activeCycle.creditExtraCents ?? 0
   const creditLeftCents    = activeCycle.creditClosingBalanceCents ?? 0
+  // ── savings for this cycle ────────────────────────────────────────
+  // The amounts come from the engine, which derives them from each goal. This
+  // just works out progress and state for display.
+  const savingsLines = (activeCycle.savingsLines ?? []) as any[]
+  const savingsTotalCents = activeCycle.savingsTotalCents ?? 0
+  const showSavings = !activeCycle.isHistorical && savingsLines.length > 0
+
+  function goalRow(goalId: string) {
+    return savingsGoals.find((g: any) => g.id === goalId)
+  }
+
+  /** What has actually been confirmed, or a corrected figure if one was given. */
+  function savedSoFar(goalId: string): number {
+    const g = goalRow(goalId)
+    if (!g) return 0
+    if (g.adjusted_total_cents != null) return g.adjusted_total_cents
+    return savingsDone
+      .filter((c: any) => c.savings_goal_id === goalId)
+      .reduce((sum: number) => sum + g.per_cycle_cents, 0)
+  }
+
+  function isSetAside(goalId: string): boolean {
+    return savingsDone.some((c: any) =>
+      c.savings_goal_id === goalId && c.cycle_start === activeCycle.startDate)
+  }
+
+  /** Where the plan says you should be by now — the tick on the progress bar. */
+  function planSaysBy(goalId: string): number {
+    const g = goalRow(goalId)
+    if (!g) return 0
+    const start = parseDate(g.start_cycle_start).getTime()
+    const here  = parseDate(activeCycle.startDate).getTime()
+    const days = Math.max(1,
+      Math.round((parseDate(activeCycle.endDate).getTime() -
+                  parseDate(activeCycle.startDate).getTime()) / 86400000) + 1)
+    const elapsed = Math.max(0, Math.round((here - start) / 86400000 / days))
+    return Math.min(g.target_cents, elapsed * g.per_cycle_cents)
+  }
+
   const showCredit         = !activeCycle.isHistorical && creditPaymentCents > 0
   // Progress is against the balance when the strategy was committed, not the
   // original purchase — a revolving balance has no single starting point.
@@ -1076,6 +1098,89 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     return pts.map((b, i) =>
       `${i ? 'L' : 'M'}${((i / span) * 300).toFixed(1)} ${(46 - (Math.max(b, 0) / max) * 46).toFixed(1)}`
     ).join(' ')
+  }
+
+  /* ── savings actions ──────────────────────────────────────────────
+   * Unlike a credit payment there is no due date — you can move savings any
+   * day of the cycle — so "set aside" is offered straight away rather than
+   * waiting for a date to pass.
+   */
+  async function toggleSetAside(goalId: string) {
+    setSavBusy(true)
+    try {
+      if (isSetAside(goalId)) {
+        await unconfirmSavingsContribution(goalId, activeCycle.startDate)
+      } else {
+        await confirmSavingsContribution(goalId, accountId, activeCycle.startDate)
+      }
+      reload()
+    } catch (e: any) { alert('Could not update: ' + e.message) }
+    finally { setSavBusy(false) }
+  }
+
+  function openSavAdjust(goal: any) {
+    const line = savingsLines.find((l: any) => l.goalId === goal.id)
+    setSavAdjAmount(String((line?.amountCents ?? goal.per_cycle_cents) / 100))
+    setSavAdjScope('once')
+    setSavAdjust(goal)
+  }
+
+  async function saveSavAdjust() {
+    if (!savAdjust) return
+    const cents = Math.max(0, Math.round(parseFloat(savAdjAmount || '0') * 100))
+    setSavBusy(true)
+    try {
+      if (savAdjScope === 'always') {
+        // New standing amount. Clear this cycle's exception too, or the old
+        // one-off would override the plan you just set.
+        await updateSavingsGoal(savAdjust.id, { per_cycle_cents: cents })
+        await clearSavingsOverride(savAdjust.id, activeCycle.startDate)
+      } else if (cents === savAdjust.per_cycle_cents) {
+        await clearSavingsOverride(savAdjust.id, activeCycle.startDate)
+      } else {
+        await setSavingsOverride(savAdjust.id, accountId, activeCycle.startDate, cents)
+      }
+      setSavAdjust(null); reload()
+    } catch (e: any) { alert('Could not save: ' + e.message) }
+    finally { setSavBusy(false) }
+  }
+
+  function openSavFix(goal: any) {
+    setSavFixAmount(String(savedSoFar(goal.id) / 100))
+    setSavFixTotal(goal)
+  }
+
+  async function saveSavFix() {
+    if (!savFixTotal) return
+    const cents = Math.max(0, Math.round(parseFloat(savFixAmount || '0') * 100))
+    setSavBusy(true)
+    try {
+      // A correction is a statement about reality, so it wins over the ticks.
+      await updateSavingsGoal(savFixTotal.id, {
+        adjusted_total_cents: cents,
+        adjusted_at: new Date().toISOString(),
+      })
+      setSavFixTotal(null); setSavTarget(null); reload()
+    } catch (e: any) { alert('Could not save: ' + e.message) }
+    finally { setSavBusy(false) }
+  }
+
+  async function stopSaving(goal: any) {
+    setSavBusy(true)
+    try {
+      await updateSavingsGoal(goal.id, { status: 'cancelled' })
+      setSavTarget(null); reload()
+    } catch (e: any) { alert('Could not stop: ' + e.message) }
+    finally { setSavBusy(false) }
+  }
+
+  async function completeGoal(goal: any) {
+    setSavBusy(true)
+    try {
+      await updateSavingsGoal(goal.id, { status: 'completed' })
+      setSavTarget(null); reload()
+    } catch (e: any) { alert('Could not close: ' + e.message) }
+    finally { setSavBusy(false) }
   }
 
   function openCreditAdjust() {
@@ -1238,11 +1343,28 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
         {variant === 'forecast' && (
           <>
+            <div className="horizon">
+              {([[6, '3 months'], [13, '6 months'], [26, '12 months']] as [number, string][]).map(
+                ([n, label]) => (
+                  <button key={n}
+                    className={horizonCycles === n ? 'on' : ''}
+                    onClick={() => setHorizonCycles(n)}>
+                    {label}<small>{n} cycles</small>
+                  </button>
+                ))}
+            </div>
+
             <div className="graphwrap">
               <div className="graph-cap">
                 <span>Projected close · {cycles.length} cycles</span>
                 <span>{monthStart} → {monthEnd}</span>
               </div>
+              {cycles.length > farFromIdx + 1 && (
+                <div className="horizon-note">
+                  Solid to {cycles[farFromIdx] ? fmtDate(cycles[farFromIdx].startDate) : 'about 3 months'} ·
+                  faded after that, where the projection is only today's income and expenses carried forward
+                </div>
+              )}
               <svg className="proj" viewBox="0 0 340 152" aria-label="Balance projection">
                 <line className="axln" x1={xLeft} y1={gTop} x2={xLeft} y2={gBot} />
                 <line className="axln" x1={xLeft} y1={gBot} x2={xRight} y2={gBot} />
@@ -1261,14 +1383,25 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                 </>}
                 <path className="area" d={`M${pts[0][0]},${pts[0][1]} ${pts.map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} L${pts[pts.length-1][0]},${zeroY} L${pts[0][0]},${zeroY} Z`} />
                 <polyline className="pastln" points={pts.slice(0, splitIdx+1).map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
-                <polyline className="futln"  points={pts.slice(splitIdx).map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
+                <polyline className="futln"
+                  points={pts.slice(splitIdx, Math.max(splitIdx + 1, Math.min(farFromIdx + 1, pts.length)))
+                    .map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
+                {pts.length > farFromIdx + 1 && (
+                  <polyline className="futln far"
+                    points={pts.slice(farFromIdx).map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
+                )}
                 {pts.map((p:number[], i:number) => {
                   const s = cycleStatus(i)
                   const isLow = s==='low', isPast = s==='past', isActive = i===activeIdx
+                  const isFar = i > farFromIdx
+                  // At 27 cycles the dots sit about 12px apart, so past the
+                  // boundary only every second one is drawn.
+                  if (isFar && !isActive && (i - farFromIdx) % 2 !== 0) return null
                   return (
                     <g key={i} onClick={() => setActiveIdx(i)} style={{ cursor:'pointer' }}>
                       {isActive && <circle className={`focusring${isLow?' low':''}`} cx={p[0]} cy={p[1]} r="8" />}
-                      <circle className={`wp${isPast?' past':''}${isLow?' low':''}`} cx={p[0]} cy={p[1]} r="4.2" />
+                      <circle className={`wp${isPast?' past':''}${isLow?' low':''}${isFar?' far':''}`}
+                        cx={p[0]} cy={p[1]} r={isFar ? 3.4 : 4.2} />
                       {isActive && (
                         <text className={`dotlbl${isLow?' low':''}`} x={p[0]} y={p[1] - 12} textAnchor="middle">
                           {fmt(cycles[i].committedClosingBalanceCents, false)}
@@ -1285,7 +1418,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                 const s = cycleStatus(i)
                 return (
                   <button key={i}
-                    className={`pill${s==='low'?' low':''}${s==='past'?' past':''}${i===activeIdx?' active':''}`}
+                    className={`pill${s==='low'?' low':''}${s==='past'?' past':''}${i===activeIdx?' active':''}${i > farFromIdx ? ' far' : ''}`}
                     onClick={() => setActiveIdx(i)}
                   >
                     <div className="pd">{fmtDate(c.startDate)}</div>
@@ -1410,6 +1543,69 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
           </>
         )}
 
+        {showSavings && (
+          <>
+            <div className="section-hdr sh-sav tappable" onClick={() => toggleSec('savings')}>
+              <span className="sh-label">Savings</span>
+              <span className="sh-right">
+                <span className="sh-total">−{fmt(savingsTotalCents, false)}</span>
+                <span className={`chv${openSecs.savings ? ' up' : ''}`}>▾</span>
+              </span>
+            </div>
+            {openSecs.savings && (
+              <div className="cards">
+                {savingsLines.map((line: any) => {
+                  const goal = goalRow(line.goalId)
+                  if (!goal) return null
+                  const done   = isSetAside(line.goalId)
+                  const saved  = savedSoFar(line.goalId)
+                  const target = goal.target_cents
+                  const plan   = planSaysBy(line.goalId)
+                  const pct     = target > 0 ? Math.min(100, Math.round((saved / target) * 100)) : 0
+                  const planPct = target > 0 ? Math.min(100, Math.round((plan  / target) * 100)) : 0
+                  const behind  = plan - saved
+                  return (
+                    <div key={line.goalId} className="card" onClick={() => setSavTarget(goal)}>
+                      <div className="ic sav">◷</div>
+                      <div className="tx">
+                        <div className="nm">
+                          {goal.name}
+                          {done
+                            ? <span className="chip sav-ok">set aside ✓</span>
+                            : <span className="chip sav-pend">not yet</span>}
+                          {behind > 0 && !done && <span className="chip sav-behind">behind</span>}
+                          {line.isOverride && <span className="chip drv">this cycle only</span>}
+                        </div>
+                        <div className="dt">
+                          {fmt(saved, false)} of {fmt(target, false)} · {fmt(line.amountCents, false)} this cycle
+                          {behind > 0 && <> · <b style={{ color: 'var(--warn)' }}>{fmt(behind, false)} behind plan</b></>}
+                        </div>
+                        <div className="act-row">
+                          {/* The tick on the bar is where the plan says you should be.
+                              The gap between it and the green is the honest part. */}
+                          <div className="exp-prog sav-prog" style={{ flex: 1, marginTop: 0 }}>
+                            <div className="fill" style={{ width: pct + '%', background: 'var(--pos)' }} />
+                            {planPct > 0 && planPct < 100 && (
+                              <div className="plan-tick" style={{ left: planPct + '%' }} />
+                            )}
+                          </div>
+                          <button className="act" type="button"
+                            style={{ color: done ? 'var(--mut)' : 'var(--pos)' }}
+                            disabled={savBusy}
+                            onClick={e => { e.stopPropagation(); toggleSetAside(line.goalId) }}>
+                            {done ? 'undo' : 'set aside →'}
+                          </button>
+                        </div>
+                      </div>
+                      <div className="vl">−{fmt(line.amountCents, false)}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </>
+        )}
+
         {showCredit && (
           <>
             <div className="section-hdr sh-crd tappable" onClick={() => toggleSec('credit')}>
@@ -1446,13 +1642,13 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                         <div className="fill" style={{ width: creditPct + '%', background: 'var(--credit)' }} />
                       </div>
                       {creditState === 'before' && (
-                        <span className="act" onClick={openCreditAdjust}>adjust →</span>
+                        <button className="act" type="button" onClick={openCreditAdjust}>adjust →</button>
                       )}
                       {creditState === 'due' && (
-                        <span className="act" style={{ color: 'var(--floor)' }} onClick={markCreditPaid}>confirm →</span>
+                        <button className="act" type="button" style={{ color: 'var(--floor)' }} onClick={markCreditPaid}>confirm →</button>
                       )}
                       {creditState === 'paid' && (
-                        <span className="act" style={{ color: 'var(--mut)' }} onClick={undoCreditPaid}>undo</span>
+                        <button className="act" type="button" style={{ color: 'var(--mut)' }} onClick={undoCreditPaid}>undo</button>
                       )}
                     </div>
                   </div>
@@ -1499,6 +1695,27 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                 <span className={`chv${openSecs.budget ? ' up' : ''}`}>▾</span>
               </span>
             </div>
+            {openSecs.budget && baselineAdvice.length > 0 && (
+              <div className="cards" style={{ paddingBottom: 0 }}>
+                {baselineAdvice.map(b => (
+                  <div key={'bl' + b.expenseId} className="baseline-tip">
+                    <div className="bt-ic">◷</div>
+                    <div className="bt-tx">
+                      <div className="bt-n">{b.name} is set higher than you spend</div>
+                      <div className="bt-d">
+                        Budgeted <b>{fmt(b.baselineCents, false)}</b>, averaged{' '}
+                        <b>{fmt(b.averageCents, false)}</b> over {b.cyclesCounted} closed cycles.
+                        The forecast assumes the full {fmt(b.baselineCents, false)} every cycle,
+                        so it reads tighter than it is.
+                      </div>
+                    </div>
+                    <button className="bt-x"
+                      onClick={() => setDismissedBaseline(d => [...d, b.expenseId])}
+                      aria-label="Dismiss">×</button>
+                  </div>
+                ))}
+              </div>
+            )}
             {openSecs.budget && (
               <div className="cards">
                 {budgetCards.map((cd, i) => {
@@ -2103,6 +2320,247 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
           </div>
         </div>
       )}
+
+      {/* ── goal detail ── */}
+      {savTarget && (() => {
+        const g = savTarget
+        const saved  = savedSoFar(g.id)
+        const target = g.target_cents
+        const plan   = planSaysBy(g.id)
+        const pct     = target > 0 ? Math.min(100, Math.round((saved / target) * 100)) : 0
+        const planPct = target > 0 ? Math.min(100, Math.round((plan  / target) * 100)) : 0
+        const remaining = Math.max(0, target - saved)
+        const reached = remaining <= 0
+
+        // One box per cycle: ticked, missed, this one, still to come. A plain
+        // expense cannot tell you which cycles actually happened — this can.
+        const steps: { start: string; state: 'ok' | 'miss' | 'now' | 'todo' }[] = []
+        for (let i = 0; i < Math.min(g.cycles_total + 6, 14); i++) {
+          const d = addDays(parseDate(g.start_cycle_start), i * 14)
+          const iso = formatDate(d)
+          const ticked = savingsDone.some((c: any) => c.savings_goal_id === g.id && c.cycle_start === iso)
+          const isNow = iso === activeCycle.startDate
+          const past  = iso < activeCycle.startDate
+          steps.push({ start: iso, state: ticked ? 'ok' : isNow ? 'now' : past ? 'miss' : 'todo' })
+        }
+        const missed = steps.filter(x => x.state === 'miss').length
+        const ticks  = steps.filter(x => x.state === 'ok').length
+
+        return (
+          <div className="ov" onClick={e => { if (e.target === e.currentTarget) setSavTarget(null) }}>
+            <div className="sheet">
+              <button className="xbtn" onClick={() => setSavTarget(null)}>×</button>
+              <div className="grab" />
+              <h3>{g.name}</h3>
+              <p className="sd">
+                Saving {fmt(target, false)} · {fmt(g.per_cycle_cents, false)} a cycle ·
+                started {fmtDate(g.start_cycle_start)}
+              </p>
+
+              <div className="sav-hero">
+                <div className="sh-top">
+                  <div>
+                    <div className="sh-k">Set aside</div>
+                    <div className="sh-v" style={reached ? { color: 'var(--pos)' } : undefined}>
+                      {fmt(saved, false)} <small>of {fmt(target, false)}</small>
+                    </div>
+                  </div>
+                  <div className="sh-r">
+                    {reached
+                      ? <span className="chip sav-ready">ready to buy</span>
+                      : <>
+                          <div className="v">{fmt(remaining, false)}</div>
+                          <div className="l">still to go</div>
+                        </>}
+                  </div>
+                </div>
+                <div className="sav-bar">
+                  <div className="fill" style={{ width: pct + '%' }} />
+                  {planPct > 0 && planPct < 100 && (
+                    <div className="plan-tick" style={{ left: planPct + '%' }} />
+                  )}
+                </div>
+                {!reached && plan > saved && (
+                  <div className="sav-legend">
+                    the plan says {fmt(plan, false)} by now — you are {fmt(plan - saved, false)} behind
+                  </div>
+                )}
+              </div>
+
+              <div className="sav-tl-k">
+                <span>Each cycle</span>
+                <span>{ticks} set aside{missed > 0 && <> · {missed} missed</>}</span>
+              </div>
+              <div className="sav-tl">
+                {steps.map(step => (
+                  <div key={step.start} className="sav-step">
+                    <div className={`sav-dot ${step.state}`}>
+                      {step.state === 'ok' ? '✓' : step.state === 'miss' ? '–' : step.state === 'now' ? '·' : ''}
+                    </div>
+                    <div className="sav-when">{cycleTickLabel(step.start, baseYearOf(cycles))}</div>
+                  </div>
+                ))}
+              </div>
+
+              {reached ? (
+                <>
+                  <button className="addbtn" style={{ background: 'var(--pos)', color: '#fff', borderStyle: 'solid', marginTop: 16 }}
+                    disabled={savBusy} onClick={() => completeGoal(g)}>
+                    Mark as bought
+                  </button>
+                  <p className="hint" style={{ marginTop: 8 }}>
+                    The money already left your spendable balance as you saved it, so buying this
+                    changes nothing in the forecast — that is what the savings were for.
+                  </p>
+                </>
+              ) : (
+                <div className="sav-acts">
+                  <div className="sav-act" onClick={() => { setSavTarget(null); openSavAdjust(g) }}>
+                    <div className="sa-ic">±</div>
+                    <div className="sa-tx">
+                      <div className="n">Change the amount</div>
+                      <div className="d">this cycle only, or from now on</div>
+                    </div>
+                    <div className="sa-go">→</div>
+                  </div>
+                  <div className="sav-act" onClick={() => { setSavTarget(null); openSavFix(g) }}>
+                    <div className="sa-ic">=</div>
+                    <div className="sa-tx">
+                      <div className="n">Correct the total</div>
+                      <div className="d">if you dipped into it, or put extra in</div>
+                    </div>
+                    <div className="sa-go">→</div>
+                  </div>
+                  <div className="sav-act danger" onClick={() => stopSaving(g)}>
+                    <div className="sa-ic">×</div>
+                    <div className="sa-tx">
+                      <div className="n">Stop saving for this</div>
+                      <div className="d">keeps what is set aside, removes future cycles</div>
+                    </div>
+                    <div className="sa-go">→</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* ── change the amount ── */}
+      {savAdjust && (() => {
+        const cents = Math.max(0, Math.round(parseFloat(savAdjAmount || '0') * 100))
+        const saved = savedSoFar(savAdjust.id)
+        const left  = Math.max(0, savAdjust.target_cents - saved)
+        const after = Math.max(0, left - cents)
+        const restCycles = cents > 0 ? Math.ceil(after / Math.max(savAdjust.per_cycle_cents, 1)) : 0
+        const allCycles  = cents > 0 ? Math.ceil(left / cents) : 0
+        return (
+          <div className="ov" onClick={e => { if (e.target === e.currentTarget) setSavAdjust(null) }}>
+            <div className="sheet">
+              <button className="xbtn" onClick={() => setSavAdjust(null)}>×</button>
+              <div className="grab" />
+              <h3>Change the amount</h3>
+              <p className="sd">What you set aside for {savAdjust.name}.</p>
+
+              <div className="field">
+                <label>Each cycle</label>
+                <div className="inrow">
+                  <span className="pre">{sym}</span>
+                  <input type="number" inputMode="decimal" value={savAdjAmount}
+                    onChange={e => setSavAdjAmount(e.target.value)} />
+                </div>
+              </div>
+
+              <div className="cr-scope">
+                <button className={savAdjScope === 'once' ? 'on' : ''} onClick={() => setSavAdjScope('once')}>
+                  Just this cycle<small>back to {fmt(savAdjust.per_cycle_cents, false)} after</small>
+                </button>
+                <button className={savAdjScope === 'always' ? 'on' : ''} onClick={() => setSavAdjScope('always')}>
+                  From now on<small>changes the plan</small>
+                </button>
+              </div>
+
+              <div className="sav-diff">
+                {savAdjScope === 'once' ? (
+                  <>
+                    <div className="row"><span className="l">This cycle</span><span className="v">{fmt(cents, false)}</span></div>
+                    <div className="row"><span className="l">Then back to</span><span className="v">{fmt(savAdjust.per_cycle_cents, false)}</span></div>
+                    <div className="row"><span className="l">Cycles left after that</span><span className="v">{restCycles}</span></div>
+                  </>
+                ) : (
+                  <>
+                    <div className="row"><span className="l">Every cycle from now</span><span className="v">{fmt(cents, false)}</span></div>
+                    <div className="row"><span className="l">Still to save</span><span className="v">{fmt(left, false)}</span></div>
+                    <div className="row"><span className="l">Cycles left</span><span className="v">{cents > 0 ? allCycles : '—'}</span></div>
+                  </>
+                )}
+              </div>
+
+              <div className="navrow">
+                <button onClick={() => setSavAdjust(null)}>Cancel</button>
+                <button className="pri" style={{ background: 'var(--pos)' }}
+                  onClick={saveSavAdjust} disabled={savBusy}>
+                  {savBusy ? 'Saving…' : 'Apply'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* ── correct the total ── */}
+      {savFixTotal && (() => {
+        const cents = Math.max(0, Math.round(parseFloat(savFixAmount || '0') * 100))
+        const ticked = savingsDone.filter((c: any) => c.savings_goal_id === savFixTotal.id).length
+        const byTicks = ticked * savFixTotal.per_cycle_cents
+        const delta = cents - byTicks
+        const left = Math.max(0, savFixTotal.target_cents - cents)
+        const cyclesLeft = Math.ceil(left / Math.max(savFixTotal.per_cycle_cents, 1))
+        return (
+          <div className="ov" onClick={e => { if (e.target === e.currentTarget) setSavFixTotal(null) }}>
+            <div className="sheet">
+              <button className="xbtn" onClick={() => setSavFixTotal(null)}>×</button>
+              <div className="grab" />
+              <h3>Correct the total</h3>
+              <p className="sd">
+                For when what is actually set aside does not match what you ticked. This is about
+                the past — changing what you save from here is a different thing.
+              </p>
+
+              <div className="field">
+                <label>Actually set aside</label>
+                <div className="inrow">
+                  <span className="pre">{sym}</span>
+                  <input type="number" inputMode="decimal" value={savFixAmount}
+                    onChange={e => setSavFixAmount(e.target.value)} />
+                </div>
+                <p className="hint">
+                  You ticked {ticked} {ticked === 1 ? 'cycle' : 'cycles'}, totalling {fmt(byTicks, false)}.
+                  {delta < 0 && <> Setting {fmt(cents, false)} records that {fmt(-delta, false)} was used.</>}
+                  {delta > 0 && <> Setting {fmt(cents, false)} records {fmt(delta, false)} extra put in.</>}
+                  {delta === 0 && <> That matches.</>}
+                </p>
+              </div>
+
+              <div className="sav-diff">
+                <div className="row"><span className="l">Still to save</span><span className="v">{fmt(left, false)}</span></div>
+                <div className="row">
+                  <span className="l">At {fmt(savFixTotal.per_cycle_cents, false)} a cycle</span>
+                  <span className="v">{cyclesLeft} more {cyclesLeft === 1 ? 'cycle' : 'cycles'}</span>
+                </div>
+              </div>
+
+              <div className="navrow">
+                <button onClick={() => setSavFixTotal(null)}>Cancel</button>
+                <button className="pri" style={{ background: 'var(--pos)' }}
+                  onClick={saveSavFix} disabled={savBusy}>
+                  {savBusy ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </>
   )
 }

@@ -207,6 +207,26 @@ export async function uncommitWishlistItem(itemId: string, expenseId: string) {
   return data
 }
 
+// Puts an item back on the active list without touching expenses. A savings
+// goal has no expense row to delete — the amount is derived — so the older
+// uncommit path does not apply to it.
+export async function releaseWishlistItem(itemId: string) {
+  const { data, error } = await supabase
+    .from('wishlist_items')
+    .update({
+      status: 'active',
+      payment_method: null,
+      savings_goal_id: null,
+      committed_expense_id: null,
+      committed_cycle_start: null,
+    })
+    .eq('id', itemId)
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
 export async function deleteWishlistItem(itemId: string) {
   const { error } = await supabase.from('wishlist_items').delete().eq('id', itemId)
   if (error) throw error
@@ -610,6 +630,57 @@ export async function setWishlistPaymentMethod(
     .single()
   if (error) throw error
   return data
+}
+
+// --- SAVINGS OVERRIDES ---
+// A per-cycle amount exception. "Set aside $500 this cycle to catch up, then
+// back to $250" is an exception, not a change to the plan — same shape as the
+// credit extra override.
+export async function getSavingsOverrides(goalId: string) {
+  const { data, error } = await supabase
+    .from('savings_overrides')
+    .select('*')
+    .eq('savings_goal_id', goalId)
+    .order('cycle_start')
+  if (error) throw error
+  return data
+}
+
+export async function getAllSavingsOverrides(accountId: string) {
+  const { data, error } = await supabase
+    .from('savings_overrides')
+    .select('*')
+    .eq('account_id', accountId)
+    .order('cycle_start')
+  if (error) throw error
+  return data
+}
+
+export async function setSavingsOverride(
+  goalId: string,
+  accountId: string,
+  cycleStart: string,
+  amountCents: number
+) {
+  const { data, error } = await supabase
+    .from('savings_overrides')
+    .upsert(
+      { savings_goal_id: goalId, account_id: accountId, cycle_start: cycleStart, amount_cents: amountCents },
+      { onConflict: 'savings_goal_id,cycle_start' }
+    )
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function clearSavingsOverride(goalId: string, cycleStart: string) {
+  const { error } = await supabase
+    .from('savings_overrides')
+    .delete()
+    .eq('savings_goal_id', goalId)
+    .eq('cycle_start', cycleStart)
+  if (error) throw error
 }
 
 // --- BUDGET SPEND ENTRIES ---

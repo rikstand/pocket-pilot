@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import {
   createSavingsGoal, setWishlistPaymentMethod,
-  getWishlistItems, addWishlistItem, reorderWishlistItems,
+  getSavingsGoals, getAllSavingsContributions, updateSavingsGoal, releaseWishlistItem,
+  getWishlistItems, addWishlistItem,
   commitWishlistItem, uncommitWishlistItem, deleteWishlistItem,
 } from './lib/repository'
 import { loadForecast, cycleTickLabel, cycleDateLabel, baseYearOf } from './lib/forecast'
@@ -91,26 +92,115 @@ function cycleFrequencyFrom(cycles: any[]): 'weekly' | 'fortnightly' | 'monthly'
   return 'annually'
 }
 
-function resolveActive(items: any[], cycles: any[], floorCents: number) {
-  const reserved = cycles.map(() => 0)
-  const results: any[] = []
-  let minStart = 0
+/* ── how reachable is each item on its own ───────────────────────────
+ *
+ * Replaces resolveActive(). That walked the list in rank order and reserved
+ * money for each item against the ones below it, so the list answered "if I
+ * bought all of these in order, when would each arrive". Nobody asked that
+ * question, and it meant moving an item up the list changed whether it looked
+ * possible.
+ *
+ * Each item is now judged on its own: if you set money aside for THIS one,
+ * how long would it take? Anything already committed is a real expense in the
+ * forecast, so it is accounted for either way.
+ */
 
-  for (const item of items) {
-    let clearedAt: number | null = null
-    for (let i = minStart; i < cycles.length; i++) {
-      const available = cycles[i].committedClosingBalanceCents - reserved[i]
-      if (available - item.amount_cents >= floorCents) { clearedAt = i; break }
+export type Reach = 'comfortable' | 'achievable' | 'stretch' | 'unreachable'
+
+export interface ItemPlan {
+  cycles: number | null      // shortest plan that stays above the floor
+  perCycleCents: number
+  finishIndex: number | null
+  tightestCents: number
+  reach: Reach
+}
+
+const MAX_PLAN_CYCLES = 26      // about a year of fortnights
+const COMFORT_BUFFER_CENTS = 10000   // $100 of room above the floor
+
+/**
+ * The plan to show for this item.
+ *
+ * Shortest that fits, but "fits" means fits COMFORTABLY — with about $100 of
+ * room above the floor. Picking the shortest plan that merely scrapes the floor
+ * produced a nonsense ordering: a $1,500 item read as "a stretch" because two
+ * big payments left $90 spare, while an $8,000 item read as "achievable"
+ * because it was spread over 19 easy ones. Spreading the cheaper item over
+ * three cycles instead of two makes it comfortable, and that is the plan worth
+ * showing.
+ *
+ * If nothing comfortable fits inside a year, fall back to the shortest plan
+ * that at least stays above the floor, and call it a stretch.
+ */
+export function planFor(item: any, cycles: any[], floorCents: number): ItemPlan {
+  const closings = cycles.map(c => c.committedClosingBalanceCents)
+  const cost = item.amount_cents
+  const limit = Math.min(MAX_PLAN_CYCLES, Math.max(closings.length, 1))
+
+
+  let fallback: ItemPlan | null = null
+
+  for (let n = 1; n <= limit; n++) {
+    const plan = planPayments(cost, n, 0)
+    const bank = balancesAfter(closings, plan.pays)
+    const tightest = bank.length ? Math.min(...bank) : 0
+
+    // The floor is the floor. Judging items against "where things already are"
+    // instead was tried and does not hold up: payments accumulate, so ANY plan
+    // lowers the already-lowest cycle, and every item came back unreachable
+    // anyway. The dip is real and worth saying — once, at the top of the page —
+    // rather than being smuggled into each item's verdict.
+    if (tightest < floorCents) continue
+
+    const result: ItemPlan = {
+      cycles: n,
+      perCycleCents: plan.perCents,
+      finishIndex: n - 1,
+      tightestCents: tightest,
+      reach: reachFor(n, tightest, floorCents),
     }
-    results.push({ ...item, clearedAt })
-    if (clearedAt !== null) {
-      for (let i = clearedAt; i < cycles.length; i++) reserved[i] += item.amount_cents
-      minStart = clearedAt
-    } else {
-      minStart = cycles.length
-    }
+
+    // Comfortable room — this is the plan to show.
+    if (tightest - floorCents >= COMFORT_BUFFER_CENTS) return result
+
+    // Fits, but only just. Keep it in case nothing better turns up.
+    if (!fallback) fallback = result
   }
-  return results
+
+  if (fallback) return fallback
+
+  return {
+    cycles: null,
+    perCycleCents: Math.floor(cost / MAX_PLAN_CYCLES / 100) * 100,
+    finishIndex: null,
+    tightestCents: 0,
+    reach: 'unreachable',
+  }
+}
+
+/* Under 3 months comfortable, 3–9 achievable, 9–12 a stretch. A plan that only
+ * scrapes the floor is a stretch however quick it is — finishing fast on fumes
+ * is not comfortable. */
+function reachFor(cycles: number, tightestCents: number, floorCents: number): Reach {
+  const thin = tightestCents - floorCents < COMFORT_BUFFER_CENTS
+  if (thin) return 'stretch'
+  if (cycles <= 6)  return 'comfortable'
+  if (cycles <= 19) return 'achievable'
+  return 'stretch'
+}
+
+export const REACH_LABEL: Record<Reach, string> = {
+  comfortable: 'comfortable',
+  achievable:  'achievable',
+  stretch:     'a stretch',
+  unreachable: 'out of reach',
+}
+
+export const REACH_CHIP: Record<Reach, string> = {
+  comfortable: 'reach-ok',
+  achievable:  'reach-mid',
+  stretch:     'reach-far',
+  unreachable: 'reach-no',
 }
 
 export default function WishlistPage({ userId, accountId }: { userId: string; accountId: string }) {
@@ -120,6 +210,8 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
   const fmt = moneyFormatter(activeAccount?.currency_code)
   const sym = currencySymbol(activeAccount?.currency_code)
   const [items,     setItems]     = useState<any[]>([])
+  const [goals,     setGoals]     = useState<any[]>([])
+  const [contribs,  setContribs]  = useState<any[]>([])
   const [cycles,    setCycles]    = useState<any[]>([])
   const [loading,   setLoading]   = useState(true)
   const [error,     setError]     = useState('')
@@ -139,8 +231,6 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
   const [lbStart,   setLbStart]   = useState(0)
   const [paySaving, setPaySaving] = useState(false)
 
-  const [commitTarget,   setCommitTarget]   = useState<any>(null)
-  const [commitSaving,   setCommitSaving]   = useState(false)
   const [uncommitTarget, setUncommitTarget] = useState<any>(null)
   const [uncommitSaving, setUncommitSaving] = useState(false)
   const [boughtTarget,   setBoughtTarget]   = useState<any>(null)
@@ -152,11 +242,15 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
     async function load() {
       setLoading(true)
       try {
-        const [wishlist, forecast] = await Promise.all([
+        const [wishlist, forecast, goalRows, contribRows] = await Promise.all([
           getWishlistItems(accountId),
           loadForecast(accountId, floorCents),
+          getSavingsGoals(accountId),
+          getAllSavingsContributions(accountId),
         ])
         setItems(wishlist)
+        setGoals(goalRows ?? [])
+        setContribs(contribRows ?? [])
         setCycles(forecast.cycles)
       } catch (e: any) { setError(e.message) }
       finally { setLoading(false) }
@@ -171,7 +265,27 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
 
   const activeItems    = items.filter(i => i.status === 'active').sort((a, b) => a.rank - b.rank)
   const committedItems = items.filter(i => i.status === 'committed').sort((a, b) => a.rank - b.rank)
-  const resolved       = resolveActive(activeItems, cycles, floorCents)
+  const resolved       = activeItems.map(item => ({ ...item, plan: planFor(item, cycles, floorCents) }))
+
+  // Said once here rather than repeated on every item. A forecast that already
+  // dips is worth knowing about, but it is not a fact about your wishlist.
+  const closingsAll  = cycles.map(c => c.committedClosingBalanceCents)
+  const baseTightest = closingsAll.length ? Math.min(...closingsAll) : 0
+  const baseDipIndex = closingsAll.indexOf(baseTightest)
+  const forecastDips = baseTightest < floorCents
+
+  /* A savings item has no expense and no committed cycle — its amount is
+   * derived from the goal each cycle. Showing progress here is more use than
+   * a date, and it is also what stops a second goal being started. */
+  function goalFor(item: any) {
+    if (!item.savings_goal_id) return null
+    return goals.find((g: any) => g.id === item.savings_goal_id && g.status === 'active') ?? null
+  }
+  function savedFor(goal: any) {
+    if (!goal) return 0
+    if (goal.adjusted_total_cents != null) return goal.adjusted_total_cents
+    return contribs.filter((c: any) => c.savings_goal_id === goal.id).length * goal.per_cycle_cents
+  }
 
   const committedWithRisk = committedItems.map(item => {
     const cycle = cycles.find(c => c.startDate === item.committed_cycle_start)
@@ -192,21 +306,14 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
     finally { setAddSaving(false) }
   }
 
-  async function moveItem(item: any, dir: -1 | 1) {
-    const idx = activeItems.findIndex(i => i.id === item.id)
-    const swapIdx = idx + dir
-    if (swapIdx < 0 || swapIdx >= activeItems.length) return
-    const a = activeItems[idx], b = activeItems[swapIdx]
-    try {
-      await reorderWishlistItems([{ id: a.id, rank: b.rank }, { id: b.id, rank: a.rank }])
-      reload()
-    } catch (e: any) { alert('Could not reorder: ' + e.message) }
-  }
-
   async function doMarkBought() {
     if (!boughtTarget) return
+    const boughtGoal = goalFor(boughtTarget)
     setBoughtSaving(true)
     try {
+      // Close the goal first, or the engine keeps setting money aside for
+      // something already bought.
+      if (boughtGoal) await updateSavingsGoal(boughtGoal.id, { status: 'completed' })
       await deleteWishlistItem(boughtTarget.id)
       setBoughtTarget(null); reload()
     } catch (e: any) { alert('Could not remove item: ' + e.message) }
@@ -233,6 +340,15 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
     const plan = planPayments(payTarget.amount_cents, saveN, 0)
     setPaySaving(true)
     try {
+      // No expense row. The amount for each cycle is derived from the goal, the
+      // same way a credit payment is derived from the balance.
+      //
+      // It used to create a recurring expense, which meant the forecast took
+      // the money whether or not you actually set it aside — skip a cycle and
+      // your real balance was higher than the app believed, while the progress
+      // bar counted a contribution that never happened. Deriving it keeps the
+      // forecast and the progress honest about the same thing, and the goal
+      // stops on its own when the target is reached.
       const goal = await createSavingsGoal(accountId, {
         name: payTarget.name,
         target_cents: payTarget.amount_cents,
@@ -242,32 +358,6 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
         wishlist_item_id: payTarget.id,
       })
 
-      // The commitment has to reach the forecast, or it is just a note to
-      // self. A recurring expense is how money actually leaves the balance.
-      const { data: exp, error: e1 } = await supabase
-        .from('expenses')
-        .insert({
-          profile_id: userId,
-          account_id: accountId,
-          name: 'Saving: ' + payTarget.name,
-          frequency: cycleFrequency,
-          anchor_date: cycles[0]?.startDate ?? today(),
-          mode: 'fixed',
-          end_date: cycles[Math.min(saveN - 1, cycles.length - 1)]?.startDate ?? null,
-        })
-        .select().single()
-      if (e1) throw e1
-
-      const { error: e2 } = await supabase
-        .from('expense_amount_versions')
-        .insert({
-          expense_id: exp.id,
-          amount_cents: plan.perCents,
-          effective_from: cycles[0]?.startDate ?? today(),
-        })
-      if (e2) throw e2
-
-      await commitWishlistItem(payTarget.id, exp.id, cycles[0]?.startDate ?? today())
       await setWishlistPaymentMethod(payTarget.id, 'savings', goal.id)
       setPayTarget(null); reload()
     } catch (e: any) { alert('Could not start saving: ' + e.message) }
@@ -311,38 +401,19 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
   // setCommitTarget(item). Left in place deliberately — see the note to Rick
   // about whether "buy outright" should be offered alongside the two plans.
 
-  async function doCommit() {
-    if (!commitTarget) return
-    const cycle = cycles[commitTarget.clearedAt]
-    setCommitSaving(true)
-    try {
-      const { data: exp, error: e1 } = await supabase
-        .from('expenses')
-        .insert({
-          profile_id: userId,
-          account_id: accountId,
-          name: commitTarget.name,
-          frequency: 'once',
-          anchor_date: cycle.startDate,
-          mode: 'fixed',
-        })
-        .select().single()
-      if (e1) throw e1
-      const { error: e2 } = await supabase
-        .from('expense_amount_versions')
-        .insert({ expense_id: exp.id, amount_cents: commitTarget.amount_cents, effective_from: cycle.startDate })
-      if (e2) throw e2
-      await commitWishlistItem(commitTarget.id, exp.id, cycle.startDate)
-      setCommitTarget(null); reload()
-    } catch (e: any) { alert('Could not commit: ' + e.message) }
-    finally { setCommitSaving(false) }
-  }
-
   async function doUncommit() {
     if (!uncommitTarget) return
     setUncommitSaving(true)
     try {
-      await uncommitWishlistItem(uncommitTarget.id, uncommitTarget.committed_expense_id)
+      const goal = goalFor(uncommitTarget)
+      if (goal) {
+        // A savings goal has no expense to delete — cancel the goal, which
+        // stops the engine taking anything further, and put the item back.
+        await updateSavingsGoal(goal.id, { status: 'cancelled' })
+        await releaseWishlistItem(uncommitTarget.id)
+      } else {
+        await uncommitWishlistItem(uncommitTarget.id, uncommitTarget.committed_expense_id)
+      }
       setUncommitTarget(null); reload()
     } catch (e: any) { alert('Could not uncommit: ' + e.message) }
     finally { setUncommitSaving(false) }
@@ -355,6 +426,9 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
         <div style={{ padding:'14px 20px 2px' }}>
           <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:10, letterSpacing:'.18em', textTransform:'uppercase', color:'var(--mut)' }}>Wishlist</div>
           <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontWeight:600, fontSize:22, letterSpacing:'-.02em', marginTop:4 }}>What you're saving toward</div>
+          <div className="wish-basis">
+            Based on saving up. Lay-by or credit can be faster — tap an item to compare.
+          </div>
         </div>
 
         {committedWithRisk.length > 0 && (
@@ -367,15 +441,44 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
                   <div className="tx">
                     <div className="nm">
                       {item.name}
-                      <span className={`chip ${item.atRisk ? 'risk' : 'committed'}`}>{item.atRisk ? 'at risk' : 'committed ✓'}</span>
+                      {goalFor(item)
+                        ? <span className="chip reach-ok">saving</span>
+                        : <span className={`chip ${item.atRisk ? 'risk' : 'committed'}`}>{item.atRisk ? 'at risk' : 'committed ✓'}</span>}
                     </div>
                     <div className="dt">
-                      {item.atRisk
-                        ? <>committed to <b>{fmtDate(item.committed_cycle_start)}</b> — now {fmt(item.shortfallCents, false)} short</>
-                        : <>committed to <b>{fmtDate(item.committed_cycle_start)}</b></>}
+                      {(() => {
+                        const goal = goalFor(item)
+                        if (goal) {
+                          const saved = savedFor(goal)
+                          const left = Math.max(0, goal.target_cents - saved)
+                          return <>
+                            <b>{fmt(saved, false)}</b> of {fmt(goal.target_cents, false)} set aside ·
+                            {' '}{fmt(goal.per_cycle_cents, false)} a cycle · {fmt(left, false)} to go
+                          </>
+                        }
+                        // Lay-by and older commitments still have a real cycle date.
+                        if (!item.committed_cycle_start) return <>committed</>
+                        return item.atRisk
+                          ? <>committed to <b>{fmtDate(item.committed_cycle_start)}</b> — now {fmt(item.shortfallCents, false)} short</>
+                          : <>committed to <b>{fmtDate(item.committed_cycle_start)}</b></>
+                      })()}
                     </div>
                     <div className="act-row">
-                      <span className="act" style={{ color:'var(--floor)' }} onClick={() => setUncommitTarget(item)}>uncommit</span>
+                      {goalFor(item) && (() => {
+                        const goal = goalFor(item)!
+                        const saved = savedFor(goal)
+                        const pct = goal.target_cents > 0
+                          ? Math.min(100, Math.round((saved / goal.target_cents) * 100)) : 0
+                        return (
+                          <div className="exp-prog" style={{ flex: 1, marginTop: 0 }}>
+                            <div className="fill" style={{ width: pct + '%', background: 'var(--pos)' }} />
+                          </div>
+                        )
+                      })()}
+                      <button className="act" type="button" style={{ color:'var(--floor)' }}
+                        onClick={() => setUncommitTarget(item)}>
+                        {goalFor(item) ? 'stop saving' : 'uncommit'}
+                      </button>
                     </div>
                   </div>
                   <div className="vl">{fmt(item.amount_cents, false)}</div>
@@ -386,32 +489,54 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
           </>
         )}
 
+        {forecastDips && (
+          <div className="wish-dip">
+            <b>Your forecast already dips below your floor</b> around{' '}
+            {cycles[baseDipIndex] ? fmtDate(cycles[baseDipIndex].startDate) : 'later this year'},
+            closing at {fmt(baseTightest, false)} against a {fmt(floorCents, false)} floor —
+            before anything on this list. Until that changes, everything here will read as out
+            of reach, because any amount set aside makes that cycle lower still.
+          </div>
+        )}
+
         <div className="wish-secttl">Active</div>
         <div className="cards">
           {resolved.length === 0 && (
             <div className="skipnote" style={{ margin:'0 16px' }}>Nothing on your wishlist yet.</div>
           )}
-          {resolved.map((item, idx) => {
-            const status = item.clearedAt === null ? 'never' : item.clearedAt === 0 ? 'now' : 'soon'
-            const label  = item.clearedAt === null ? 'unresolved' : item.clearedAt === 0 ? 'now' : 'soon'
+          {resolved.map(item => {
+            const p = item.plan as ItemPlan
+            const finish = p.finishIndex !== null ? cycles[p.finishIndex] : null
+            const thinCents = p.tightestCents - floorCents
             return (
               <div key={item.id} className="card">
-                <div className="reorder-btns">
-                  <button disabled={idx === 0} onClick={() => moveItem(item, -1)}>↑</button>
-                  <button disabled={idx === resolved.length - 1} onClick={() => moveItem(item, 1)}>↓</button>
-                </div>
                 <div className="ic wish">☆</div>
                 <div className="tx">
-                  <div className="nm">{item.name}<span className={`chip ${status}`}>{label}</span></div>
+                  <div className="nm">
+                    {item.name}
+                    <span className={`chip ${REACH_CHIP[p.reach]}`}>{REACH_LABEL[p.reach]}</span>
+                  </div>
                   <div className="dt">
-                    {item.clearedAt === null
-                      ? 'beyond your current forecast'
-                      : <>clear by <b>{fmtDate(cycles[item.clearedAt].startDate)}</b></>}
+                    {p.cycles === null
+                      ? (forecastDips
+                          ? <>Even spread across a year, this would take your tightest cycle lower
+                              still. Worth sorting the dip above first.</>
+                          : <>Even spread across a year, setting aside enough would drop you under
+                              your {fmt(floorCents, false)} floor. Nothing to change yet — it will
+                              move as your forecast does.</>)
+                      : <>
+                          <b>{p.cycles} {p.cycles === 1 ? 'cycle' : 'cycles'}</b> of setting aside{' '}
+                          {fmt(p.perCycleCents, false)}
+                          {finish && <> · done by {fmtDate(finish.startDate)}</>}
+                          {p.reach === 'stretch' && thinCents < 10000 && (
+                            <> · the tightest cycle leaves only {fmt(thinCents, false)} spare</>
+                          )}
+                        </>}
                   </div>
                   <div className="act-row">
-                    {item.clearedAt !== null && (
-                      <span className="act" onClick={() => openPay(item)}>how to pay →</span>
-                    )}
+                    {/* Always available. It used to be hidden unless you could buy the
+                        item outright in a single cycle, which is not a route we offer. */}
+                    <span className="act" onClick={() => openPay(item)}>how to pay →</span>
                   </div>
                 </div>
                 <div className="vl">{fmt(item.amount_cents, false)}</div>
@@ -452,24 +577,6 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
         </div>
       )}
 
-      {/* ── commit confirm ── */}
-      {commitTarget && (
-        <div className="ov" onClick={() => setCommitTarget(null)}>
-          <div className="sheet" onClick={e => e.stopPropagation()}>
-            <button className="xbtn" onClick={() => setCommitTarget(null)}>×</button>
-            <div className="grab" />
-            <h3>Commit {commitTarget.name}?</h3>
-            <p className="sd">
-              Adds {fmt(commitTarget.amount_cents, false)} as a real expense to the cycle starting{' '}
-              {fmtDate(cycles[commitTarget.clearedAt]?.startDate)}. From then on it's part of your actual forecast, not a projection.
-            </p>
-            <div className="navrow">
-              <button onClick={() => setCommitTarget(null)}>Cancel</button>
-              <button className="pri" onClick={doCommit} style={{ opacity:commitSaving?0.6:1 }}>{commitSaving ? 'Committing…' : 'Commit'}</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── uncommit confirm ── */}
       {uncommitTarget && (
@@ -477,14 +584,24 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
           <div className="sheet" onClick={e => e.stopPropagation()}>
             <button className="xbtn" onClick={() => setUncommitTarget(null)}>×</button>
             <div className="grab" />
-            <h3>Uncommit {uncommitTarget.name}?</h3>
+            <h3>{goalFor(uncommitTarget) ? 'Stop saving for' : 'Uncommit'} {uncommitTarget.name}?</h3>
             <p className="sd">
-              Removes the {fmt(uncommitTarget.amount_cents, false)} expense from{' '}
-              {fmtDate(uncommitTarget.committed_cycle_start)}. The item goes back to active and re-resolves against your current forecast.
+              {goalFor(uncommitTarget)
+                ? <>Stops setting money aside from the next cycle. What you have already saved
+                    stays recorded, and the item goes back to your list.</>
+                : uncommitTarget.committed_cycle_start
+                  ? <>Removes the {fmt(uncommitTarget.amount_cents, false)} expense from{' '}
+                      {fmtDate(uncommitTarget.committed_cycle_start)}. The item goes back to active
+                      and is judged against your current forecast again.</>
+                  : <>Removes this commitment. The item goes back to your list.</>}
             </p>
             <div className="navrow">
-              <button onClick={() => setUncommitTarget(null)}>Keep committed</button>
-              <button className="pri" style={{ background:'var(--floor)' }} onClick={doUncommit} disabled={uncommitSaving}>{uncommitSaving ? 'Uncommitting…' : 'Uncommit'}</button>
+              <button onClick={() => setUncommitTarget(null)}>
+                {goalFor(uncommitTarget) ? 'Keep saving' : 'Keep committed'}
+              </button>
+              <button className="pri" style={{ background:'var(--floor)' }} onClick={doUncommit} disabled={uncommitSaving}>
+                {uncommitSaving ? 'Working…' : goalFor(uncommitTarget) ? 'Stop saving' : 'Uncommit'}
+              </button>
             </div>
           </div>
         </div>
@@ -499,7 +616,15 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
             <h3>Mark {boughtTarget.name} as bought?</h3>
             <p className="sd">
               {boughtTarget.status === 'committed'
-                ? <>Removes it from your wishlist. The {fmt(boughtTarget.amount_cents, false)} expense already committed to {fmtDate(boughtTarget.committed_cycle_start)} stays in your forecast — this is just closing out the wishlist entry.</>
+                ? (goalFor(boughtTarget)
+                    ? <>Closes the savings goal and removes it from your wishlist. The money already
+                        left your spendable balance as you saved it, so nothing in the forecast
+                        changes — that is what the savings were for.</>
+                    : boughtTarget.committed_cycle_start
+                      ? <>Removes it from your wishlist. The {fmt(boughtTarget.amount_cents, false)} expense
+                          already committed to {fmtDate(boughtTarget.committed_cycle_start)} stays in your
+                          forecast — this is just closing out the wishlist entry.</>
+                      : <>Removes it from your wishlist. Anything already committed stays in your forecast.</>)
                 : <>Removes it from your wishlist. Nothing else changes, since it was never committed to a cycle.</>}
             </p>
             <div className="navrow">

@@ -59,6 +59,53 @@ export interface CreditAccount {
   paymentAnchorDate?: string     // the due date; only the day of month matters
 }
 
+// ── budget spend ──────────────────────────────────────────────────
+// What was ACTUALLY spent against a budget, as logged. The projection takes
+// the higher of the baseline and this: you cannot unspend money, so going over
+// has to show up in the closing balance. Under budget stays conservative.
+export interface BudgetSpendEntry {
+  expenseId: string
+  amountCents: number
+  spentDate: string
+}
+
+// ── savings goals ─────────────────────────────────────────────────
+// Deliberately the same shape as credit, and for the same reason. A savings
+// goal is not an expense: it is a target with a running total, and the amount
+// each cycle is DERIVED from it.
+//
+// The alternative — a stored recurring expense — meant the forecast subtracted
+// the money whether or not you actually set it aside. Skip a cycle and your
+// real balance would be higher than the app thought, while the progress bar
+// counted a contribution that never happened. Deriving it keeps the forecast
+// and the progress honest about the same thing.
+export interface SavingsOverride {
+  cycleStart: string
+  amountCents: number
+}
+
+export interface SavingsGoal {
+  id: string
+  name: string
+  targetCents: number
+  perCycleCents: number
+  startCycleStart: string
+  /** Confirmed so far, or a corrected figure. Set by the caller, not the engine. */
+  savedSoFarCents: number
+  overrides: SavingsOverride[]
+}
+
+/** What one goal takes from one cycle. */
+export interface SavingsCycleLine {
+  goalId: string
+  name: string
+  amountCents: number
+  targetCents: number
+  /** Still to find after this cycle's amount. Zero means the goal completes here. */
+  remainingAfterCents: number
+  isOverride: boolean
+}
+
 // Adjusts ONLY the extra portion, for one cycle. The minimum is contractual
 // and deliberately not overridable.
 export interface CreditExtraOverride {
@@ -75,6 +122,8 @@ export interface CycleInput {
   safetyFloorCents: number
   creditAccount?: CreditAccount | null
   creditOverrides?: CreditExtraOverride[]
+  budgetSpend?: BudgetSpendEntry[]
+  savingsGoals?: SavingsGoal[]
 }
 
 export interface CycleResult {
@@ -85,7 +134,16 @@ export interface CycleResult {
   potentialIncomeCents: number
   fixedExpensesCents: number
   variableExpensesCents: number
+  // What is actually subtracted for budgets: the HIGHER of the baseline and
+  // what was logged. Overspending used to vanish from the forecast entirely —
+  // the closing balance kept assuming the baseline no matter what was spent.
   budgetExpensesCents: number
+  budgetBaselineCents: number   // what the budgets are set to
+  budgetActualCents: number     // what was logged in this cycle
+
+  // ── savings, zero when no active goals ──
+  savingsTotalCents: number
+  savingsLines: SavingsCycleLine[]
 
   // ── credit, zero when no committed card ──
   creditOpeningBalanceCents: number

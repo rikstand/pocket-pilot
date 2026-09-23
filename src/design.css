@@ -211,6 +211,7 @@ svg.proj { display:block; width:100%; height:152px; }
    Empty on cards with no action — this is what keeps all cards the same size. */
 .card .tx .act-row {
   height: 16px;
+  gap: 9px;
   margin-top: 4px;
   display: flex;
   align-items: center;
@@ -221,6 +222,11 @@ svg.proj { display:block; width:100%; height:152px; }
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px; font-weight: 600; letter-spacing: .03em;
   color: var(--acc); cursor: pointer;
+  /* Works as a <button> as well as a <span>. Without this reset a button
+     brings its own padding, border and font, overflows the fixed-height row
+     and pushes the progress bar onto a line of its own. */
+  background: none; border: none; padding: 0; margin: 0;
+  line-height: 1; white-space: nowrap; flex: 0 0 auto;
   text-align: left;
 }
 
@@ -1559,3 +1565,190 @@ svg.proj { display:block; width:100%; height:152px; }
   font-size: 12.5px; color: var(--mut); line-height: 1.45; text-align: left;
 }
 .pay-what b { color: var(--ink); font-weight: 600; }
+
+/* ══════════════════════════════════════════════════════════════════
+   WISHLIST — how reachable an item is
+   The chip carries the verdict, which frees the line below it to say
+   why — especially for the two hard cases, which need a reason.
+   ══════════════════════════════════════════════════════════════════ */
+
+.chip.reach-ok  { color: var(--pos);   border-color: var(--pos);   background: var(--pos-s); }
+.chip.reach-mid { color: var(--acc);   border-color: var(--acc);   background: var(--acc-s); }
+.chip.reach-far { color: var(--warn);  border-color: var(--warn);  background: var(--warn-s); }
+.chip.reach-no  { color: var(--floor); border-color: var(--floor); background: var(--floor-s); }
+
+/* Says what the chips are measuring. Without it nobody can tell. */
+.wish-basis {
+  font-size: 12px; color: var(--mut); margin-top: 7px; line-height: 1.45;
+  max-width: 34em;
+}
+
+/* The reachability line runs longer than the old "clear by 17 Sep", because
+   a stretch or an out-of-reach item has to explain itself. */
+.card .tx .dt { line-height: 1.45; }
+
+/* ══════════════════════════════════════════════════════════════════
+   BUDGETS — when the baseline no longer matches reality
+   ══════════════════════════════════════════════════════════════════ */
+.baseline-tip {
+  display: flex; align-items: flex-start; gap: 11px;
+  background: var(--warn-s); border-left: 2px solid var(--warn);
+  border-radius: 11px; padding: 11px 12px; text-align: left;
+}
+.baseline-tip .bt-ic {
+  width: 26px; height: 26px; border-radius: 8px; flex: 0 0 26px;
+  display: grid; place-items: center; font-size: 13px;
+  background: var(--bg2); color: var(--warn);
+}
+.baseline-tip .bt-tx { flex: 1; min-width: 0; }
+.baseline-tip .bt-n { font-weight: 600; font-size: 12.5px; color: var(--warn); }
+.baseline-tip .bt-d { font-size: 11.5px; color: var(--warn); opacity: .9; margin-top: 3px; line-height: 1.45; }
+.baseline-tip .bt-d b { font-weight: 700; opacity: 1; }
+.baseline-tip .bt-x {
+  border: none; background: none; color: var(--warn); opacity: .6;
+  font-size: 17px; line-height: 1; cursor: pointer; padding: 0 2px; flex: 0 0 auto;
+}
+.baseline-tip .bt-x:hover { opacity: 1; }
+
+/* ══════════════════════════════════════════════════════════════════
+   WISHLIST — a dip that is not the list's fault
+   Said once, at the top, instead of repeated on every item.
+   ══════════════════════════════════════════════════════════════════ */
+.wish-dip {
+  margin: 10px 16px 0; padding: 11px 13px; border-radius: 10px;
+  background: var(--floor-s); color: var(--floor);
+  border-left: 2px solid var(--floor);
+  font-size: 12.5px; line-height: 1.5; text-align: left;
+}
+.wish-dip b { font-weight: 700; }
+
+/* ══════════════════════════════════════════════════════════════════
+   FORECAST — how far ahead to look
+   Forecast page only. The Cycle page stays on the near term, because a
+   year of cycles is not what you want when deciding about this fortnight.
+   ══════════════════════════════════════════════════════════════════ */
+.horizon { display: flex; gap: 6px; padding: 12px 16px 0; }
+.horizon button {
+  flex: 1; border: 1px solid var(--line); background: var(--bg2); color: var(--mut);
+  border-radius: 10px; padding: 8px 4px; cursor: pointer;
+  font-family: 'Inter', sans-serif; font-size: 12.5px; font-weight: 600; line-height: 1.25;
+}
+.horizon button small {
+  display: block; font-family: 'JetBrains Mono', monospace;
+  font-size: 8.5px; font-weight: 500; margin-top: 2px; color: var(--mut);
+}
+.horizon button.on { border-color: var(--acc); background: var(--acc-s); color: var(--acc); }
+.horizon button.on small { color: var(--acc); }
+
+.horizon-note {
+  font-family: 'JetBrains Mono', monospace; font-size: 8px; line-height: 1.5;
+  color: var(--faint); padding: 0 2px 6px; text-align: left;
+}
+
+/* Past the confidence boundary the line is dashed and the markers lighten —
+   everything out there is today's numbers carried forward, not a forecast. */
+.futln.far { stroke-dasharray: 3 3; opacity: .5; }
+.wp.far    { opacity: .45; }
+.pill.far  { opacity: .55; }
+.pill.far.active { opacity: 1; }
+
+/* ══════════════════════════════════════════════════════════════════
+   SAVINGS
+   Same shape as credit, because it is the same kind of thing: a target
+   with a running total, derived each cycle rather than stored.
+   ══════════════════════════════════════════════════════════════════ */
+
+.sh-sav .sh-label { color: var(--pos); }
+.ic.sav { background: var(--pos-s); color: var(--pos); }
+
+.chip.sav-ok     { color: var(--pos);   border-color: var(--pos);   background: var(--pos-s); }
+.chip.sav-pend   { color: var(--mut);   border-color: var(--line);  background: var(--line2); }
+.chip.sav-behind { color: var(--warn);  border-color: var(--warn);  background: var(--warn-s); }
+.chip.sav-ready  { color: #fff;         border-color: var(--pos);   background: var(--pos); }
+
+/* The tick marks where the plan says you should be. The gap between it and
+   the green is the honest part — a plain bar would hide it. */
+.exp-prog.sav-prog { position: relative; overflow: visible; }
+.exp-prog.sav-prog .fill { border-radius: 2px; }
+.plan-tick {
+  position: absolute; top: -3px; bottom: -3px; width: 2px;
+  background: var(--ink); opacity: .4; border-radius: 1px;
+}
+
+/* ── goal detail ── */
+.sav-hero {
+  background: var(--elev); border: 1px solid var(--line);
+  border-radius: 14px; padding: 14px 15px; text-align: left;
+}
+.sav-hero .sh-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
+.sav-hero .sh-k {
+  font-family: 'JetBrains Mono', monospace; font-size: 9.5px;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--mut);
+}
+.sav-hero .sh-v {
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600;
+  font-size: 26px; letter-spacing: -.02em; line-height: 1.1; margin-top: 3px;
+}
+.sav-hero .sh-v small { font-size: 13px; color: var(--mut); font-weight: 500; }
+.sav-hero .sh-r { text-align: right; flex: 0 0 auto; }
+.sav-hero .sh-r .v { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 15px; }
+.sav-hero .sh-r .l {
+  font-family: 'JetBrains Mono', monospace; font-size: 8.5px;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--mut); margin-top: 2px;
+}
+.sav-bar {
+  height: 8px; border-radius: 4px; background: var(--line2);
+  margin-top: 12px; position: relative;
+}
+.sav-bar .fill { height: 100%; background: var(--pos); border-radius: 4px; }
+.sav-legend { font-size: 11px; color: var(--warn); margin-top: 7px; line-height: 1.45; }
+
+/* one box per cycle — which ones actually happened */
+.sav-tl-k {
+  display: flex; justify-content: space-between; gap: 8px; margin: 16px 0 8px;
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  letter-spacing: .09em; text-transform: uppercase; color: var(--mut);
+}
+.sav-tl { display: flex; gap: 4px; }
+.sav-tl .sav-step { flex: 1; min-width: 0; text-align: center; }
+.sav-tl .sav-dot {
+  height: 26px; border-radius: 7px; display: grid; place-items: center;
+  font-size: 12px; font-weight: 700;
+  border: 1.5px solid var(--line); color: var(--faint); background: var(--bg2);
+}
+.sav-tl .sav-dot.ok   { background: var(--pos); border-color: var(--pos); color: #fff; }
+.sav-tl .sav-dot.miss { background: var(--warn-s); border-color: var(--warn); color: var(--warn); }
+.sav-tl .sav-dot.now  { border-color: var(--pos); border-style: dashed; color: var(--pos); background: var(--pos-s); }
+.sav-tl .sav-when {
+  font-family: 'JetBrains Mono', monospace; font-size: 6.5px;
+  color: var(--faint); margin-top: 4px; white-space: nowrap; overflow: hidden;
+}
+
+/* the three things you can do about a goal */
+.sav-acts { display: flex; flex-direction: column; gap: 7px; margin-top: 16px; }
+.sav-act {
+  display: flex; align-items: center; gap: 11px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 12px; padding: 11px 12px; background: var(--bg2);
+}
+.sav-act:hover { border-color: var(--pos); }
+.sav-act .sa-ic {
+  width: 30px; height: 30px; border-radius: 9px; flex: 0 0 30px;
+  display: grid; place-items: center; font-size: 13px;
+  background: var(--pos-s); color: var(--pos);
+}
+.sav-act .sa-tx { flex: 1; min-width: 0; }
+.sav-act .sa-tx .n { font-weight: 600; font-size: 13px; }
+.sav-act .sa-tx .d { font-size: 10.5px; color: var(--mut); margin-top: 1px; }
+.sav-act .sa-go { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--pos); font-weight: 600; }
+.sav-act.danger .sa-ic { background: var(--floor-s); color: var(--floor); }
+.sav-act.danger:hover  { border-color: var(--floor); }
+.sav-act.danger .sa-go { color: var(--floor); }
+
+/* what a change would do, before you commit to it */
+.sav-diff {
+  margin-top: 14px; border-radius: 10px; padding: 11px 12px;
+  background: var(--line2); font-size: 12.5px; line-height: 1.5; text-align: left;
+}
+.sav-diff .row { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; }
+.sav-diff .row .l { color: var(--mut); }
+.sav-diff .row .v { font-family: 'Space Grotesk', sans-serif; font-weight: 600; }

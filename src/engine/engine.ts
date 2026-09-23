@@ -1,4 +1,7 @@
-import type { CycleInput, CycleResult, AmountVersion, CreditExtraOverride } from './types'
+import type {
+  CycleInput, CycleResult, AmountVersion, CreditExtraOverride, BudgetSpendEntry,
+  SavingsGoal, SavingsCycleLine,
+} from './types'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './dates'
 import { getOccurrencesInRange } from './recurrence'
 import { stepCredit } from './credit'
@@ -59,10 +62,67 @@ function getExtraForCycle(
   return hit ? hit.extraCents : fallbackExtraCents
 }
 
+/**
+ * What was actually spent against one budget inside a cycle.
+ *
+ * A budget is a ceiling, and the projection assumes you spend all of it. But
+ * going OVER has to count — you cannot unspend money. Before this, overspending
+ * was invisible: the closing balance kept subtracting the baseline no matter
+ * what was logged, and every later cycle inherited the wrong opening balance.
+ */
+function budgetSpentInCycle(
+  spend: BudgetSpendEntry[] | undefined,
+  expenseId: string,
+  cycleStart: string,
+  cycleEnd: string
+): number {
+  if (!spend || spend.length === 0) return 0
+  let total = 0
+  for (const e of spend) {
+    if (e.expenseId !== expenseId) continue
+    if (e.spentDate < cycleStart || e.spentDate > cycleEnd) continue
+    total += e.amountCents
+  }
+  return total
+}
+
+/**
+ * What one savings goal takes from one cycle.
+ *
+ * Returns 0 once the target is met — a goal stops on its own rather than
+ * running forever and having to be cancelled. `alreadyPlanned` is what earlier
+ * cycles in THIS run have already set aside, so the last cycle only takes what
+ * is actually still needed instead of overshooting.
+ */
+function savingsForCycle(
+  goal: SavingsGoal,
+  cycleStart: string,
+  alreadyPlannedCents: number
+): SavingsCycleLine | null {
+  if (cycleStart < goal.startCycleStart) return null
+
+  const remaining = goal.targetCents - goal.savedSoFarCents - alreadyPlannedCents
+  if (remaining <= 0) return null
+
+  const override = goal.overrides?.find(o => o.cycleStart === cycleStart)
+  const wanted = override ? override.amountCents : goal.perCycleCents
+  const amount = Math.max(0, Math.min(wanted, remaining))
+  if (amount <= 0) return null
+
+  return {
+    goalId: goal.id,
+    name: goal.name,
+    amountCents: amount,
+    targetCents: goal.targetCents,
+    remainingAfterCents: remaining - amount,
+    isOverride: !!override,
+  }
+}
+
 export function projectCycles(input: CycleInput): CycleResult[] {
   const {
     incomeSources, expenses, openingBalanceCents, startDate, numCycles,
-    safetyFloorCents, creditAccount, creditOverrides,
+    safetyFloorCents, creditAccount, creditOverrides, budgetSpend, savingsGoals,
   } = input
   const results: CycleResult[] = []
 
@@ -91,6 +151,10 @@ export function projectCycles(input: CycleInput): CycleResult[] {
   let committedBalance = openingBalanceCents
   let cardBalance      = creditActive ? creditAccount!.currentBalanceCents : 0
 
+  // Running total per goal across this projection, so a goal knows when it has
+  // been fully planned for and stops taking money.
+  const plannedByGoal: Record<string, number> = {}
+
   for (let i = 0; i < numCycles; i++) {
     const cycleEnd = getCycleEnd(cycleStart, cycleFrequency)
 
@@ -108,13 +172,34 @@ export function projectCycles(input: CycleInput): CycleResult[] {
     let fixedExpensesCents    = 0
     let variableExpensesCents = 0
     let budgetExpensesCents   = 0
+    let budgetBaselineCents   = 0
+    let budgetActualCents     = 0
     for (const exp of expenses) {
       const occs       = getOccurrencesInRange(exp.anchorDate, exp.frequency, cycleStart, cycleEnd, exp.endDate)
       const unitCents  = getAmountForCycle(exp.amountVersions, exp.amountCents, cycleStart)
       const total      = occs.length * unitCents
       if      (exp.mode === 'fixed')    fixedExpensesCents    += total
       else if (exp.mode === 'variable') variableExpensesCents += total
-      else if (exp.mode === 'budget')   budgetExpensesCents   += total
+      else if (exp.mode === 'budget') {
+        // Take the HIGHER of the budget and what was actually spent. Future
+        // cycles have nothing logged, so they fall back to the baseline on
+        // their own — no special case needed.
+        const spent = budgetSpentInCycle(budgetSpend, exp.id, cycleStart, cycleEnd)
+        budgetBaselineCents += total
+        budgetActualCents   += spent
+        budgetExpensesCents += Math.max(total, spent)
+      }
+    }
+
+    // ── savings — DERIVED, like credit, never a stored expense ───────
+    let savingsTotalCents = 0
+    const savingsLines: SavingsCycleLine[] = []
+    for (const goal of savingsGoals ?? []) {
+      const line = savingsForCycle(goal, cycleStart, plannedByGoal[goal.id] ?? 0)
+      if (!line) continue
+      savingsLines.push(line)
+      savingsTotalCents += line.amountCents
+      plannedByGoal[goal.id] = (plannedByGoal[goal.id] ?? 0) + line.amountCents
     }
 
     // ── credit — DERIVED, never a stored amount ──────────────────────
@@ -134,18 +219,7 @@ export function projectCycles(input: CycleInput): CycleResult[] {
       const extraForCycle = getExtraForCycle(
         creditOverrides, cycleStart, creditAccount!.strategyExtraCents
       )
-
-      // A monthly card only bills once a month. Use the same recurrence code
-      // every other expense uses to ask whether the due date lands in this
-      // cycle — so some cycles carry the minimum and some carry none.
-      const minimumIsDue =
-        creditAccount!.paymentFrequency === 'monthly' && creditAccount!.paymentAnchorDate
-          ? getOccurrencesInRange(
-              creditAccount!.paymentAnchorDate, 'monthly', cycleStart, cycleEnd
-            ).length > 0
-          : true
-
-      const line = stepCredit(cardBalance, creditAccount!, extraForCycle, days, minimumIsDue)
+      const line = stepCredit(cardBalance, creditAccount!, extraForCycle, days)
 
       creditOpeningBalanceCents = line.openingBalanceCents
       creditAssumedSpendCents   = line.assumedSpendCents
@@ -165,6 +239,7 @@ export function projectCycles(input: CycleInput): CycleResult[] {
     const committedClosingBalanceCents =
       committedBalance + committedIncomeCents
       - fixedExpensesCents - variableExpensesCents - budgetExpensesCents
+      - savingsTotalCents
       - creditPaymentCents
 
     const potentialClosingBalanceCents =
@@ -175,6 +250,8 @@ export function projectCycles(input: CycleInput): CycleResult[] {
       openingBalanceCents: committedBalance,
       committedIncomeCents, potentialIncomeCents,
       fixedExpensesCents, variableExpensesCents, budgetExpensesCents,
+      budgetBaselineCents, budgetActualCents,
+      savingsTotalCents, savingsLines,
       creditOpeningBalanceCents, creditAssumedSpendCents, creditInterestCents,
       creditMinimumCents, creditExtraCents, creditPaymentCents,
       creditClosingBalanceCents,
