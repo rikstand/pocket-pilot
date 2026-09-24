@@ -1361,17 +1361,20 @@ svg.proj { display:block; width:100%; height:152px; }
   letter-spacing: .1em; text-transform: uppercase; color: var(--mut);
 }
 .cr-dial-top .v { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 20px; }
-.cr-dial input[type=range] {
+.cr-dial input[type=range],
+.cr-ctrl input[type=range] {
   width: 100%; -webkit-appearance: none; appearance: none;
   height: 4px; border-radius: 3px; background: var(--line); outline: none;
 }
-.cr-dial input[type=range]::-webkit-slider-thumb {
+.cr-dial input[type=range]::-webkit-slider-thumb,
+.cr-ctrl input[type=range]::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
   width: 24px; height: 24px; border-radius: 50%;
   background: var(--credit); cursor: pointer;
   border: 2px solid var(--bg2); box-shadow: 0 1px 5px rgba(0,0,0,.22);
 }
-.cr-dial input[type=range]::-moz-range-thumb {
+.cr-dial input[type=range]::-moz-range-thumb,
+.cr-ctrl input[type=range]::-moz-range-thumb {
   width: 24px; height: 24px; border-radius: 50%;
   background: var(--credit); cursor: pointer; border: 2px solid var(--bg2);
 }
@@ -1752,3 +1755,64 @@ svg.proj { display:block; width:100%; height:152px; }
 .sav-diff .row { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; }
 .sav-diff .row .l { color: var(--mut); }
 .sav-diff .row .v { font-family: 'Space Grotesk', sans-serif; font-weight: 600; }
+
+/* ══════════════════════════════════════════════════════════════════
+   CREDIT ADJUST — controls together, consequences below
+   How much and for how long are one decision. Split across a scroll,
+   toggling the scope changed numbers that were off screen.
+   ══════════════════════════════════════════════════════════════════ */
+.cr-ctrl {
+  border: 1px solid var(--line); border-radius: 14px;
+  padding: 13px 13px 12px; background: var(--bg2); text-align: left;
+}
+.cr-ctrl .cr-scope {
+  margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--line2);
+}
+.cr-ctrl .cr-scope button { padding: 9px 6px; font-size: 12.5px; }
+.cr-ctrl .cr-scope button small { font-size: 8px; margin-top: 2px; }
+
+/* what the change does */
+.cr-pair { display: flex; gap: 9px; margin-top: 13px; }
+.cr-po {
+  flex: 1; min-width: 0; background: var(--bg2);
+  border: 1px solid var(--line); border-radius: 12px; padding: 11px 12px; text-align: left;
+}
+.cr-po .k {
+  font-family: 'JetBrains Mono', monospace; font-size: 8.5px;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--mut);
+}
+.cr-po .v {
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600;
+  font-size: 17px; margin-top: 4px; line-height: 1.15;
+}
+.cr-po .d {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  margin-top: 3px; color: var(--mut);
+}
+.cr-po.card-side { border-color: var(--credit); }
+.cr-po.card-side .v { color: var(--credit); }
+
+/* Red only when the change costs you. It used to be red permanently,
+   including when it read "same as now", so the colour said nothing. */
+.cr-po.cost.worse { border-color: var(--floor); }
+.cr-po.cost.worse .v, .cr-po.cost.worse .d { color: var(--floor); }
+.cr-po.cost.better { border-color: var(--pos); }
+.cr-po.cost.better .v, .cr-po.cost.better .d { color: var(--pos); }
+
+/* Without this the bar colours mean nothing. */
+.cr-bars { position: relative; }
+.cr-floor {
+  position: absolute; left: 11px; right: 11px;
+  border-top: 1px dashed var(--floor); opacity: .7; pointer-events: none;
+}
+.cr-floor span {
+  position: absolute; right: 0; transform: translateY(-11px);
+  font-family: 'JetBrains Mono', monospace; font-size: 7.5px;
+  letter-spacing: .04em; color: var(--floor);
+}
+
+/* The chart is a window, not the whole plan — say so. */
+.cr-beyond {
+  font-family: 'JetBrains Mono', monospace; font-size: 8px;
+  color: var(--faint); margin-top: 8px; line-height: 1.5; text-align: left;
+}

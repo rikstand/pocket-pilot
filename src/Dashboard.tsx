@@ -203,7 +203,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         const [layBys, budgetEntries, forecast] = await Promise.all([
           getLayBys(accountId),
           getBudgetSpendEntries(accountId),
-          loadForecast(accountId, floorCents, { numCycles: variant === 'forecast' ? horizonCycles : 6 }),
+          // The Cycle page renders only the focused cycle, so a longer projection
+          // costs nothing on screen — but the adjust sheet needs it. A payment
+          // running fifteen cycles was being judged against six.
+          loadForecast(accountId, floorCents, { numCycles: variant === 'forecast' ? horizonCycles : 20 }),
         ])
 
         const {
@@ -1073,11 +1076,15 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // Account balances under the candidate plan. Start from what the forecast
   // already says, then apply the DIFFERENCE in cumulative payments — payments
   // add up, so cycle 5 carries five of them, not one.
+  // Enough bars to cover most payoff plans. Anything longer says so underneath
+  // rather than letting the chart imply it is the whole story.
+  const CREDIT_BARS = 18
+
   const creditBankSeries: number[] = (() => {
     if (!creditPlanNew || !creditPlanNow) return []
     const out: number[] = []
     let deltaSoFar = 0
-    for (let i = 0; i < Math.min(cycles.length, 12); i++) {
+    for (let i = 0; i < Math.min(cycles.length, CREDIT_BARS); i++) {
       const wasPay = creditPlanNow.lines[i]?.paymentCents ?? 0
       const nowPay = creditPlanNew.lines[i]?.paymentCents ?? 0
       deltaSoFar += (nowPay - wasPay)
@@ -1089,16 +1096,6 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const creditWorstBank = creditBankSeries.length ? Math.min(...creditBankSeries) : 0
   const creditWorstIdx  = creditBankSeries.indexOf(creditWorstBank)
   const creditBaseYear  = baseYearOf(cycles)
-
-  function creditCurve(plan: { lines: { closingBalanceCents: number }[] } | null): string {
-    if (!plan) return ''
-    const pts = [cardBalanceNow, ...plan.lines.map(l => l.closingBalanceCents)].slice(0, 40)
-    const max = Math.max(cardBalanceNow, 1)
-    const span = Math.max(pts.length - 1, 1)
-    return pts.map((b, i) =>
-      `${i ? 'L' : 'M'}${((i / span) * 300).toFixed(1)} ${(46 - (Math.max(b, 0) / max) * 46).toFixed(1)}`
-    ).join(' ')
-  }
 
   /* ── savings actions ──────────────────────────────────────────────
    * Unlike a credit payment there is no due date — you can move savings any
@@ -2240,7 +2237,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               <div className="cl-v">{fmt(creditPlanNew?.lines[0]?.minimumCents ?? 0, false)}</div>
             </div>
 
-            <div className="cr-dial">
+            {/* How much, and for how long — one decision, so one box. Split
+                across a scroll, toggling the scope changed numbers you could
+                not see. */}
+            <div className="cr-ctrl">
               <div className="cr-dial-top">
                 <span className="l">Extra on top</span>
                 <span className="v">{fmt(adjExtra, false)}</span>
@@ -2252,38 +2252,94 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                 <span>{fmt(0, false)}</span>
                 <span>{fmt(Math.max(aboveFloor + creditExtraCents, 0), false)} spare</span>
               </div>
+
+              <div className="cr-scope">
+                <button className={adjScope === 'once' ? 'on' : ''} onClick={() => setAdjScope('once')}>
+                  Just this cycle<small>one-off change</small>
+                </button>
+                <button className={adjScope === 'always' ? 'on' : ''} onClick={() => setAdjScope('always')}>
+                  From now on<small>changes your plan</small>
+                </button>
+              </div>
             </div>
 
-            {/* card balance falling */}
-            <div className="cr-chart-k"><span>Card balance</span>
-              <span>{creditPlanNew?.cyclesToPayoff
-                ? `clear in ${creditPlanNew.cyclesToPayoff} cycles`
-                : 'never clears'}</span>
-            </div>
-            <div className="cr-chart">
-              <svg viewBox="0 0 300 46" preserveAspectRatio="none">
-                <line x1="0" y1="46" x2="300" y2="46" stroke="var(--line)" strokeWidth="1" />
-                <path className="cr-ln-was" d={creditCurve(creditPlanNow)} />
-                <path className="cr-ln-now" d={creditCurve(creditPlanNew)} />
-              </svg>
+            {/* What the change actually does. The payoff date moving is half of
+                it; what the slower payoff costs is the other half, and it was
+                missing entirely. */}
+            <div className="cr-pair">
+              <div className="cr-po card-side">
+                <div className="k">Card cleared</div>
+                <div className="v">
+                  {creditPlanNew?.cyclesToPayoff
+                    ? cycleDateLabel(
+                        formatDate(addDays(parseDate(activeCycle.startDate),
+                          creditPlanNew.cyclesToPayoff * creditCycleDays)), creditBaseYear)
+                    : 'Never'}
+                </div>
+                <div className="d">
+                  {creditPlanNew?.cyclesToPayoff
+                    ? <>{creditPlanNew.cyclesToPayoff} cycles</>
+                    : <>never gets ahead of interest</>}
+                </div>
+              </div>
+              {(() => {
+                const diff = (creditPlanNew?.totalInterestCents ?? 0) - (creditPlanNow?.totalInterestCents ?? 0)
+                // Red only when the change costs you. It used to be red always,
+                // including when it read "same as now", so it meant nothing.
+                const tone = Math.abs(diff) < 100 ? '' : diff > 0 ? ' worse' : ' better'
+                return (
+                  <div className={`cr-po cost${tone}`}>
+                    <div className="k">Interest</div>
+                    <div className="v">{fmt(creditPlanNew?.totalInterestCents ?? 0, false)}</div>
+                    <div className="d">
+                      {Math.abs(diff) < 100
+                        ? 'same as now'
+                        : (diff > 0 ? '+' : '−') + fmt(Math.abs(diff), false) + ' vs now'}
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
 
             {/* account balance, cycle by cycle */}
-            <div className="cr-chart-k" style={{ marginTop: 12 }}>
-              <span>Your account, after paying</span>
+            <div className="cr-chart-k" style={{ marginTop: 15 }}>
+              <span>Your account, each cycle</span>
               <span>lowest {fmt(creditWorstBank, false)}</span>
             </div>
             <div className="cr-bars">
-              {creditBankSeries.map((v, i) => {
-                const top = Math.max(...creditBankSeries, floorCents * 1.5, 1)
-                const cls = v < 0 ? 'breach' : v < floorCents ? 'low' : ''
-                return (
-                  <div key={i} className={`cr-bar ${cls}`}
-                    style={{ height: Math.max((Math.max(v, 0) / top) * 44, 3) + 'px' }}>
-                    <span className="cr-bx">{cycles[i] ? cycleTickLabel(cycles[i].startDate, creditBaseYear) : ''}</span>
-                  </div>
-                )
-              })}
+              {(() => {
+                const top = Math.max(...creditBankSeries, floorCents * 1.4, 1)
+                return <>
+                  {creditBankSeries.map((v, i) => {
+                    const cls = v < 0 ? 'breach' : v < floorCents ? 'low' : ''
+                    // Every label would collide at this width, so date every third.
+                    const showLabel = i % 3 === 0 || i === creditBankSeries.length - 1
+                    return (
+                      <div key={i} className={`cr-bar ${cls}`}
+                        style={{ height: Math.max((Math.max(v, 0) / top) * 44, 3) + 'px' }}>
+                        {showLabel && (
+                          <span className="cr-bx">
+                            {cycles[i] ? cycleTickLabel(cycles[i].startDate, creditBaseYear) : ''}
+                          </span>
+                        )}
+                      </div>
+                    )
+                  })}
+                  {/* Without this the colours mean nothing — "lowest $441" on a
+                      row of identical green bars says nothing about the floor. */}
+                  {floorCents > 0 && (
+                    <div className="cr-floor" style={{ bottom: (16 + (floorCents / top) * 44) + 'px' }}>
+                      <span>floor {fmt(floorCents, false)}</span>
+                    </div>
+                  )}
+                </>
+              })()}
+            </div>
+            <div className="cr-beyond">
+              {creditPlanNew?.cyclesToPayoff && creditPlanNew.cyclesToPayoff > creditBankSeries.length
+                ? <>showing {creditBankSeries.length} cycles · this payment continues for{' '}
+                    {creditPlanNew.cyclesToPayoff - creditBankSeries.length} more</>
+                : <>showing every cycle until the card clears</>}
             </div>
 
             {creditWorstBank < floorCents ? (
@@ -2300,15 +2356,6 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                 {' '}in the cycle starting {cycles[creditWorstIdx] ? cycleDateLabel(cycles[creditWorstIdx].startDate, creditBaseYear) : '—'}.
               </div>
             )}
-
-            <div className="cr-scope">
-              <button className={adjScope === 'once' ? 'on' : ''} onClick={() => setAdjScope('once')}>
-                Just this cycle<small>one-off change</small>
-              </button>
-              <button className={adjScope === 'always' ? 'on' : ''} onClick={() => setAdjScope('always')}>
-                From now on<small>changes your plan</small>
-              </button>
-            </div>
 
             <div className="navrow">
               <button onClick={() => setAdjOpen(false)}>Cancel</button>
