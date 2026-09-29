@@ -514,6 +514,9 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const confirmedVarTotalCents = varExpensesInCycle.reduce((sum, e) =>
     sum + Math.round(parseFloat(closeVarActuals[e.id] || '0') * 100), 0)
   const closeRealCents = Math.round(parseFloat(closeRealBalance || '0') * 100)
+  // A real balance can be $0 or overdrawn, so "entered" is about the field,
+  // not about the number being positive. The old > 0 check blocked both.
+  const closeBalanceEntered = closeRealBalance.trim() !== '' && !isNaN(parseFloat(closeRealBalance))
 
   // The pay for the NEXT cycle lands the night before it starts. If it's
   // already sitting in the balance being entered, hold it back so the next
@@ -522,9 +525,13 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const scheduledPayCents  = primaryIncome
     ? (versionForDate(primaryIncome.income_amount_versions, nextCycleStartDate)?.amount_cents ?? 0)
     : 0
-  const payLandedCents    = closePayLanded ? Math.round(parseFloat(closePayAmount || '0') * 100) : 0
+  const payDueLabel       = parseDate(nextCycleStartDate).toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' })
+  // What "Yes" would do, shown on the option before it is chosen.
+  const yesPayCents       = Math.round(parseFloat(closePayAmount || '0') * 100)
+  const yesOpenCents      = closeRealCents - yesPayCents
+  const payLandedCents    = closePayLanded ? yesPayCents : 0
   const adjustedRealCents = closeRealCents - payLandedCents
-  const unaccountedCents  = closeRealCents > 0 ? adjustedRealCents - activeCycle.committedClosingBalanceCents : 0
+  const unaccountedCents  = closeBalanceEntered ? adjustedRealCents - activeCycle.committedClosingBalanceCents : 0
 
   const laybyTotalCents      = Math.round(parseFloat(laybyTotal || '0') * 100)
   const laybyCountNum        = parseInt(laybyPayments || '0', 10) || 0
@@ -837,7 +844,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   }
 
   async function applyFreeze() {
-    if (!closeRealCents) return
+    if (!closeBalanceEntered || closePayLanded === null) return
     setCloseSaving(true)
     try {
       for (const e of varExpensesInCycle) {
@@ -855,8 +862,12 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
       if (activeCycle.id) {
         const { error: e1 } = await supabase.from('cycles')
+          // Both writes use the balance with next cycle's pay taken out.
+          // Saving the raw balance here is what made "Yes, it's in" do
+          // nothing: the pay stayed in the opening balance and the engine
+          // added it again on payday.
           .update({
-            closing_balance_cents: closeRealCents,
+            closing_balance_cents: adjustedRealCents,
             is_closed: true,
             closed_at: new Date().toISOString(),
           })
@@ -878,7 +889,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         account_id: accountId,
         start_date: nextStart,
         end_date: nextEnd,
-        opening_balance_cents: closeRealCents,
+        opening_balance_cents: adjustedRealCents,
         contingency_cents: 0,
         is_closed: false,
       })
@@ -1930,15 +1941,41 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               <div className="skipnote"><b>Budget items skipped on purpose.</b> The real balance is the check.</div>
             </>}
             {closeStep === 1 && <>
-              <h3>Has your next pay landed?</h3>
-              <p className="sd">Pay arrives the night before a cycle starts. If it's already in the balance you're about to enter, it belongs to the next cycle — not this one.</p>
+              <h3>Your real balance</h3>
+              <p className="sd">Whatever your bank says right now. The next step sorts out whether your pay is already in it.</p>
+              <div className="field">
+                <label>Actual balance right now</label>
+                <div className="inrow"><span className="pre">{sym}</span>
+                  <input type="number" inputMode="decimal" value={closeRealBalance} onChange={e => setCloseRealBalance(e.target.value)} placeholder="0.00" autoFocus />
+                </div>
+                <p className="hint">We projected {fmt(activeCycle.committedClosingBalanceCents, false)} before pay.</p>
+              </div>
+            </>}
+            {closeStep === 2 && <>
+              <h3>Is your pay already in this balance?</h3>
+              <p className="sd">
+                {scheduledPayCents > 0
+                  ? <>Your {primaryIncome?.name ?? 'pay'} of <b>{fmt(scheduledPayCents, false)}</b> is due <b>{payDueLabel}</b>. We need to know so it isn't counted twice.</>
+                  : <>Your next pay is due <b>{payDueLabel}</b>. We need to know so it isn't counted twice.</>}
+              </p>
               <div className={`opt${closePayLanded === false ? ' sel' : ''}`} onClick={() => setClosePayLanded(false)}>
-                <div className="ot">Not yet</div>
-                <div className="os">The balance you enter is used as-is.</div>
+                <div className="ot">No, not yet</div>
+                <div className="os">We'll add it on {fmtDate(nextCycleStartDate)}.</div>
+                <div className="os" style={{ display:'flex', justifyContent:'space-between', marginTop:8, paddingTop:8, borderTop:'1px solid var(--line)' }}>
+                  <span>Next cycle opens at</span>
+                  <b style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:15, color: closeRealCents < 0 ? 'var(--floor)' : 'var(--ink)' }}>{fmt(closeRealCents, false)}</b>
+                </div>
               </div>
               <div className={`opt${closePayLanded === true ? ' sel' : ''}`} onClick={() => setClosePayLanded(true)}>
-                <div className="ot">Yes — it's already in there</div>
-                <div className="os">Held back so the next cycle opens before pay, then counted as income on payday.</div>
+                <div className="ot">Yes, it's in</div>
+                <div className="os">We'll set it aside and add it back on {fmtDate(nextCycleStartDate)}.</div>
+                <div className="os" style={{ display:'flex', justifyContent:'space-between', marginTop:8, paddingTop:8, borderTop:'1px solid var(--line)' }}>
+                  <span>Next cycle opens at</span>
+                  <span>
+                    <b style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:15, color: yesOpenCents < 0 ? 'var(--floor)' : 'var(--ink)' }}>{fmt(yesOpenCents, false)}</b>
+                    {yesPayCents > 0 && <> · +{fmt(yesPayCents, false)} on {fmtDate(nextCycleStartDate)}</>}
+                  </span>
+                </div>
               </div>
               {closePayLanded === true && (
                 <div className="field">
@@ -1949,28 +1986,19 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                   <p className="hint">Defaults to your scheduled pay. Change it if the deposit differed.</p>
                 </div>
               )}
-            </>}
-            {closeStep === 2 && <>
-              <h3>Your real balance</h3>
-              <p className="sd">Whatever your bank says wins — it becomes next cycle's opening balance.</p>
-              <div className="field">
-                <label>Actual balance right now</label>
-                <div className="inrow"><span className="pre">{sym}</span>
-                  <input type="number" inputMode="decimal" value={closeRealBalance} onChange={e => setCloseRealBalance(e.target.value)} placeholder="0.00" />
+              {closePayLanded === true && yesOpenCents < 0 && (
+                <div className="nudge" style={{ marginTop:4 }}>
+                  That opens the next cycle at <b>{fmt(yesOpenCents, false)}</b>. If your pay hasn't actually landed, choose <b>No</b>.
                 </div>
-                <p className="hint">We projected {fmt(activeCycle.committedClosingBalanceCents, false)}.</p>
-                 {payLandedCents > 0 && closeRealCents > 0 && (
-                  <p className="hint">Less {fmt(payLandedCents, false)} pay → next cycle opens at {fmt(adjustedRealCents, false)}.</p>
-                )}
-              </div>
+              )}
             </>}
             {closeStep === 3 && <>
               <h3>Reconcile & close</h3>
               <p className="sd">The gap between forecast and reality.</p>
               <div className="recline"><span>Projected close</span><b>{fmt(activeCycle.committedClosingBalanceCents, false)}</b></div>
               {confirmedVarTotalCents > 0 && <div className="recline"><span>Confirmed variables</span><b>−{fmt(confirmedVarTotalCents, false)}</b></div>}
-             <div className="recline"><span>Your real balance</span><b>{closeRealCents > 0 ? fmt(closeRealCents, false) : '—'}</b></div>
-              {payLandedCents > 0 && <div className="recline"><span>Pay held for next cycle</span><b>−{fmt(payLandedCents, false)}</b></div>}
+              <div className="recline"><span>Your real balance</span><b>{closeBalanceEntered ? fmt(closeRealCents, false) : '—'}</b></div>
+              {payLandedCents > 0 && <div className="recline"><span>Pay held for {fmtDate(nextCycleStartDate)}</span><b>−{fmt(payLandedCents, false)}</b></div>}
               <div className="recline"><span>Next cycle opens at</span><b>{fmt(adjustedRealCents, false)}</b></div>
               <div className={`recline${unaccountedCents >= 0 ? ' res' : ''}`}>
                 <span>Unaccounted</span>
@@ -1985,10 +2013,16 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               : <div className="navrow">
                   {closeStep > 0 && <button onClick={() => setCloseStep(s => s - 1)}>Back</button>}
                   {closeStep < 3
-                    ? <button className="pri"
-                        style={{ opacity: closeStep === 1 && closePayLanded === null ? 0.4 : 1 }}
-                        onClick={() => { if (!(closeStep === 1 && closePayLanded === null)) setCloseStep(s => s + 1) }}>Next</button>
-                    : <button className="pri" style={{ opacity: closeRealCents > 0 && !closeSaving ? 1 : 0.4 }} onClick={applyFreeze}>
+                    ? (() => {
+                        // Step 1 needs a balance; step 2 needs an answer. The
+                        // balance comes first now so each answer can show
+                        // what it would open the next cycle at.
+                        const blocked = (closeStep === 1 && !closeBalanceEntered) || (closeStep === 2 && closePayLanded === null)
+                        return <button className="pri"
+                          style={{ opacity: blocked ? 0.4 : 1 }}
+                          onClick={() => { if (!blocked) setCloseStep(s => s + 1) }}>Next</button>
+                      })()
+                    : <button className="pri" style={{ opacity: closeBalanceEntered && !closeSaving ? 1 : 0.4 }} onClick={applyFreeze}>
                         {closeSaving ? 'Freezing…' : 'Freeze & start next cycle'}
                       </button>
                   }
