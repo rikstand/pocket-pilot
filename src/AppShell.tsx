@@ -1,5 +1,6 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useAccount } from './lib/AccountContext'
+import { useViewport } from './lib/useViewport'
 
 export type Page = 'cycle' | 'forecast' | 'expenses' | 'wishlist' | 'credit' | 'settings'
 
@@ -38,10 +39,33 @@ const ACCT_COLOURS_DARK = [
   { bg: '#633806', text: '#FAC775' },
 ]
 
+// One list drives both the drawer and the desktop rail, so the two can never
+// offer different pages.
+const NAV_MAIN: { page: Page; label: string; icon: ReactNode; di: string }[] = [
+  { page: 'cycle',    label: 'Cycle',    icon: '◎',                          di: 'cyc' },
+  { page: 'forecast', label: 'Forecast', icon: <ForecastIcon size={15} />,  di: 'fc'  },
+]
+const NAV_MANAGE: { page: Page; label: string; icon: ReactNode; di: string }[] = [
+  { page: 'expenses', label: 'Expenses', icon: '▤', di: 'exp'  },
+  { page: 'wishlist', label: 'Wishlist', icon: '☆', di: 'wish' },
+  { page: 'credit',   label: 'Credit',   icon: '▭', di: 'crd'  },
+]
+
 export default function AppShell({ active, onNavigate, darkMode, onToggleDark, onAddAccount, children }: AppShellProps) {
   const { accounts, activeAccount, setActiveAccountId } = useAccount()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [acctOpen,   setAcctOpen]   = useState(false)
+  const viewport = useViewport()
+  const isDesktop = viewport === 'desktop'
+
+  // Vite's starter index.css pads and centres #root. That suits the 480px
+  // phone column but boxes in the desktop shell, so desktop switches it off
+  // with a class rather than rewriting index.css.
+  useEffect(() => {
+    document.body.classList.toggle('is-desktop', isDesktop)
+    if (isDesktop) setDrawerOpen(false)
+    return () => { document.body.classList.remove('is-desktop') }
+  }, [isDesktop])
 
   const autoExpand = accounts.length <= 2
   const acctExpanded = autoExpand || acctOpen
@@ -55,16 +79,106 @@ export default function AppShell({ active, onNavigate, darkMode, onToggleDark, o
   function handleSelectAccount(id: string) {
     setActiveAccountId(id)
     setDrawerOpen(false)
+    setAcctOpen(false)
   }
 
   function handleAddAccount() {
     setDrawerOpen(false)
+    setAcctOpen(false)
     onAddAccount()
   }
 
   const activeIdx = accounts.findIndex(a => a.id === activeAccount?.id)
   const activeCol = palette[activeIdx >= 0 ? activeIdx % palette.length : 0]
 
+  /* ── the account list, shared by drawer and rail ── */
+  const accountRows = (
+    <div className="acct-block">
+      {accounts.map((acct, i) => {
+        const col = palette[i % palette.length]
+        const isActive = acct.id === activeAccount?.id
+        return (
+          <div
+            key={acct.id}
+            className={`acct-row${isActive ? ' active' : ''}`}
+            onClick={() => handleSelectAccount(acct.id)}
+          >
+            <div className="acct-dot" style={{ background: col.bg, color: col.text }}>
+              {acct.name.charAt(0).toUpperCase()}
+            </div>
+            <div className="acct-info">
+              <div className="acct-name">{acct.name}</div>
+              <div className="acct-cur">{acct.currency_code}</div>
+            </div>
+            {isActive && <span className="acct-check">✓</span>}
+          </div>
+        )
+      })}
+      <div className="acct-row" onClick={handleAddAccount}>
+        <div className="acct-dot acct-dot-add">+</div>
+        <div className="acct-info">
+          <div className="acct-name acct-name-add">Add account</div>
+        </div>
+      </div>
+    </div>
+  )
+
+  /* ═══════════ desktop: persistent rail, no bottom nav, no drawer ═══════════ */
+  if (isDesktop) {
+    const navButton = (n: { page: Page; label: string; icon: ReactNode; di: string }) => (
+      <button key={n.page} type="button"
+        className={`rail-item${active === n.page ? ' active' : ''}`}
+        aria-current={active === n.page ? 'page' : undefined}
+        onClick={() => go(n.page)}>
+        <span className={`di ${n.di}`}>{n.icon}</span>
+        <span className="rail-lbl">{n.label}</span>
+      </button>
+    )
+
+    return (
+      <div className="dshell">
+        <aside className="rail">
+          <div className="rail-mark">Pocket<b>Pilot</b></div>
+
+          {/* The active account is always visible; the full list opens under it. */}
+          <button type="button" className="rail-acct" onClick={() => setAcctOpen(o => !o)}
+            aria-expanded={acctOpen}>
+            {activeAccount && (
+              <div className="acct-dot" style={{ background: activeCol.bg, color: activeCol.text }}>
+                {activeAccount.name.charAt(0).toUpperCase()}
+              </div>
+            )}
+            <span className="rail-acct-name">{activeAccount?.name ?? 'Account'}</span>
+            <span className="acct-cur">{activeAccount?.currency_code}</span>
+            <span className="acct-chv" style={{ transform: acctOpen ? 'rotate(180deg)' : 'none' }}>▾</span>
+          </button>
+          {acctOpen && accountRows}
+
+          <nav className="rail-grp">{NAV_MAIN.map(navButton)}</nav>
+          <nav className="rail-grp">
+            <div className="rail-grp-lbl">Manage</div>
+            {NAV_MANAGE.map(navButton)}
+          </nav>
+
+          <div className="rail-gap" />
+
+          <div className="rail-foot">
+            <button type="button" className="rail-item" onClick={onToggleDark}>
+              <span className="di set">{darkMode ? '☀' : '☾'}</span>
+              <span className="rail-lbl">{darkMode ? 'Light mode' : 'Dark mode'}</span>
+            </button>
+            {navButton({ page: 'settings', label: 'Settings', icon: '⚙', di: 'set' })}
+          </div>
+        </aside>
+
+        <main className="dmain">
+          <div className="dcol">{children}</div>
+        </main>
+      </div>
+    )
+  }
+
+  /* ═══════════ mobile: unchanged ═══════════ */
   return (
     <div className="app">
       <div className="appbar">
@@ -114,55 +228,21 @@ export default function AppShell({ active, onNavigate, darkMode, onToggleDark, o
               )}
             </div>
 
-            {acctExpanded && (
-              <div className="acct-block">
-                {accounts.map((acct, i) => {
-                  const col = palette[i % palette.length]
-                  const isActive = acct.id === activeAccount?.id
-                  return (
-                    <div
-                      key={acct.id}
-                      className={`acct-row${isActive ? ' active' : ''}`}
-                      onClick={() => handleSelectAccount(acct.id)}
-                    >
-                      <div className="acct-dot" style={{ background: col.bg, color: col.text }}>
-                        {acct.name.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="acct-info">
-                        <div className="acct-name">{acct.name}</div>
-                        <div className="acct-cur">{acct.currency_code}</div>
-                      </div>
-                      {isActive && <span className="acct-check">✓</span>}
-                    </div>
-                  )
-                })}
-                <div className="acct-row" onClick={handleAddAccount}>
-                  <div className="acct-dot acct-dot-add">+</div>
-                  <div className="acct-info">
-                    <div className="acct-name acct-name-add">Add account</div>
-                  </div>
-                </div>
+            {acctExpanded && accountRows}
+
+            <div className="drawer-div" />
+
+            {NAV_MAIN.map(n => (
+              <div key={n.page} className={`drawer-item${active === n.page ? ' active' : ''}`} onClick={() => go(n.page)}>
+                <div className={`di ${n.di}`}>{n.icon}</div><div className="dt">{n.label}</div>
               </div>
-            )}
-
+            ))}
             <div className="drawer-div" />
-
-            <div className={`drawer-item${active === 'cycle' ? ' active' : ''}`} onClick={() => go('cycle')}>
-              <div className="di cyc">◎</div><div className="dt">Cycle</div>
-            </div>
-            <div className={`drawer-item${active === 'forecast' ? ' active' : ''}`} onClick={() => go('forecast')}>
-              <div className="di fc"><ForecastIcon size={15} /></div><div className="dt">Forecast</div>
-            </div>
-            <div className="drawer-div" />
-            <div className={`drawer-item${active === 'expenses' ? ' active' : ''}`} onClick={() => go('expenses')}>
-              <div className="di exp">▤</div><div className="dt">Expenses</div>
-            </div>
-            <div className={`drawer-item${active === 'wishlist' ? ' active' : ''}`} onClick={() => go('wishlist')}>
-              <div className="di wish">☆</div><div className="dt">Wishlist</div>
-            </div>
-            <div className={`drawer-item${active === 'credit' ? ' active' : ''}`} onClick={() => go('credit')}>
-              <div className="di crd">▭</div><div className="dt">Credit</div>
-            </div>
+            {NAV_MANAGE.map(n => (
+              <div key={n.page} className={`drawer-item${active === n.page ? ' active' : ''}`} onClick={() => go(n.page)}>
+                <div className={`di ${n.di}`}>{n.icon}</div><div className="dt">{n.label}</div>
+              </div>
+            ))}
             <div className="drawer-div" />
             <div className={`drawer-item${active === 'settings' ? ' active' : ''}`} onClick={() => go('settings')}>
               <div className="di set">⚙</div><div className="dt">Settings</div>
