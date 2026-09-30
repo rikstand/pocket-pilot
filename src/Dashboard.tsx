@@ -844,36 +844,14 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   }
 
   async function applyFreeze() {
-    if (!closeBalanceEntered || closePayLanded === null) return
+    // closeSaving guards a double tap: the button only looked disabled while
+    // saving, so a second tap could start a second close.
+    if (closeSaving || !closeBalanceEntered || closePayLanded === null) return
     setCloseSaving(true)
     try {
-      for (const e of varExpensesInCycle) {
-        const actualStr = closeVarActuals[e.id]
-        if (!actualStr) continue
-        const actualCents = Math.round(parseFloat(actualStr) * 100)
-        const { error } = await supabase.from('cycle_expense_actuals').insert({
-          cycle_id: activeCycle.id ?? null,
-          account_id: accountId,
-          expense_id: e.id,
-          actual_amount_cents: actualCents,
-        })
-        if (error) console.warn('actual insert failed:', error.message)
-      }
-
-      if (activeCycle.id) {
-        const { error: e1 } = await supabase.from('cycles')
-          // Both writes use the balance with next cycle's pay taken out.
-          // Saving the raw balance here is what made "Yes, it's in" do
-          // nothing: the pay stayed in the opening balance and the engine
-          // added it again on payday.
-          .update({
-            closing_balance_cents: adjustedRealCents,
-            is_closed: true,
-            closed_at: new Date().toISOString(),
-          })
-          .eq('id', activeCycle.id)
-        if (e1) throw e1
-      }
+      const actuals = varExpensesInCycle
+        .map(e => ({ expense_id: e.id, actual_amount_cents: Math.round(parseFloat(closeVarActuals[e.id] || '') * 100) }))
+        .filter(a => Number.isFinite(a.actual_amount_cents))
 
       const nextStart = addOneDay(activeCycle.endDate)
       const freq      = primaryIncome?.frequency ?? 'fortnightly'
@@ -884,16 +862,22 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       else if (freq === 'monthly')     nextEnd = formatDate(addDays(addMonths(nsDate, 1), -1))
       else                             nextEnd = formatDate(addDays(addYears(nsDate, 1), -1))
 
-      const { error: e2 } = await supabase.from('cycles').insert({
-        profile_id: userId,
-        account_id: accountId,
-        start_date: nextStart,
-        end_date: nextEnd,
-        opening_balance_cents: adjustedRealCents,
-        contingency_cents: 0,
-        is_closed: false,
+      // One call, one transaction. Closing this cycle, saving the actuals and
+      // opening the next one either all happen or none do. Doing them as
+      // three separate writes is what left a cycle marked closed with no
+      // cycle after it on 30 Sep 2026. See close_cycle.sql.
+      //
+      // The balance passed is the one with next cycle's pay taken out. It is
+      // both this cycle's closing balance and the next one's opening balance.
+      const { error } = await supabase.rpc('close_cycle', {
+        p_account_id:    accountId,
+        p_cycle_id:      activeCycle.id ?? null,
+        p_closing_cents: adjustedRealCents,
+        p_next_start:    nextStart,
+        p_next_end:      nextEnd,
+        p_actuals:       actuals,
       })
-      if (e2) throw e2
+      if (error) throw error
 
       setCloseFrozen(true)
       setTimeout(() => {
@@ -903,7 +887,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       }, 1500)
     } catch (e: any) {
       console.error(e)
-      alert('Could not freeze cycle: ' + e.message)
+      // Nothing was saved, so the same close can simply be tried again.
+      alert('Could not close this cycle, so nothing was changed. You can try again.\n\n' + e.message)
     } finally {
       setCloseSaving(false)
     }
