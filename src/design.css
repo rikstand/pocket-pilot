@@ -1905,3 +1905,32 @@ body.is-desktop .sheet {
 body.is-desktop .sheet .grab { display: none; }
 body.is-desktop .sheet h3 { padding-right: 40px; }
 @keyframes pop { from { opacity: 0; transform: scale(.97) } to { opacity: 1; transform: none } }
+
+/* ══════════════════════════════════════════════════════════════════
+   DESKTOP CYCLE PAGE
+   Sections on the left, each keeping its own accordion. The two glance
+   cards and the close button stay in view on the right instead of sitting
+   in a swipe carousel above everything.
+   ══════════════════════════════════════════════════════════════════ */
+body.is-desktop .dcol.wide { max-width: 1180px; }
+
+.dcyc {
+  display: grid; grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 24px; align-items: start;
+}
+.dcyc-main { min-width: 0; }
+.dcyc-side {
+  position: sticky; top: 18px;
+  display: flex; flex-direction: column; gap: 12px;
+  padding-top: 14px;
+  max-height: calc(100vh - 36px); overflow-y: auto; scrollbar-width: none;
+}
+.dcyc-side::-webkit-scrollbar { width: 0; }
+.dcyc-side-lbl {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: .18em;
+  text-transform: uppercase; color: var(--mut); padding: 0 2px;
+}
+.dcyc-side .cyc-card { flex: none; }
+.dcyc-close .closebtn { margin: 2px 0 6px; width: 100%; }
+.dcyc-close .closehint { padding: 0 4px; }
+.dcyc-close:empty { display: none; }

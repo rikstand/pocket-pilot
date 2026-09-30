@@ -25,6 +25,7 @@ import { getOccurrencesInRange } from './engine/recurrence'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
 import { byOldest, latestVersion, versionForDate } from './lib/versions'
 import { ExpenseIcon, guessIcon } from './lib/icons'
+import { useViewport } from './lib/useViewport'
 
 function fmtDate(d: string) {
   return parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
@@ -79,6 +80,11 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const [loading,     setLoading]     = useState(true)
   const [reloadKey,   setReloadKey]   = useState(0)
   const pillsRef = useRef<HTMLDivElement>(null)
+  // Desktop Cycle page puts the at-a-glance cards and the close button in a
+  // column beside the sections instead of a swipe carousel above them.
+  // Same cards, same data — only where they sit changes.
+  const viewport = useViewport()
+  const deskCycle = viewport === 'desktop' && variant === 'cycle'
 
   // NEW — cycle carousel dot tracking (Available-to-spend / Next-payments swipe)
   const [activeCarouselDot, setActiveCarouselDot] = useState(0)
@@ -1268,63 +1274,422 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     background: 'var(--pos-s)', color: 'var(--pos)',
   }
 
+  // ── pieces shared by the phone and desktop Cycle layouts ─────────
+  const nextPaymentsCard = (
+    <div className="cyc-card">
+      <div className="cyc-card-hdr">
+        <div className="cyc-card-title next">Next payments</div>
+      </div>
+      {nextPayments.length === 0 && (
+        <div style={{ fontSize: 12, color: 'var(--mut)' }}>Nothing scheduled this cycle.</div>
+      )}
+      {nextPayments.map((p, i) => (
+        <div className="np-row" key={i}>
+          <div className="np-ic" style={{
+            background: p.isLayby ? 'var(--event-s)' : 'var(--acc-s)',
+            color: p.isLayby ? 'var(--event)' : 'var(--acc)',
+          }}>
+            <ExpenseIcon name={p.icon} size={16} />
+          </div>
+          <div className="np-tx">
+            <div className="np-nm">{p.name}</div>
+            <div className="np-dt">{fmtDate(p.date)} · {p.subLabel}</div>
+          </div>
+          <div className="np-amt">{fmt(p.amountCents, false)}</div>
+        </div>
+      ))}
+    </div>
+  )
+
+  const availableCard = (
+    <div className="cyc-card ring-corner">
+      <div className="cyc-card-hdr">
+        <div className="cyc-card-title spend">Available to spend</div>
+      </div>
+      <svg className="ring-svg-dual" width="58" height="58" viewBox="0 0 58 58">
+        <circle className="ring-track" cx="29" cy="29" r={OUTER_R} strokeWidth="3" />
+        <circle className="ring-fill cyc" cx="29" cy="29" r={OUTER_R} strokeWidth="3"
+          strokeDasharray={OUTER_C} strokeDashoffset={outerDashoffset} />
+        <circle className="ring-track" cx="29" cy="29" r={INNER_R} strokeWidth="6" />
+        <circle className="ring-fill" cx="29" cy="29" r={INNER_R} strokeWidth="6"
+          style={{ stroke: budgetRingColor }}
+          strokeDasharray={INNER_C} strokeDashoffset={innerDashoffset} />
+      </svg>
+      <div className="rs-hero">{fmt(availableToSpendCents, false)}</div>
+      <div className="rs-sub">next cycle in {daysToNextCycle} days</div>
+      <div className="rs-breakdown">
+        <div className="rs-line">
+          <div className="rs-dot" style={{ background: budgetRingColor }} />
+          <div className="rs-line-lbl">Budget tracked</div>
+          <div className="rs-line-val">{fmt(budgetSpentSoFarCents, false)} of {fmt(budgetTotalCents, false)}</div>
+        </div>
+      </div>
+    </div>
+  )
+
+  const closeBlock = (status === 'now' || status === 'overdue') ? (
+    <>
+      <button className="closebtn" onClick={openClose}>
+        {status === 'overdue' ? 'Close this overdue cycle →' : 'Close this cycle →'}
+      </button>
+      <div className="closehint">
+        {status === 'overdue'
+          ? 'This cycle ended already — closing it locks in your real balance and starts the next one.'
+          : "Confirms the real balance that becomes next cycle's opening."}
+      </div>
+    </>
+  ) : null
+
+  // The cycle header, every section (each keeps its own open/close
+  // accordion) and the add button. Rendered on its own on the phone and
+  // Forecast page; beside the glance column on the desktop Cycle page.
+  const cycleBody = (
+    <>
+    <div className="cyc">
+      <div className="cyc-h">
+        <div className="ttl">{fmtDate(activeCycle.startDate)} – {fmtDate(activeCycle.endDate)}</div>
+        <div className={`stt ${status==='past'?'frozen':status==='overdue'?'low':status}`}>
+          {status==='now'?'Current':status==='past'?'Closed':status==='overdue'?'Needs closing':status==='low'?'Near floor':'Forecast'}
+        </div>
+      </div>
+      {variant === 'forecast' && activeIdx !== currentIdx && (
+        <button className="back-to-now" onClick={() => setActiveIdx(currentIdx)}>
+          ← back to current cycle
+        </button>
+      )}
+      <div className="carry">
+        <span className="o">opens <b>{fmt(activeCycle.openingBalanceCents,false)}</b></span>
+        <span className="arr">→</span>
+        <span className="c">closes <b>{fmt(activeCycle.committedClosingBalanceCents,false)}</b></span>
+      </div>
+      {floorCents > 0 ? (
+        <div className={`nudge${aboveFloor>=0?' ok':''}`}>
+          {aboveFloor>=0
+            ? <><b>{fmt(aboveFloor,false)}</b> above your floor {status==='past'?'that cycle':'this cycle'}.</>
+            : <>{status==='past'?'Closed':'Closes'} <b>{fmt(Math.abs(aboveFloor),false)}</b> below your floor.</>}
+        </div>
+      ) : activeCycle.committedClosingBalanceCents < 0 ? (
+        <div className="nudge">
+          {status==='past'?'Closed':status==='overdue'?'Would close':'Closes'} <b>{fmt(Math.abs(activeCycle.committedClosingBalanceCents),false)}</b> negative {status==='past'?'that cycle':'this cycle'}.
+        </div>
+      ) : null}
+    </div>
+
+    {incomeCards.length > 0 && (
+      <>
+        <div className="section-hdr sh-inc tappable" onClick={() => toggleSec('income')}>
+          <span className="sh-label">Money in</span>
+          <span className="sh-right">
+            <span className="sh-total">+{fmt(incomeTotalCents, false)}</span>
+            <span className={`chv${openSecs.income ? ' up' : ''}`}>▾</span>
+          </span>
+        </div>
+        {openSecs.income && (
+          <div className="cards">
+            {incomeCards.map((cd, i) => (
+              <div key={'inc'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}
+                style={{ cursor: 'pointer' }}
+                onClick={() => {
+                  if (cd.oneOff) {
+                    setOneOffError(''); setOneOffName(cd.name)
+                    setOneOffAmt(String(cd.totalCents / 100))
+                    setOneOffCertain(!(cd.isPotential ?? true))
+                    setOneOffItem(cd)
+                  } else {
+                    openIncomeEdit(cd)
+                  }
+                }}
+              >
+                <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
+                <div className="tx">
+                  <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
+                  <div className="dt">{cd.detail}</div>
+                  <div className="act-row"><span className="act">{cd.oneOff ? 'manage →' : 'edit →'}</span></div>
+                </div>
+                <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </>
+    )}
+
+    {fixedCards.length > 0 && (
+      <>
+        <div className="section-hdr sh-fix tappable" onClick={() => toggleSec('fixed')}>
+          <span className="sh-label">Fixed expenses</span>
+          <span className="sh-right">
+            <span className="sh-total">−{fmt(fixedTotalCents, false)}</span>
+            <span className={`chv${openSecs.fixed ? ' up' : ''}`}>▾</span>
+          </span>
+        </div>
+        {openSecs.fixed && (
+          <div className="cards">
+            {fixedCards.map((cd, i) => (
+              <div key={'fix'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}
+                style={cd.oneOff ? { cursor: 'pointer' } : undefined}
+                onClick={cd.oneOff ? () => {
+                  setOneOffError(''); setOneOffName(cd.name)
+                  setOneOffAmt(String(cd.totalCents / 100))
+                  setOneOffCertain(false)
+                  setOneOffItem(cd)
+                } : undefined}
+              >
+                <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
+                <div className="tx">
+                  <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
+                  <div className="dt">{cd.detail}</div>
+                  <div className="act-row">
+                    {cd.act === 'edit' && <span className="act" onClick={() => openEdit(cd)}>edit →</span>}
+                    {cd.act === 'oneoff' && <span className="act">manage →</span>}
+                    {cd.laybyPct != null && (
+                      <div className="exp-prog" style={{ flex: 1, marginTop: 0 }}>
+                        <div className="fill" style={{ width: cd.laybyPct + '%', background: 'var(--event)' }} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </>
+    )}
+
+    {showSavings && (
+      <>
+        <div className="section-hdr sh-sav tappable" onClick={() => toggleSec('savings')}>
+          <span className="sh-label">Savings</span>
+          <span className="sh-right">
+            <span className="sh-total">−{fmt(savingsTotalCents, false)}</span>
+            <span className={`chv${openSecs.savings ? ' up' : ''}`}>▾</span>
+          </span>
+        </div>
+        {openSecs.savings && (
+          <div className="cards">
+            {savingsLines.map((line: any) => {
+              const goal = goalRow(line.goalId)
+              if (!goal) return null
+              const done   = isSetAside(line.goalId)
+              const saved  = savedSoFar(line.goalId)
+              const target = goal.target_cents
+              const plan   = planSaysBy(line.goalId)
+              const pct     = target > 0 ? Math.min(100, Math.round((saved / target) * 100)) : 0
+              const planPct = target > 0 ? Math.min(100, Math.round((plan  / target) * 100)) : 0
+              const behind  = plan - saved
+              return (
+                <div key={line.goalId} className="card" onClick={() => setSavTarget(goal)}>
+                  <div className="ic sav">◷</div>
+                  <div className="tx">
+                    <div className="nm">
+                      {goal.name}
+                      {done
+                        ? <span className="chip sav-ok">set aside ✓</span>
+                        : <span className="chip sav-pend">not yet</span>}
+                      {behind > 0 && !done && <span className="chip sav-behind">behind</span>}
+                      {line.isOverride && <span className="chip drv">this cycle only</span>}
+                    </div>
+                    <div className="dt">
+                      {fmt(saved, false)} of {fmt(target, false)} · {fmt(line.amountCents, false)} this cycle
+                      {behind > 0 && <> · <b style={{ color: 'var(--warn)' }}>{fmt(behind, false)} behind plan</b></>}
+                    </div>
+                    <div className="act-row">
+                      {/* The tick on the bar is where the plan says you should be.
+                          The gap between it and the green is the honest part. */}
+                      <div className="exp-prog sav-prog" style={{ flex: 1, marginTop: 0 }}>
+                        <div className="fill" style={{ width: pct + '%', background: 'var(--pos)' }} />
+                        {planPct > 0 && planPct < 100 && (
+                          <div className="plan-tick" style={{ left: planPct + '%' }} />
+                        )}
+                      </div>
+                      <button className="act" type="button"
+                        style={{ color: done ? 'var(--mut)' : 'var(--pos)' }}
+                        disabled={savBusy}
+                        onClick={e => { e.stopPropagation(); toggleSetAside(line.goalId) }}>
+                        {done ? 'undo' : 'set aside →'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="vl">−{fmt(line.amountCents, false)}</div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </>
+    )}
+
+    {showCredit && (
+      <>
+        <div className="section-hdr sh-crd tappable" onClick={() => toggleSec('credit')}>
+          <span className="sh-label">Credit payments</span>
+          <span className="sh-right">
+            <span className="sh-total">−{fmt(creditPaymentCents, false)}</span>
+            <span className={`chv${openSecs.credit ? ' up' : ''}`}>▾</span>
+          </span>
+        </div>
+        {openSecs.credit && (
+          <div className="cards">
+            <div className="card">
+              <div className="ic crd">▭</div>
+              <div className="tx">
+                <div className="nm">
+                  {rawCredit?.name ?? 'Credit card'}
+                  {creditState === 'paid'
+                    ? <span className="chip pd">paid ✓</span>
+                    : creditState === 'due'
+                      ? <span className="chip due">not confirmed</span>
+                      : <span className="chip drv">planned</span>}
+                  {creditExtraCents !== standingExtra && creditState !== 'paid' && (
+                    <span className="chip drv">this cycle only</span>
+                  )}
+                </div>
+                <div className="dt">
+                  min {fmt(creditMinimumCents, false)}
+                  {creditExtraCents > 0 && <> + extra {fmt(creditExtraCents, false)}</>}
+                  {' · '}{fmt(creditLeftCents, false)} left
+                  {creditDueDate && <> · due {fmtDate(creditDueDate)}</>}
+                </div>
+                <div className="act-row">
+                  <div className="exp-prog" style={{ flex: 1, marginTop: 0 }}>
+                    <div className="fill" style={{ width: creditPct + '%', background: 'var(--credit)' }} />
+                  </div>
+                  {creditState === 'before' && (
+                    <button className="act" type="button" onClick={openCreditAdjust}>adjust →</button>
+                  )}
+                  {creditState === 'due' && (
+                    <button className="act" type="button" style={{ color: 'var(--floor)' }} onClick={markCreditPaid}>confirm →</button>
+                  )}
+                  {creditState === 'paid' && (
+                    <button className="act" type="button" style={{ color: 'var(--mut)' }} onClick={undoCreditPaid}>undo</button>
+                  )}
+                </div>
+              </div>
+              <div className="vl">−{fmt(creditPaymentCents, false)}</div>
+            </div>
+          </div>
+        )}
+      </>
+    )}
+
+    {varCards.length > 0 && (
+      <>
+        <div className="section-hdr sh-var tappable" onClick={() => toggleSec('var')}>
+          <span className="sh-label">Estimates</span>
+          <span className="sh-right">
+            <span className="sh-total">−{fmt(varTotalCents, false)}</span>
+            <span className={`chv${openSecs.var ? ' up' : ''}`}>▾</span>
+          </span>
+        </div>
+        {openSecs.var && (
+          <div className="cards">
+            {varCards.map((cd, i) => (
+              <div key={'var'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
+                <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
+                <div className="tx">
+                  <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
+                  <div className="dt">{cd.detail}</div>
+                  <div className="act-row">{cd.act === 'var' && <span className="act" onClick={() => openVar(cd)}>confirm →</span>}</div>
+                </div>
+                <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </>
+    )}
+
+    {budgetCards.length > 0 && (
+      <>
+        <div className="section-hdr sh-bud tappable" onClick={() => toggleSec('budget')}>
+          <span className="sh-label">Budget</span>
+          <span className="sh-right">
+            <span className="sh-total">−{fmt(budgetTotalCents, false)}</span>
+            <span className={`chv${openSecs.budget ? ' up' : ''}`}>▾</span>
+          </span>
+        </div>
+        {openSecs.budget && baselineAdvice.length > 0 && (
+          <div className="cards" style={{ paddingBottom: 0 }}>
+            {baselineAdvice.map(b => (
+              <div key={'bl' + b.expenseId} className="baseline-tip">
+                <div className="bt-ic">◷</div>
+                <div className="bt-tx">
+                  <div className="bt-n">{b.name} is set higher than you spend</div>
+                  <div className="bt-d">
+                    Budgeted <b>{fmt(b.baselineCents, false)}</b>, averaged{' '}
+                    <b>{fmt(b.averageCents, false)}</b> over {b.cyclesCounted} closed cycles.
+                    The forecast assumes the full {fmt(b.baselineCents, false)} every cycle,
+                    so it reads tighter than it is.
+                  </div>
+                </div>
+                <button className="bt-x"
+                  onClick={() => setDismissedBaseline(d => [...d, b.expenseId])}
+                  aria-label="Dismiss">×</button>
+              </div>
+            ))}
+          </div>
+        )}
+        {openSecs.budget && (
+          <div className="cards">
+            {budgetCards.map((cd, i) => {
+              const entries = entriesForExpenseInCycle(cd.expenseId)
+              const spent = entries.reduce((s, e) => s + e.amount_cents, 0)
+              const rawPct = cd.totalCents > 0 ? Math.round((spent / cd.totalCents) * 100) : 0
+              const pct = Math.min(100, rawPct)
+              const barState = rawPct >= 100 ? 'over' : rawPct >= 80 ? 'warn' : ''
+              const quickAddOpen = openQuickAdd === cd.expenseId
+              return (
+                <div key={'bud'+i} className="budg-card">
+                  <div className="budg-top" onClick={() => openLog(cd)}>
+                    <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
+                    <div className="budg-tx">
+                      <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
+                      <div className="budg-sofar"><b>{fmt(spent, false)}</b> of {fmt(cd.totalCents, false)}</div>
+                      <div className="budg-barwrap"><div className={`budg-bar ${barState}`} style={{ width: pct + '%' }} /></div>
+                    </div>
+                    <button className={`budg-plus${quickAddOpen ? ' on' : ''}`} onClick={e => { e.stopPropagation(); toggleQuickAdd(cd.expenseId) }}>{quickAddOpen ? '×' : '+'}</button>
+                  </div>
+                  <div className={`budg-quickadd${quickAddOpen ? ' on' : ''}`}>
+                    <div className="budg-qa-inner">
+                      <span className="pre">{sym}</span>
+                      <input
+                        type="number" inputMode="decimal" placeholder="0.00"
+                        value={quickAddAmount} onChange={e => setQuickAddAmount(e.target.value)}
+                        onClick={e => e.stopPropagation()}
+                        onKeyDown={e => { if (e.key === 'Enter') saveQuickAdd(cd.expenseId) }}
+                      />
+                      <button className="budg-qa-save" onClick={e => { e.stopPropagation(); saveQuickAdd(cd.expenseId) }}>Add</button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </>
+    )}
+
+    {status !== 'past' && (
+      <div style={{ padding:'14px 16px 0' }}>
+        <button className="addbtn" onClick={openAddToCycle}>+ Add to this cycle</button>
+      </div>
+    )}
+    </>
+  )
+
   // ── render ────────────────────────────────────────────────────────
   return (
     <>
       <div className="scrollarea">
 
-        {variant === 'cycle' && (
+        {variant === 'cycle' && !deskCycle && (
           <div className="cyc-carousel-wrap">
             <div className="cyc-carousel-label">This cycle · at a glance</div>
             <div className="cyc-carousel" ref={carouselRef} onScroll={handleCarouselScroll}>
 
-              <div className="cyc-card">
-                <div className="cyc-card-hdr">
-                  <div className="cyc-card-title next">Next payments</div>
-                </div>
-                {nextPayments.length === 0 && (
-                  <div style={{ fontSize: 12, color: 'var(--mut)' }}>Nothing scheduled this cycle.</div>
-                )}
-                {nextPayments.map((p, i) => (
-                  <div className="np-row" key={i}>
-                    <div className="np-ic" style={{
-                      background: p.isLayby ? 'var(--event-s)' : 'var(--acc-s)',
-                      color: p.isLayby ? 'var(--event)' : 'var(--acc)',
-                    }}>
-                      <ExpenseIcon name={p.icon} size={16} />
-                    </div>
-                    <div className="np-tx">
-                      <div className="np-nm">{p.name}</div>
-                      <div className="np-dt">{fmtDate(p.date)} · {p.subLabel}</div>
-                    </div>
-                    <div className="np-amt">{fmt(p.amountCents, false)}</div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="cyc-card ring-corner">
-                <div className="cyc-card-hdr">
-                  <div className="cyc-card-title spend">Available to spend</div>
-                </div>
-                <svg className="ring-svg-dual" width="58" height="58" viewBox="0 0 58 58">
-                  <circle className="ring-track" cx="29" cy="29" r={OUTER_R} strokeWidth="3" />
-                  <circle className="ring-fill cyc" cx="29" cy="29" r={OUTER_R} strokeWidth="3"
-                    strokeDasharray={OUTER_C} strokeDashoffset={outerDashoffset} />
-                  <circle className="ring-track" cx="29" cy="29" r={INNER_R} strokeWidth="6" />
-                  <circle className="ring-fill" cx="29" cy="29" r={INNER_R} strokeWidth="6"
-                    style={{ stroke: budgetRingColor }}
-                    strokeDasharray={INNER_C} strokeDashoffset={innerDashoffset} />
-                </svg>
-                <div className="rs-hero">{fmt(availableToSpendCents, false)}</div>
-                <div className="rs-sub">next cycle in {daysToNextCycle} days</div>
-                <div className="rs-breakdown">
-                  <div className="rs-line">
-                    <div className="rs-dot" style={{ background: budgetRingColor }} />
-                    <div className="rs-line-lbl">Budget tracked</div>
-                    <div className="rs-line-val">{fmt(budgetSpentSoFarCents, false)} of {fmt(budgetTotalCents, false)}</div>
-                  </div>
-                </div>
-              </div>
+              {nextPaymentsCard}
+              {availableCard}
 
             </div>
             <div className="cyc-carousel-dots">
@@ -1424,349 +1789,19 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
           </>
         )}
 
-        <div className="cyc">
-          <div className="cyc-h">
-            <div className="ttl">{fmtDate(activeCycle.startDate)} – {fmtDate(activeCycle.endDate)}</div>
-            <div className={`stt ${status==='past'?'frozen':status==='overdue'?'low':status}`}>
-              {status==='now'?'Current':status==='past'?'Closed':status==='overdue'?'Needs closing':status==='low'?'Near floor':'Forecast'}
-            </div>
+        {deskCycle ? (
+          <div className="dcyc">
+            <div className="dcyc-main">{cycleBody}</div>
+            <aside className="dcyc-side">
+              <div className="dcyc-side-lbl">This cycle · at a glance</div>
+              {nextPaymentsCard}
+              {availableCard}
+              <div className="dcyc-close">{closeBlock}</div>
+            </aside>
           </div>
-          {variant === 'forecast' && activeIdx !== currentIdx && (
-            <button className="back-to-now" onClick={() => setActiveIdx(currentIdx)}>
-              ← back to current cycle
-            </button>
-          )}
-          <div className="carry">
-            <span className="o">opens <b>{fmt(activeCycle.openingBalanceCents,false)}</b></span>
-            <span className="arr">→</span>
-            <span className="c">closes <b>{fmt(activeCycle.committedClosingBalanceCents,false)}</b></span>
-          </div>
-          {floorCents > 0 ? (
-            <div className={`nudge${aboveFloor>=0?' ok':''}`}>
-              {aboveFloor>=0
-                ? <><b>{fmt(aboveFloor,false)}</b> above your floor {status==='past'?'that cycle':'this cycle'}.</>
-                : <>{status==='past'?'Closed':'Closes'} <b>{fmt(Math.abs(aboveFloor),false)}</b> below your floor.</>}
-            </div>
-          ) : activeCycle.committedClosingBalanceCents < 0 ? (
-            <div className="nudge">
-              {status==='past'?'Closed':status==='overdue'?'Would close':'Closes'} <b>{fmt(Math.abs(activeCycle.committedClosingBalanceCents),false)}</b> negative {status==='past'?'that cycle':'this cycle'}.
-            </div>
-          ) : null}
-        </div>
+        ) : cycleBody}
 
-        {incomeCards.length > 0 && (
-          <>
-            <div className="section-hdr sh-inc tappable" onClick={() => toggleSec('income')}>
-              <span className="sh-label">Money in</span>
-              <span className="sh-right">
-                <span className="sh-total">+{fmt(incomeTotalCents, false)}</span>
-                <span className={`chv${openSecs.income ? ' up' : ''}`}>▾</span>
-              </span>
-            </div>
-            {openSecs.income && (
-              <div className="cards">
-                {incomeCards.map((cd, i) => (
-                  <div key={'inc'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => {
-                      if (cd.oneOff) {
-                        setOneOffError(''); setOneOffName(cd.name)
-                        setOneOffAmt(String(cd.totalCents / 100))
-                        setOneOffCertain(!(cd.isPotential ?? true))
-                        setOneOffItem(cd)
-                      } else {
-                        openIncomeEdit(cd)
-                      }
-                    }}
-                  >
-                    <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
-                    <div className="tx">
-                      <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
-                      <div className="dt">{cd.detail}</div>
-                      <div className="act-row"><span className="act">{cd.oneOff ? 'manage →' : 'edit →'}</span></div>
-                    </div>
-                    <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {fixedCards.length > 0 && (
-          <>
-            <div className="section-hdr sh-fix tappable" onClick={() => toggleSec('fixed')}>
-              <span className="sh-label">Fixed expenses</span>
-              <span className="sh-right">
-                <span className="sh-total">−{fmt(fixedTotalCents, false)}</span>
-                <span className={`chv${openSecs.fixed ? ' up' : ''}`}>▾</span>
-              </span>
-            </div>
-            {openSecs.fixed && (
-              <div className="cards">
-                {fixedCards.map((cd, i) => (
-                  <div key={'fix'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}
-                    style={cd.oneOff ? { cursor: 'pointer' } : undefined}
-                    onClick={cd.oneOff ? () => {
-                      setOneOffError(''); setOneOffName(cd.name)
-                      setOneOffAmt(String(cd.totalCents / 100))
-                      setOneOffCertain(false)
-                      setOneOffItem(cd)
-                    } : undefined}
-                  >
-                    <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
-                    <div className="tx">
-                      <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
-                      <div className="dt">{cd.detail}</div>
-                      <div className="act-row">
-                        {cd.act === 'edit' && <span className="act" onClick={() => openEdit(cd)}>edit →</span>}
-                        {cd.act === 'oneoff' && <span className="act">manage →</span>}
-                        {cd.laybyPct != null && (
-                          <div className="exp-prog" style={{ flex: 1, marginTop: 0 }}>
-                            <div className="fill" style={{ width: cd.laybyPct + '%', background: 'var(--event)' }} />
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {showSavings && (
-          <>
-            <div className="section-hdr sh-sav tappable" onClick={() => toggleSec('savings')}>
-              <span className="sh-label">Savings</span>
-              <span className="sh-right">
-                <span className="sh-total">−{fmt(savingsTotalCents, false)}</span>
-                <span className={`chv${openSecs.savings ? ' up' : ''}`}>▾</span>
-              </span>
-            </div>
-            {openSecs.savings && (
-              <div className="cards">
-                {savingsLines.map((line: any) => {
-                  const goal = goalRow(line.goalId)
-                  if (!goal) return null
-                  const done   = isSetAside(line.goalId)
-                  const saved  = savedSoFar(line.goalId)
-                  const target = goal.target_cents
-                  const plan   = planSaysBy(line.goalId)
-                  const pct     = target > 0 ? Math.min(100, Math.round((saved / target) * 100)) : 0
-                  const planPct = target > 0 ? Math.min(100, Math.round((plan  / target) * 100)) : 0
-                  const behind  = plan - saved
-                  return (
-                    <div key={line.goalId} className="card" onClick={() => setSavTarget(goal)}>
-                      <div className="ic sav">◷</div>
-                      <div className="tx">
-                        <div className="nm">
-                          {goal.name}
-                          {done
-                            ? <span className="chip sav-ok">set aside ✓</span>
-                            : <span className="chip sav-pend">not yet</span>}
-                          {behind > 0 && !done && <span className="chip sav-behind">behind</span>}
-                          {line.isOverride && <span className="chip drv">this cycle only</span>}
-                        </div>
-                        <div className="dt">
-                          {fmt(saved, false)} of {fmt(target, false)} · {fmt(line.amountCents, false)} this cycle
-                          {behind > 0 && <> · <b style={{ color: 'var(--warn)' }}>{fmt(behind, false)} behind plan</b></>}
-                        </div>
-                        <div className="act-row">
-                          {/* The tick on the bar is where the plan says you should be.
-                              The gap between it and the green is the honest part. */}
-                          <div className="exp-prog sav-prog" style={{ flex: 1, marginTop: 0 }}>
-                            <div className="fill" style={{ width: pct + '%', background: 'var(--pos)' }} />
-                            {planPct > 0 && planPct < 100 && (
-                              <div className="plan-tick" style={{ left: planPct + '%' }} />
-                            )}
-                          </div>
-                          <button className="act" type="button"
-                            style={{ color: done ? 'var(--mut)' : 'var(--pos)' }}
-                            disabled={savBusy}
-                            onClick={e => { e.stopPropagation(); toggleSetAside(line.goalId) }}>
-                            {done ? 'undo' : 'set aside →'}
-                          </button>
-                        </div>
-                      </div>
-                      <div className="vl">−{fmt(line.amountCents, false)}</div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </>
-        )}
-
-        {showCredit && (
-          <>
-            <div className="section-hdr sh-crd tappable" onClick={() => toggleSec('credit')}>
-              <span className="sh-label">Credit payments</span>
-              <span className="sh-right">
-                <span className="sh-total">−{fmt(creditPaymentCents, false)}</span>
-                <span className={`chv${openSecs.credit ? ' up' : ''}`}>▾</span>
-              </span>
-            </div>
-            {openSecs.credit && (
-              <div className="cards">
-                <div className="card">
-                  <div className="ic crd">▭</div>
-                  <div className="tx">
-                    <div className="nm">
-                      {rawCredit?.name ?? 'Credit card'}
-                      {creditState === 'paid'
-                        ? <span className="chip pd">paid ✓</span>
-                        : creditState === 'due'
-                          ? <span className="chip due">not confirmed</span>
-                          : <span className="chip drv">planned</span>}
-                      {creditExtraCents !== standingExtra && creditState !== 'paid' && (
-                        <span className="chip drv">this cycle only</span>
-                      )}
-                    </div>
-                    <div className="dt">
-                      min {fmt(creditMinimumCents, false)}
-                      {creditExtraCents > 0 && <> + extra {fmt(creditExtraCents, false)}</>}
-                      {' · '}{fmt(creditLeftCents, false)} left
-                      {creditDueDate && <> · due {fmtDate(creditDueDate)}</>}
-                    </div>
-                    <div className="act-row">
-                      <div className="exp-prog" style={{ flex: 1, marginTop: 0 }}>
-                        <div className="fill" style={{ width: creditPct + '%', background: 'var(--credit)' }} />
-                      </div>
-                      {creditState === 'before' && (
-                        <button className="act" type="button" onClick={openCreditAdjust}>adjust →</button>
-                      )}
-                      {creditState === 'due' && (
-                        <button className="act" type="button" style={{ color: 'var(--floor)' }} onClick={markCreditPaid}>confirm →</button>
-                      )}
-                      {creditState === 'paid' && (
-                        <button className="act" type="button" style={{ color: 'var(--mut)' }} onClick={undoCreditPaid}>undo</button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="vl">−{fmt(creditPaymentCents, false)}</div>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-
-        {varCards.length > 0 && (
-          <>
-            <div className="section-hdr sh-var tappable" onClick={() => toggleSec('var')}>
-              <span className="sh-label">Estimates</span>
-              <span className="sh-right">
-                <span className="sh-total">−{fmt(varTotalCents, false)}</span>
-                <span className={`chv${openSecs.var ? ' up' : ''}`}>▾</span>
-              </span>
-            </div>
-            {openSecs.var && (
-              <div className="cards">
-                {varCards.map((cd, i) => (
-                  <div key={'var'+i} className={`card${cd.dashed?' dashed':''}${cd.ghost?' ghost':''}`}>
-                    <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
-                    <div className="tx">
-                      <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
-                      <div className="dt">{cd.detail}</div>
-                      <div className="act-row">{cd.act === 'var' && <span className="act" onClick={() => openVar(cd)}>confirm →</span>}</div>
-                    </div>
-                    <div className={`vl ${cd.valueClass}`}>{cd.value}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {budgetCards.length > 0 && (
-          <>
-            <div className="section-hdr sh-bud tappable" onClick={() => toggleSec('budget')}>
-              <span className="sh-label">Budget</span>
-              <span className="sh-right">
-                <span className="sh-total">−{fmt(budgetTotalCents, false)}</span>
-                <span className={`chv${openSecs.budget ? ' up' : ''}`}>▾</span>
-              </span>
-            </div>
-            {openSecs.budget && baselineAdvice.length > 0 && (
-              <div className="cards" style={{ paddingBottom: 0 }}>
-                {baselineAdvice.map(b => (
-                  <div key={'bl' + b.expenseId} className="baseline-tip">
-                    <div className="bt-ic">◷</div>
-                    <div className="bt-tx">
-                      <div className="bt-n">{b.name} is set higher than you spend</div>
-                      <div className="bt-d">
-                        Budgeted <b>{fmt(b.baselineCents, false)}</b>, averaged{' '}
-                        <b>{fmt(b.averageCents, false)}</b> over {b.cyclesCounted} closed cycles.
-                        The forecast assumes the full {fmt(b.baselineCents, false)} every cycle,
-                        so it reads tighter than it is.
-                      </div>
-                    </div>
-                    <button className="bt-x"
-                      onClick={() => setDismissedBaseline(d => [...d, b.expenseId])}
-                      aria-label="Dismiss">×</button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {openSecs.budget && (
-              <div className="cards">
-                {budgetCards.map((cd, i) => {
-                  const entries = entriesForExpenseInCycle(cd.expenseId)
-                  const spent = entries.reduce((s, e) => s + e.amount_cents, 0)
-                  const rawPct = cd.totalCents > 0 ? Math.round((spent / cd.totalCents) * 100) : 0
-                  const pct = Math.min(100, rawPct)
-                  const barState = rawPct >= 100 ? 'over' : rawPct >= 80 ? 'warn' : ''
-                  const quickAddOpen = openQuickAdd === cd.expenseId
-                  return (
-                    <div key={'bud'+i} className="budg-card">
-                      <div className="budg-top" onClick={() => openLog(cd)}>
-                        <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
-                        <div className="budg-tx">
-                          <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
-                          <div className="budg-sofar"><b>{fmt(spent, false)}</b> of {fmt(cd.totalCents, false)}</div>
-                          <div className="budg-barwrap"><div className={`budg-bar ${barState}`} style={{ width: pct + '%' }} /></div>
-                        </div>
-                        <button className={`budg-plus${quickAddOpen ? ' on' : ''}`} onClick={e => { e.stopPropagation(); toggleQuickAdd(cd.expenseId) }}>{quickAddOpen ? '×' : '+'}</button>
-                      </div>
-                      <div className={`budg-quickadd${quickAddOpen ? ' on' : ''}`}>
-                        <div className="budg-qa-inner">
-                          <span className="pre">{sym}</span>
-                          <input
-                            type="number" inputMode="decimal" placeholder="0.00"
-                            value={quickAddAmount} onChange={e => setQuickAddAmount(e.target.value)}
-                            onClick={e => e.stopPropagation()}
-                            onKeyDown={e => { if (e.key === 'Enter') saveQuickAdd(cd.expenseId) }}
-                          />
-                          <button className="budg-qa-save" onClick={e => { e.stopPropagation(); saveQuickAdd(cd.expenseId) }}>Add</button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </>
-        )}
-
-        {status !== 'past' && (
-          <div style={{ padding:'14px 16px 0' }}>
-            <button className="addbtn" onClick={openAddToCycle}>+ Add to this cycle</button>
-          </div>
-        )}
-
-        {(status === 'now' || status === 'overdue') && (
-          <>
-            <button className="closebtn" onClick={openClose}>
-              {status === 'overdue' ? 'Close this overdue cycle →' : 'Close this cycle →'}
-            </button>
-            <div className="closehint">
-              {status === 'overdue'
-                ? 'This cycle ended already — closing it locks in your real balance and starts the next one.'
-                : "Confirms the real balance that becomes next cycle's opening."}
-            </div>
-          </>
-        )}
+        {!deskCycle && closeBlock}
 
       </div>
 
