@@ -1816,3 +1816,92 @@ svg.proj { display:block; width:100%; height:152px; }
   font-family: 'JetBrains Mono', monospace; font-size: 8px;
   color: var(--faint); margin-top: 8px; line-height: 1.5; text-align: left;
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   DESKTOP SHELL — 1024px and wider
+   Everything here hangs off body.is-desktop, which AppShell sets from the
+   same (min-width: 1024px) query that picks the layout. Keying the CSS to
+   the class rather than a separate media query means the markup and the
+   styling can never disagree about which layout is showing.
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Vite's starter index.css pads, caps and centres #root. Undo it for the
+   full-width shell; the phone layout keeps it. */
+body.is-desktop #root {
+  max-width: none; width: 100%; margin: 0; padding: 0; text-align: left;
+}
+
+.dshell {
+  display: grid; grid-template-columns: 238px minmax(0, 1fr);
+  height: 100vh; background: var(--bg); color: var(--ink); text-align: left;
+}
+
+/* ── rail ── */
+.rail {
+  border-right: 1px solid var(--line); background: var(--bg2);
+  padding: 20px 14px; display: flex; flex-direction: column; gap: 14px;
+  height: 100vh; overflow-y: auto; text-align: left;
+}
+.rail-mark { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 16px; padding: 0 8px; }
+.rail-mark b { color: var(--acc); }
+
+.rail-acct {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  border-radius: 12px; padding: 8px 10px; cursor: pointer; text-align: left;
+  font-family: inherit;
+}
+.rail-acct:hover { border-color: var(--acc); }
+.rail-acct .acct-dot { width: 24px; height: 24px; font-size: 11px; }
+.rail-acct-name {
+  flex: 1; min-width: 0; font-family: 'Space Grotesk', sans-serif; font-size: 13px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rail .acct-block { padding: 0 2px; margin-top: -6px; }
+
+.rail-grp { display: flex; flex-direction: column; gap: 2px; }
+.rail-grp-lbl {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--faint); padding: 6px 10px 4px;
+}
+.rail-item {
+  display: flex; align-items: center; gap: 11px; width: 100%;
+  border: none; background: transparent; color: var(--mut);
+  font-family: 'Space Grotesk', sans-serif; font-size: 13.5px; font-weight: 600;
+  padding: 6px 8px; border-radius: 11px; cursor: pointer; text-align: left;
+  transition: background .15s, color .15s;
+}
+.rail-item .di {
+  width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center;
+  font-size: 13px; line-height: 1; flex: 0 0 auto;
+}
+.rail-item.active .di { background: var(--bg2); }
+.rail-item:hover { background: var(--line2); color: var(--ink); }
+.rail-item.active { background: var(--acc-s); color: var(--acc); }
+.rail-gap { flex: 1; }
+.rail-foot { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--line); padding-top: 12px; }
+
+/* ── page area ──
+   The whole main column scrolls, not an inner box, so the wheel works
+   anywhere on the page. Pages keep their phone-shaped content for now and
+   sit in a readable column; the Cycle, Forecast, Wishlist and Credit
+   branches widen their own layouts. */
+.dmain { height: 100vh; overflow-y: auto; }
+.dcol {
+  max-width: 760px; margin: 0 auto; padding: 18px 24px 64px;
+  display: flex; flex-direction: column; min-height: 100%;
+}
+body.is-desktop .scrollarea { overflow: visible; flex: none; padding-bottom: 0; }
+
+/* ── sheets become centred dialogs ──
+   Same markup, same content; only the frame changes. */
+body.is-desktop .ov { align-items: center; padding: 28px; }
+body.is-desktop .sheet {
+  max-width: 560px; border-radius: 20px; padding: 22px 24px 24px;
+  max-height: 88vh; border: 1px solid var(--line);
+  box-shadow: 0 30px 70px -20px rgba(8, 10, 18, .4);
+  animation: pop .2s cubic-bezier(.2, .8, .2, 1);
+}
+body.is-desktop .sheet .grab { display: none; }
+body.is-desktop .sheet h3 { padding-right: 40px; }
+@keyframes pop { from { opacity: 0; transform: scale(.97) } to { opacity: 1; transform: none } }
