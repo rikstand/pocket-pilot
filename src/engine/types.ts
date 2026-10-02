@@ -106,13 +106,20 @@ export interface SavingsCycleLine {
   isOverride: boolean
 }
 
-// ── budget overrides ──────────────────────────────────────────────
-// A different budget for ONE cycle — "Christmas groceries", "away for a week,
-// no fuel". Same shape as the credit and savings overrides: an exception, not a
-// new default. A new default is a new amount version, as it always was.
-// amountCents is the whole cycle's budget, not the per-occurrence amount, so a
-// weekly budget in a fortnightly cycle is set as one figure.
-export interface BudgetOverride {
+// ── expense overrides ─────────────────────────────────────────────
+// A different amount for ONE cycle, on any expense — "Christmas groceries",
+// "power came in at $142", "skip the gym this fortnight". Same shape as the
+// credit and savings overrides: an exception, not a new default. A new default
+// is a new amount version, as it always was.
+//
+// Before this, a one-cycle change was stored as TWO amount versions: the new
+// amount from this cycle, and the old amount put back from the next. That
+// "put back" row could silently overwrite a change already made to the next
+// cycle. An override touches nothing but its own cycle.
+//
+// amountCents is the whole cycle's amount, not the per-occurrence amount, so a
+// weekly expense in a fortnightly cycle is set as one figure.
+export interface ExpenseOverride {
   expenseId: string
   cycleStart: string
   amountCents: number
@@ -135,7 +142,7 @@ export interface CycleInput {
   creditAccount?: CreditAccount | null
   creditOverrides?: CreditExtraOverride[]
   budgetSpend?: BudgetSpendEntry[]
-  budgetOverrides?: BudgetOverride[]
+  expenseOverrides?: ExpenseOverride[]
   savingsGoals?: SavingsGoal[]
 }
 

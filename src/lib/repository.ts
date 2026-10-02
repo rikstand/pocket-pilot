@@ -750,13 +750,15 @@ export async function deleteBudgetSpendEntry(entryId: string) {
   const { error } = await supabase.from('budget_spend_entries').delete().eq('id', entryId)
   if (error) throw error
 }
-// --- BUDGET OVERRIDES ---
-// A different budget for one cycle. Same shape as the credit and savings
-// overrides: an exception for that cycle, not a new default. Changing a budget
-// "from now on" is a new amount version instead — see setExpenseAmountFrom.
-export async function getAllBudgetOverrides(accountId: string) {
+// --- EXPENSE OVERRIDES ---
+// A different amount for one cycle, on any expense: a budget for Christmas, a
+// confirmed power bill, a skipped gym fortnight. Same shape as the credit and
+// savings overrides: an exception for that cycle, not a new default. Changing
+// an amount "from now on" is a new amount version instead — see
+// setExpenseAmountFrom. amountCents is the whole cycle's amount.
+export async function getAllExpenseOverrides(accountId: string) {
   const { data, error } = await supabase
-    .from('budget_overrides')
+    .from('expense_overrides')
     .select('*')
     .eq('account_id', accountId)
     .order('cycle_start')
@@ -764,14 +766,14 @@ export async function getAllBudgetOverrides(accountId: string) {
   return data
 }
 
-export async function setBudgetOverride(
+export async function setExpenseOverride(
   expenseId: string,
   accountId: string,
   cycleStart: string,
   amountCents: number
 ) {
   const { data, error } = await supabase
-    .from('budget_overrides')
+    .from('expense_overrides')
     .upsert(
       { expense_id: expenseId, account_id: accountId, cycle_start: cycleStart, amount_cents: amountCents },
       { onConflict: 'expense_id,cycle_start' }
@@ -782,9 +784,9 @@ export async function setBudgetOverride(
   return data
 }
 
-export async function clearBudgetOverride(expenseId: string, cycleStart: string) {
+export async function clearExpenseOverride(expenseId: string, cycleStart: string) {
   const { error } = await supabase
-    .from('budget_overrides')
+    .from('expense_overrides')
     .delete()
     .eq('expense_id', expenseId)
     .eq('cycle_start', cycleStart)

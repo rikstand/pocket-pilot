@@ -1,6 +1,6 @@
 import type {
   CycleInput, CycleResult, AmountVersion, CreditExtraOverride, BudgetSpendEntry,
-  BudgetOverride, SavingsGoal, SavingsCycleLine,
+  ExpenseOverride, SavingsGoal, SavingsCycleLine,
 } from './types'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './dates'
 import { getOccurrencesInRange } from './recurrence'
@@ -86,9 +86,9 @@ function budgetSpentInCycle(
   return total
 }
 
-/** A one-cycle budget, if one was set for this budget in this cycle. */
-function budgetOverrideFor(
-  overrides: BudgetOverride[] | undefined,
+/** A one-cycle amount, if one was set for this expense in this cycle. */
+function expenseOverrideFor(
+  overrides: ExpenseOverride[] | undefined,
   expenseId: string,
   cycleStart: string
 ): number | null {
@@ -133,7 +133,7 @@ function savingsForCycle(
 export function projectCycles(input: CycleInput): CycleResult[] {
   const {
     incomeSources, expenses, openingBalanceCents, startDate, numCycles,
-    safetyFloorCents, creditAccount, creditOverrides, budgetSpend, budgetOverrides, savingsGoals,
+    safetyFloorCents, creditAccount, creditOverrides, budgetSpend, expenseOverrides, savingsGoals,
   } = input
   const results: CycleResult[] = []
 
@@ -188,14 +188,15 @@ export function projectCycles(input: CycleInput): CycleResult[] {
     for (const exp of expenses) {
       const occs       = getOccurrencesInRange(exp.anchorDate, exp.frequency, cycleStart, cycleEnd, exp.endDate)
       const unitCents  = getAmountForCycle(exp.amountVersions, exp.amountCents, cycleStart)
-      const total      = occs.length * unitCents
+      // A one-cycle amount replaces the usual one for this cycle only, for any
+      // kind of expense. It only applies where the expense actually falls in
+      // the cycle.
+      const override   = occs.length > 0 ? expenseOverrideFor(expenseOverrides, exp.id, cycleStart) : null
+      const total      = override ?? occs.length * unitCents
       if      (exp.mode === 'fixed')    fixedExpensesCents    += total
       else if (exp.mode === 'variable') variableExpensesCents += total
       else if (exp.mode === 'budget') {
-        // A one-cycle budget replaces the baseline for this cycle only. It only
-        // applies where the budget actually falls in the cycle.
-        const override = occs.length > 0 ? budgetOverrideFor(budgetOverrides, exp.id, cycleStart) : null
-        const planned  = override ?? total
+        const planned  = total
         // Take the HIGHER of the budget and what was actually spent. Future
         // cycles have nothing logged, so they fall back to the budget on their
         // own — no special case needed.

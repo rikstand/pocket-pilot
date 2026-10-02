@@ -16,7 +16,7 @@ import {
   confirmCreditPayment,
   unconfirmCreditPayment,
   updateCreditStrategyExtra,
-  setBudgetOverride, clearBudgetOverride, setExpenseAmountFrom,
+  setExpenseOverride, clearExpenseOverride, setExpenseAmountFrom,
   getPayees, findOrCreatePayee,
 } from './lib/repository'
 import { useAccount } from './lib/AccountContext'
@@ -382,6 +382,13 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     return 'future'
   }
 
+  // This cycle's own amount for an expense, if one was set. See
+  // expense_overrides.sql — one row per expense per cycle.
+  function overrideFor(expenseId: string, cycleStart: string) {
+    return (forecastRows?.expenseOverrideRows ?? []).find((o: any) =>
+      o.expense_id === expenseId && o.cycle_start === cycleStart) ?? null
+  }
+
   function buildCards() {
     const cards: any[] = []
     const cycle = activeCycle
@@ -420,22 +427,28 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       const v         = versionForDate(exp.expense_amount_versions, cycle.startDate)
       const unitCents = v?.amount_cents ?? 0
       const mode      = exp.mode ?? 'fixed'
-      // A budget can have a different amount for this one cycle. The card shows
-      // it, the section total adds it up, and the engine projects with it.
-      const budgetOverride = mode === 'budget'
-        ? (forecastRows?.budgetOverrideRows ?? []).find((o: any) =>
-            o.expense_id === exp.id && o.cycle_start === cycle.startDate) ?? null
-        : null
+      // Any expense can have a different amount for this one cycle — a
+      // Christmas budget, a confirmed power bill. The card shows it, the
+      // section total adds it up, and the engine projects with it.
+      const override  = exp.lay_by_id ? null : overrideFor(exp.id, cycle.startDate)
       const baseTotal = unitCents * occs.length
-      const total     = budgetOverride ? budgetOverride.amount_cents : baseTotal
+      const total     = override ? override.amount_cents : baseTotal
 
       let icon = '▤', iconClass = 'fix', chips: string[][] = [['lock','fixed']], act: string | null = null
-      if (mode === 'variable') { icon = '~'; iconClass = 'var'; chips = [['est','estimate']]; act = 'var' }
+      if (mode === 'variable') {
+        icon = '~'; iconClass = 'var'; act = 'var'
+        // A confirmed figure is stored as this cycle's amount, so it stops
+        // looking like a guess.
+        chips = override ? [['lock','confirmed']] : [['est','estimate']]
+      }
       else if (mode === 'budget') {
         icon = '≈'; iconClass = 'base'
-        chips = budgetOverride ? [['bl','baseline'], ['drv','this cycle only']] : [['bl','baseline']]
+        chips = override ? [['bl','baseline'], ['drv','this cycle only']] : [['bl','baseline']]
       }
-      else { act = 'edit' }
+      else {
+        act = 'edit'
+        if (override) chips = [['lock','fixed'], ['drv','this cycle only']]
+      }
 
       const isOneOffExp = exp.frequency === 'once' && !exp.lay_by_id
       if (isOneOffExp) act = 'oneoff'
@@ -488,7 +501,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       cards.push({
         name: exp.name, icon, iconClass, displayIconClass, iconSvg, chips, detail,
         value: '−' + fmt(total, false), valueClass: '', totalCents: total,
-        ghost: false, dashed: mode === 'variable', act,
+        ghost: false, dashed: mode === 'variable' && !override, act,
         expenseId: exp.id,
         oneOff: isOneOffExp, oneOffKind: 'expense',
         oneOffDateStr: fmtDate(occs[0]),
@@ -497,7 +510,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         unitCents,
         occCount: occs.length,
         baseTotalCents: baseTotal,
-        isBudgetOverride: !!budgetOverride,
+        isOverride: !!override,
         originalUnitCents: unitCents,
         estimatedCents: unitCents,
       })
@@ -524,6 +537,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       const isLayby = !!exp.lay_by_id
       const sortedVersions = [...(exp.expense_amount_versions ?? [])].sort(byOldest)
       const layby = isLayby ? rawLayBys.find((l: any) => l.id === exp.lay_by_id) : null
+      // A one-cycle amount is a total for the cycle; spread it over the
+      // payments in it, with any leftover cent on the last one.
+      const override = isLayby ? null : overrideFor(exp.id, activeCycle.startDate)
+      const perOverride = override ? Math.floor(override.amount_cents / occs.length) : 0
 
       for (const occDate of occs) {
         if (occDate < t) continue // only upcoming occurrences count as "remaining"
@@ -536,6 +553,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
           const idx = sortedVersions.findIndex((sv: any) => sv.effective_from === occDate)
           const totalPayments = layby?.payments_total ?? sortedVersions.length
           subLabel = `payment ${idx >= 0 ? idx + 1 : '?'} of ${totalPayments}`
+        } else if (override) {
+          const isLast = occDate === occs[occs.length - 1]
+          amountCents = isLast ? override.amount_cents - perOverride * (occs.length - 1) : perOverride
+          subLabel = 'this cycle only'
         } else {
           const v = versionForDate(exp.expense_amount_versions, occDate)
           amountCents = v?.amount_cents ?? 0
@@ -563,7 +584,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, activeCycle.startDate, activeCycle.endDate)
       if (!occs.length) return null
       const v = versionForDate(exp.expense_amount_versions, activeCycle.startDate)
-      return { id: exp.id, name: exp.name, estimatedCents: (v?.amount_cents ?? 0) * occs.length }
+      // A figure confirmed during the cycle beats the estimate.
+      const override = overrideFor(exp.id, activeCycle.startDate)
+      const estimatedCents = override ? override.amount_cents : (v?.amount_cents ?? 0) * occs.length
+      return { id: exp.id, name: exp.name, estimatedCents }
     })
     .filter(Boolean) as { id: string, name: string, estimatedCents: number }[]
 
@@ -600,12 +624,15 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
   function openEdit(cd: any) {
     setEditCard(cd); setEditScope(null); setEditStep(0)
-    setEditAmount(cd.unitCents ? String(cd.unitCents / 100) : '')
+    // Start from what this cycle actually has, per payment.
+    const nowPer = cd.occCount > 0 ? Math.round(cd.totalCents / cd.occCount) : cd.unitCents
+    setEditAmount(nowPer ? String(nowPer / 100) : '')
     setEditError('')
   }
   function openVar(cd: any) {
     setVarCard(cd)
-    setVarAmount(cd.estimatedCents ? String(cd.estimatedCents / 100) : '')
+    // The whole cycle's figure: a confirmed one if there is one, else the estimate.
+    setVarAmount(cd.totalCents ? String(cd.totalCents / 100) : '')
     setVarError('')
   }
   function openClose() {
@@ -875,27 +902,27 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     finally { setLaybySaving(false) }
   }
 
+  // "Just this cycle" is stored as this cycle's own amount (an override).
+  // "From this date onward" is a new amount version. Nothing here writes a
+  // version at the NEXT cycle's start any more — that "put the old amount
+  // back" row is what used to wipe out a change already made to next cycle.
   async function applyEdit() {
-    if (!editScope || !editAmountCents) return
+    if (!editScope || !editAmountCents || editSaving) return
     setEditSaving(true); setEditError('')
     try {
-      const { error: e1 } = await supabase.from('expense_amount_versions').insert({
-        expense_id: editCard.expenseId,
-        amount_cents: editAmountCents,
-        effective_from: activeCycle.startDate,
-      })
-      if (e1) throw e1
-
+      const start = activeCycle.startDate
       if (editScope === 'occurrence') {
-        const nextStart = cycles[activeIdx + 1]?.startDate ?? addOneDay(activeCycle.endDate)
-        const { error: e2 } = await supabase.from('expense_amount_versions').insert({
-          expense_id: editCard.expenseId,
-          amount_cents: editCard.originalUnitCents,
-          effective_from: nextStart,
-        })
-        if (e2) throw e2
+        const cycleTotal = editAmountCents * Math.max(1, editCard.occCount ?? 1)
+        // Back to the usual amount removes the exception rather than storing
+        // one that happens to match.
+        if (cycleTotal === editCard.baseTotalCents) await clearExpenseOverride(editCard.expenseId, start)
+        else await setExpenseOverride(editCard.expenseId, accountId, start, cycleTotal)
+      } else {
+        await setExpenseAmountFrom(editCard.expenseId, accountId, start, editAmountCents)
+        // This cycle now follows the new amount. Later one-cycle amounts are
+        // kept — they were set on purpose.
+        if (editCard.isOverride) await clearExpenseOverride(editCard.expenseId, start)
       }
-
       setEditCard(null); reload()
     } catch (e: any) { setEditError(e.message) }
     finally { setEditSaving(false) }
@@ -952,25 +979,13 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     }
   }
 
+  // A confirmed figure is this cycle's own amount. The estimate is left
+  // alone, so next cycle goes back to it without anything being written there.
   async function applyConfirm() {
-    if (!varAmountCents) return
+    if (!varAmountCents || varSaving) return
     setVarSaving(true); setVarError('')
     try {
-      const { error: e1 } = await supabase.from('expense_amount_versions').insert({
-        expense_id: varCard.expenseId,
-        amount_cents: varAmountCents,
-        effective_from: activeCycle.startDate,
-      })
-      if (e1) throw e1
-
-      const nextStart = cycles[activeIdx + 1]?.startDate ?? addOneDay(activeCycle.endDate)
-      const { error: e2 } = await supabase.from('expense_amount_versions').insert({
-        expense_id: varCard.expenseId,
-        amount_cents: varCard.originalUnitCents,
-        effective_from: nextStart,
-      })
-      if (e2) throw e2
-
+      await setExpenseOverride(varCard.expenseId, accountId, activeCycle.startDate, varAmountCents)
       setVarCard(null); reload()
     } catch (e: any) { setVarError(e.message) }
     finally { setVarSaving(false) }
@@ -1363,13 +1378,13 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       if (budEdit.scope === 'once') {
         // Setting it back to the usual amount removes the exception rather
         // than storing one that happens to match.
-        if (valCents === cd.baseTotalCents) await clearBudgetOverride(cd.expenseId, start)
-        else await setBudgetOverride(cd.expenseId, accountId, start, valCents)
+        if (valCents === cd.baseTotalCents) await clearExpenseOverride(cd.expenseId, start)
+        else await setExpenseOverride(cd.expenseId, accountId, start, valCents)
       } else {
         await setExpenseAmountFrom(cd.expenseId, accountId, start, perCents)
         // This cycle now follows the new amount. Later one-offs are kept —
         // they were set on purpose.
-        if (cd.isBudgetOverride) await clearBudgetOverride(cd.expenseId, start)
+        if (cd.isOverride) await clearExpenseOverride(cd.expenseId, start)
       }
       setBudEdit(null)
       reload()
@@ -1437,7 +1452,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         {budEdit.scope === 'always' && cd.occCount > 1 && (
           <p className="hint" style={{ marginTop: 6 }}>Saved as {fmt(perCents, false)} each time — it falls {cd.occCount} times this cycle.</p>
         )}
-        {cd.isBudgetOverride && budEdit.scope === 'once' && valCents !== cd.baseTotalCents && (
+        {cd.isOverride && budEdit.scope === 'once' && valCents !== cd.baseTotalCents && (
           <button className="budg-reset" onClick={() => setBudEdit({ ...budEdit, val: String(cd.baseTotalCents / 100) })}>
             back to the usual {fmt(cd.baseTotalCents, false)}
           </button>
@@ -2140,12 +2155,12 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               <h3>Change {editCard.name.toLowerCase()}</h3>
               <p className="sd">When should the new amount apply?</p>
               <div className={`opt${editScope==='occurrence'?' sel':''}`} onClick={() => setEditScope('occurrence')}>
-                <div className="ot">Just this occurrence</div>
-                <div className="os">A one-off override for this cycle only. Reverts automatically next cycle.</div>
+                <div className="ot">Just this cycle</div>
+                <div className="os">Only this cycle changes. Every other cycle keeps its amount.</div>
               </div>
               <div className={`opt${editScope==='forward'?' sel':''}`} onClick={() => setEditScope('forward')}>
                 <div className="ot">From this date onward</div>
-                <div className="os">A permanent change — every future cycle uses the new amount.</div>
+                <div className="os">The new usual amount, from this cycle on. Cycles you've changed on their own keep their change.</div>
               </div>
               <div className="navrow">
                 <button className="pri" style={{ opacity: editScope ? 1 : 0.4, cursor: editScope ? 'pointer' : 'default' }}
@@ -2154,13 +2169,24 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
             </>}
             {editStep === 1 && <>
               <h3>New amount</h3>
-              <p className="sd">{editScope === 'occurrence' ? 'One-off — reverts to original next cycle.' : `Permanent from ${fmtDate(activeCycle.startDate)} onward.`}</p>
+              <p className="sd">{editScope === 'occurrence' ? 'This cycle only.' : `The usual amount from ${fmtDate(activeCycle.startDate)} onward.`}</p>
               <div className="field">
-                <label>{editCard.name} — currently {editCard.unitCents ? fmt(editCard.unitCents, false) : '—'}</label>
+                <label>
+                  {editCard.name}{editCard.occCount > 1 ? ', each payment' : ''} — usually {editCard.unitCents ? fmt(editCard.unitCents, false) : '—'}
+                  {editCard.isOverride && ` · this cycle ${fmt(Math.round(editCard.totalCents / Math.max(1, editCard.occCount)), false)}`}
+                </label>
                 <div className="inrow"><span className="pre">{sym}</span>
                   <input type="number" inputMode="decimal" value={editAmount} onChange={e => setEditAmount(e.target.value)} />
                 </div>
               </div>
+              {editScope === 'occurrence' && editCard.occCount > 1 && editAmountCents > 0 && (
+                <p className="hint">It falls {editCard.occCount} times this cycle, so this cycle comes to {fmt(editAmountCents * editCard.occCount, false)}.</p>
+              )}
+              {editScope === 'occurrence' && editCard.isOverride && editAmountCents !== editCard.unitCents && (
+                <button className="budg-reset" onClick={() => setEditAmount(String(editCard.unitCents / 100))}>
+                  back to the usual {fmt(editCard.unitCents, false)}
+                </button>
+              )}
               {editError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:8 }}>{editError}</p>}
               <div className="navrow">
                 <button onClick={() => setEditStep(0)}>Back</button>
@@ -2180,13 +2206,13 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
             <button className="xbtn" onClick={() => setVarCard(null)}>×</button>
             <div className="grab" />
             <h3>Confirm {varCard.name.toLowerCase()}</h3>
-            <p className="sd">Lock in the real figure — this cycle stops being an estimate. Next cycle reverts to the estimate.</p>
+            <p className="sd">Lock in the real figure for this cycle. Other cycles keep the estimate.</p>
             <div className="field">
               <label>Actual amount for this cycle</label>
               <div className="inrow"><span className="pre">{sym}</span>
                 <input type="number" inputMode="decimal" value={varAmount} onChange={e => setVarAmount(e.target.value)} />
               </div>
-              {varCard.estimatedCents > 0 && <p className="hint">Was estimated at {fmt(varCard.estimatedCents, false)}.</p>}
+              {varCard.baseTotalCents > 0 && <p className="hint">Estimated at {fmt(varCard.baseTotalCents, false)}.</p>}
             </div>
             {varError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:8 }}>{varError}</p>}
             <div className="navrow">

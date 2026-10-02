@@ -24,12 +24,12 @@
 import {
   getIncomeSources, getExpenses, getCycles, getCreditAccount, getCreditExtraOverrides,
   getBudgetSpendEntries, getSavingsGoals, getAllSavingsContributions, getAllSavingsOverrides,
-  getAllBudgetOverrides,
+  getAllExpenseOverrides,
 } from './repository'
 import { projectCycles } from '../engine/index'
 import type {
   CycleResult, IncomeSource, Expense, CreditAccount, CreditExtraOverride,
-  BudgetSpendEntry, BudgetOverride, SavingsGoal,
+  BudgetSpendEntry, ExpenseOverride, SavingsGoal,
 } from '../engine/types'
 import { formatDate, parseDate } from '../engine/dates'
 import { byNewest, latestVersion } from './versions'
@@ -122,8 +122,8 @@ export function toEngineBudgetSpend(rows: any[]): BudgetSpendEntry[] {
   }))
 }
 
-/** One-cycle budgets → what the engine expects. */
-export function toEngineBudgetOverrides(rows: any[]): BudgetOverride[] {
+/** One-cycle amounts (any expense) → what the engine expects. */
+export function toEngineExpenseOverrides(rows: any[]): ExpenseOverride[] {
   return (rows ?? []).map((o: any) => ({
     expenseId: o.expense_id,
     cycleStart: o.cycle_start,
@@ -182,7 +182,7 @@ export interface ForecastResult {
   creditCard: any | null
   creditOverrideRows: any[]
   budgetSpendRows: any[]
-  budgetOverrideRows: any[]
+  expenseOverrideRows: any[]
   savingsGoalRows: any[]
   savingsContributionRows: any[]
   savingsOverrideRows: any[]
@@ -217,7 +217,7 @@ export async function loadForecast(
 
   const [
     incomeRows, expenseRows, storedCycles, creditCard, budgetSpendRows,
-    savingsGoalRows, savingsContributionRows, savingsOverrideRows, budgetOverrideRows,
+    savingsGoalRows, savingsContributionRows, savingsOverrideRows, expenseOverrideRows,
   ] = await Promise.all([
     getIncomeSources(accountId),
     getExpenses(accountId),
@@ -227,7 +227,7 @@ export async function loadForecast(
     getSavingsGoals(accountId),
     getAllSavingsContributions(accountId),
     getAllSavingsOverrides(accountId),
-    getAllBudgetOverrides(accountId),
+    getAllExpenseOverrides(accountId),
   ])
 
   // Overrides only exist once a card does, so this is a second round trip
@@ -241,7 +241,7 @@ export async function loadForecast(
 
   const rows = {
     incomeRows, expenseRows, storedCycles, creditCard, creditOverrideRows,
-    budgetSpendRows, budgetOverrideRows,
+    budgetSpendRows, expenseOverrideRows,
     savingsGoalRows, savingsContributionRows, savingsOverrideRows, projectFrom,
   }
   const cycles = projectFromRows(rows, options.safetyFloorCents ?? floorCents, numCycles)
@@ -254,7 +254,7 @@ export async function loadForecast(
     creditCard,
     creditOverrideRows,
     budgetSpendRows,
-    budgetOverrideRows,
+    expenseOverrideRows,
     savingsGoalRows,
     savingsContributionRows,
     savingsOverrideRows,
@@ -283,7 +283,7 @@ export function projectFromRows(
     creditAccount: toEngineCredit(rows.creditCard),
     creditOverrides: toEngineCreditOverrides(rows.creditOverrideRows),
     budgetSpend: toEngineBudgetSpend(rows.budgetSpendRows),
-    budgetOverrides: toEngineBudgetOverrides(rows.budgetOverrideRows),
+    expenseOverrides: toEngineExpenseOverrides(rows.expenseOverrideRows),
     savingsGoals: toEngineSavings(rows.savingsGoalRows, rows.savingsContributionRows, rows.savingsOverrideRows),
   })
 }
@@ -300,12 +300,12 @@ export function previewBudgetChange(
   numCycles: number,
   change: { expenseId: string; cycleStart: string; totalCents: number; perOccurrenceCents: number; scope: 'once' | 'always' }
 ): CycleResult[] {
-  const keepOthers = (rows.budgetOverrideRows ?? []).filter((o: any) =>
+  const keepOthers = (rows.expenseOverrideRows ?? []).filter((o: any) =>
     !(o.expense_id === change.expenseId && o.cycle_start === change.cycleStart))
   if (change.scope === 'once') {
     return projectFromRows({
       ...rows,
-      budgetOverrideRows: [...keepOthers, {
+      expenseOverrideRows: [...keepOthers, {
         expense_id: change.expenseId, cycle_start: change.cycleStart, amount_cents: change.totalCents,
       }],
     }, safetyFloorCents, numCycles)
@@ -317,7 +317,7 @@ export function previewBudgetChange(
       { amount_cents: change.perOccurrenceCents, effective_from: change.cycleStart, created_at: new Date().toISOString() },
     ],
   })
-  return projectFromRows({ ...rows, expenseRows, budgetOverrideRows: keepOthers }, safetyFloorCents, numCycles)
+  return projectFromRows({ ...rows, expenseRows, expenseOverrideRows: keepOthers }, safetyFloorCents, numCycles)
 }
 
 /* ── labelling a cycle ────────────────────────────────────────────────
