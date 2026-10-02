@@ -1995,3 +1995,19 @@ body.is-desktop .dwl-pane .sheet.dwl-sheet {
 @media (max-width: 1180px) {
   .dwl { grid-template-columns: minmax(0, 1fr) 380px; }
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   DESKTOP CREDIT
+   Left: what you owe and how fast it falls. Right: the choice (strategy,
+   commit) and what it puts in the next cycles. The phone keeps one column
+   in the same order the pieces read on desktop, left then right.
+   ══════════════════════════════════════════════════════════════════ */
+.dcr {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px; align-items: start;
+}
+.dcr-col { min-width: 0; }
+.dcr-col:first-child { position: sticky; top: 18px; }
+@media (max-width: 1180px) {
+  .dcr { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+}
