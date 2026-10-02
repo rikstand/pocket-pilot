@@ -106,6 +106,18 @@ export interface SavingsCycleLine {
   isOverride: boolean
 }
 
+// ── budget overrides ──────────────────────────────────────────────
+// A different budget for ONE cycle — "Christmas groceries", "away for a week,
+// no fuel". Same shape as the credit and savings overrides: an exception, not a
+// new default. A new default is a new amount version, as it always was.
+// amountCents is the whole cycle's budget, not the per-occurrence amount, so a
+// weekly budget in a fortnightly cycle is set as one figure.
+export interface BudgetOverride {
+  expenseId: string
+  cycleStart: string
+  amountCents: number
+}
+
 // Adjusts ONLY the extra portion, for one cycle. The minimum is contractual
 // and deliberately not overridable.
 export interface CreditExtraOverride {
@@ -123,6 +135,7 @@ export interface CycleInput {
   creditAccount?: CreditAccount | null
   creditOverrides?: CreditExtraOverride[]
   budgetSpend?: BudgetSpendEntry[]
+  budgetOverrides?: BudgetOverride[]
   savingsGoals?: SavingsGoal[]
 }
 

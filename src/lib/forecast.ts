@@ -24,11 +24,12 @@
 import {
   getIncomeSources, getExpenses, getCycles, getCreditAccount, getCreditExtraOverrides,
   getBudgetSpendEntries, getSavingsGoals, getAllSavingsContributions, getAllSavingsOverrides,
+  getAllBudgetOverrides,
 } from './repository'
 import { projectCycles } from '../engine/index'
 import type {
   CycleResult, IncomeSource, Expense, CreditAccount, CreditExtraOverride,
-  BudgetSpendEntry, SavingsGoal,
+  BudgetSpendEntry, BudgetOverride, SavingsGoal,
 } from '../engine/types'
 import { formatDate, parseDate } from '../engine/dates'
 import { byNewest, latestVersion } from './versions'
@@ -121,6 +122,15 @@ export function toEngineBudgetSpend(rows: any[]): BudgetSpendEntry[] {
   }))
 }
 
+/** One-cycle budgets → what the engine expects. */
+export function toEngineBudgetOverrides(rows: any[]): BudgetOverride[] {
+  return (rows ?? []).map((o: any) => ({
+    expenseId: o.expense_id,
+    cycleStart: o.cycle_start,
+    amountCents: o.amount_cents,
+  }))
+}
+
 /**
  * Savings goal rows → what the engine expects.
  *
@@ -172,6 +182,7 @@ export interface ForecastResult {
   creditCard: any | null
   creditOverrideRows: any[]
   budgetSpendRows: any[]
+  budgetOverrideRows: any[]
   savingsGoalRows: any[]
   savingsContributionRows: any[]
   savingsOverrideRows: any[]
@@ -206,7 +217,7 @@ export async function loadForecast(
 
   const [
     incomeRows, expenseRows, storedCycles, creditCard, budgetSpendRows,
-    savingsGoalRows, savingsContributionRows, savingsOverrideRows,
+    savingsGoalRows, savingsContributionRows, savingsOverrideRows, budgetOverrideRows,
   ] = await Promise.all([
     getIncomeSources(accountId),
     getExpenses(accountId),
@@ -216,6 +227,7 @@ export async function loadForecast(
     getSavingsGoals(accountId),
     getAllSavingsContributions(accountId),
     getAllSavingsOverrides(accountId),
+    getAllBudgetOverrides(accountId),
   ])
 
   // Overrides only exist once a card does, so this is a second round trip
@@ -227,18 +239,12 @@ export async function loadForecast(
   const openCycles  = storedCycles.filter((c: any) => !c.is_closed)
   const projectFrom = openCycles[0] ?? storedCycles[storedCycles.length - 1] ?? null
 
-  const cycles = projectCycles({
-    incomeSources: toEngineIncome(incomeRows),
-    expenses: toEngineExpenses(expenseRows),
-    openingBalanceCents: projectFrom?.opening_balance_cents ?? 0,
-    startDate: projectFrom?.start_date ?? todayStr(),
-    numCycles,
-    safetyFloorCents: options.safetyFloorCents ?? floorCents,
-    creditAccount: toEngineCredit(creditCard),
-    creditOverrides: toEngineCreditOverrides(creditOverrideRows),
-    budgetSpend: toEngineBudgetSpend(budgetSpendRows),
-    savingsGoals: toEngineSavings(savingsGoalRows, savingsContributionRows, savingsOverrideRows),
-  })
+  const rows = {
+    incomeRows, expenseRows, storedCycles, creditCard, creditOverrideRows,
+    budgetSpendRows, budgetOverrideRows,
+    savingsGoalRows, savingsContributionRows, savingsOverrideRows, projectFrom,
+  }
+  const cycles = projectFromRows(rows, options.safetyFloorCents ?? floorCents, numCycles)
 
   return {
     cycles,
@@ -248,6 +254,7 @@ export async function loadForecast(
     creditCard,
     creditOverrideRows,
     budgetSpendRows,
+    budgetOverrideRows,
     savingsGoalRows,
     savingsContributionRows,
     savingsOverrideRows,
@@ -255,6 +262,63 @@ export async function loadForecast(
   }
 }
 
+
+/**
+ * The projection from rows already loaded. loadForecast uses it, and so does
+ * any "what would this do?" preview: change a copy of the rows, project again,
+ * and the preview can never disagree with the real forecast.
+ */
+export function projectFromRows(
+  rows: Omit<ForecastResult, 'cycles'>,
+  safetyFloorCents: number,
+  numCycles: number
+): CycleResult[] {
+  return projectCycles({
+    incomeSources: toEngineIncome(rows.incomeRows),
+    expenses: toEngineExpenses(rows.expenseRows),
+    openingBalanceCents: rows.projectFrom?.opening_balance_cents ?? 0,
+    startDate: rows.projectFrom?.start_date ?? todayStr(),
+    numCycles,
+    safetyFloorCents,
+    creditAccount: toEngineCredit(rows.creditCard),
+    creditOverrides: toEngineCreditOverrides(rows.creditOverrideRows),
+    budgetSpend: toEngineBudgetSpend(rows.budgetSpendRows),
+    budgetOverrides: toEngineBudgetOverrides(rows.budgetOverrideRows),
+    savingsGoals: toEngineSavings(rows.savingsGoalRows, rows.savingsContributionRows, rows.savingsOverrideRows),
+  })
+}
+
+/**
+ * Preview a budget change without saving it. "once" sets that cycle's budget;
+ * "always" starts a new amount from that cycle and drops that cycle's one-off,
+ * exactly as saving would. Other cycles' one-offs are kept — they were set on
+ * purpose.
+ */
+export function previewBudgetChange(
+  rows: Omit<ForecastResult, 'cycles'>,
+  safetyFloorCents: number,
+  numCycles: number,
+  change: { expenseId: string; cycleStart: string; totalCents: number; perOccurrenceCents: number; scope: 'once' | 'always' }
+): CycleResult[] {
+  const keepOthers = (rows.budgetOverrideRows ?? []).filter((o: any) =>
+    !(o.expense_id === change.expenseId && o.cycle_start === change.cycleStart))
+  if (change.scope === 'once') {
+    return projectFromRows({
+      ...rows,
+      budgetOverrideRows: [...keepOthers, {
+        expense_id: change.expenseId, cycle_start: change.cycleStart, amount_cents: change.totalCents,
+      }],
+    }, safetyFloorCents, numCycles)
+  }
+  const expenseRows = (rows.expenseRows ?? []).map((e: any) => e.id !== change.expenseId ? e : {
+    ...e,
+    expense_amount_versions: [
+      ...(e.expense_amount_versions ?? []).filter((v: any) => v.effective_from !== change.cycleStart),
+      { amount_cents: change.perOccurrenceCents, effective_from: change.cycleStart, created_at: new Date().toISOString() },
+    ],
+  })
+  return projectFromRows({ ...rows, expenseRows, budgetOverrideRows: keepOthers }, safetyFloorCents, numCycles)
+}
 
 /* ── labelling a cycle ────────────────────────────────────────────────
  * Numbering cycles 1, 2, 3 tells you nothing about when they are. These put

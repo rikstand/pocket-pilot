@@ -734,3 +734,71 @@ export async function deleteBudgetSpendEntry(entryId: string) {
   const { error } = await supabase.from('budget_spend_entries').delete().eq('id', entryId)
   if (error) throw error
 }
+// --- BUDGET OVERRIDES ---
+// A different budget for one cycle. Same shape as the credit and savings
+// overrides: an exception for that cycle, not a new default. Changing a budget
+// "from now on" is a new amount version instead — see setExpenseAmountFrom.
+export async function getAllBudgetOverrides(accountId: string) {
+  const { data, error } = await supabase
+    .from('budget_overrides')
+    .select('*')
+    .eq('account_id', accountId)
+    .order('cycle_start')
+  if (error) throw error
+  return data
+}
+
+export async function setBudgetOverride(
+  expenseId: string,
+  accountId: string,
+  cycleStart: string,
+  amountCents: number
+) {
+  const { data, error } = await supabase
+    .from('budget_overrides')
+    .upsert(
+      { expense_id: expenseId, account_id: accountId, cycle_start: cycleStart, amount_cents: amountCents },
+      { onConflict: 'expense_id,cycle_start' }
+    )
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function clearBudgetOverride(expenseId: string, cycleStart: string) {
+  const { error } = await supabase
+    .from('budget_overrides')
+    .delete()
+    .eq('expense_id', expenseId)
+    .eq('cycle_start', cycleStart)
+  if (error) throw error
+}
+
+// --- EXPENSE AMOUNT FROM A DATE ---
+// "From now on": a new amount version starting at a cycle. Inserted first and
+// the older same-day versions removed second, so if the clean-up fails the new
+// amount still wins — the newest version on a date always does.
+export async function setExpenseAmountFrom(
+  expenseId: string,
+  accountId: string,
+  effectiveFrom: string,
+  amountCents: number
+) {
+  const { data, error } = await supabase
+    .from('expense_amount_versions')
+    .insert({ expense_id: expenseId, account_id: accountId, effective_from: effectiveFrom, amount_cents: amountCents })
+    .select()
+    .single()
+  if (error) throw error
+
+  const { error: e2 } = await supabase
+    .from('expense_amount_versions')
+    .delete()
+    .eq('expense_id', expenseId)
+    .eq('effective_from', effectiveFrom)
+    .neq('id', data.id)
+  if (e2) console.warn('older same-day amount not removed:', e2.message)
+
+  return data
+}

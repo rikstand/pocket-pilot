@@ -16,11 +16,13 @@ import {
   confirmCreditPayment,
   unconfirmCreditPayment,
   updateCreditStrategyExtra,
+  setBudgetOverride, clearBudgetOverride, setExpenseAmountFrom,
 } from './lib/repository'
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
 import { creditModelFrom, buildMinimumDueSchedule, dueDateInCycle, runCardForward } from './lib/creditSchedule'
-import { loadForecast, cycleTickLabel, cycleDateLabel, baseYearOf, baselineChecks } from './lib/forecast'
+import { loadForecast, cycleTickLabel, cycleDateLabel, baseYearOf, baselineChecks, previewBudgetChange } from './lib/forecast'
+import type { ForecastResult } from './lib/forecast'
 import { getOccurrencesInRange } from './engine/recurrence'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
 import { byOldest, latestVersion, versionForDate } from './lib/versions'
@@ -152,6 +154,13 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
   const [rawBudgetEntries, setRawBudgetEntries] = useState<any[]>([])
   const [rawStoredCycles,  setRawStoredCycles]  = useState<any[]>([])
+  // Kept whole so a budget change can be previewed by projecting a copy —
+  // the same engine, the same rows, so the preview cannot disagree with the
+  // forecast it turns into.
+  const [forecastRows, setForecastRows] = useState<ForecastResult | null>(null)
+  // Editing a budget amount in its card. val is what is typed, in dollars.
+  const [budEdit,   setBudEdit]   = useState<{ expenseId: string; val: string; scope: 'once' | 'always' } | null>(null)
+  const [budSaving, setBudSaving] = useState(false)
   const [dismissedBaseline, setDismissedBaseline] = useState<string[]>([])
 
   // How far the Forecast page looks ahead. Cycle stays on the near term — a
@@ -245,6 +254,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         setRawLayBys(layBys)
         setRawBudgetEntries(budgetEntries)
         setRawStoredCycles(storedCycles)
+        setForecastRows(forecast)
 
         const closedCycles = storedCycles.filter((c: any) => c.is_closed)
         const latestClosed = closedCycles[closedCycles.length - 1]
@@ -300,6 +310,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     }
   }, [variant, cycles])
 
+  // An open budget editor belongs to the cycle it was opened on. (Above the
+  // early returns: hooks must run on every render.)
+  useEffect(() => { setBudEdit(null) }, [activeIdx])
+
   if (loading) return <div className="app" style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh' }}><p style={{ color:'var(--mut)' }}>Loading…</p></div>
   if (error)   return <div className="app" style={{ padding:24 }}><p style={{ color:'var(--floor)' }}>{error}</p></div>
   if (!cycles.length) return <div className="app" style={{ padding:24 }}><p style={{ color:'var(--mut)' }}>No cycle data.</p></div>
@@ -309,6 +323,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const currentIdx   = findCurrentIdx(cycles)
 
   function reload() { setReloadKey(k => k + 1) }
+
 
   const primaryIncome = rawIncome.find((s: any) => s.is_primary && !s.is_potential)
 
@@ -384,12 +399,22 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
       const v         = versionForDate(exp.expense_amount_versions, cycle.startDate)
       const unitCents = v?.amount_cents ?? 0
-      const total     = unitCents * occs.length
       const mode      = exp.mode ?? 'fixed'
+      // A budget can have a different amount for this one cycle. The card shows
+      // it, the section total adds it up, and the engine projects with it.
+      const budgetOverride = mode === 'budget'
+        ? (forecastRows?.budgetOverrideRows ?? []).find((o: any) =>
+            o.expense_id === exp.id && o.cycle_start === cycle.startDate) ?? null
+        : null
+      const baseTotal = unitCents * occs.length
+      const total     = budgetOverride ? budgetOverride.amount_cents : baseTotal
 
       let icon = '▤', iconClass = 'fix', chips: string[][] = [['lock','fixed']], act: string | null = null
       if (mode === 'variable') { icon = '~'; iconClass = 'var'; chips = [['est','estimate']]; act = 'var' }
-      else if (mode === 'budget') { icon = '≈'; iconClass = 'base'; chips = [['bl','baseline']] }
+      else if (mode === 'budget') {
+        icon = '≈'; iconClass = 'base'
+        chips = budgetOverride ? [['bl','baseline'], ['drv','this cycle only']] : [['bl','baseline']]
+      }
       else { act = 'edit' }
 
       const isOneOffExp = exp.frequency === 'once' && !exp.lay_by_id
@@ -450,6 +475,9 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         oneOffDate: occs[0],
         laybyPct,
         unitCents,
+        occCount: occs.length,
+        baseTotalCents: baseTotal,
+        isBudgetOverride: !!budgetOverride,
         originalUnitCents: unitCents,
         estimatedCents: unitCents,
       })
@@ -986,8 +1014,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // tighter than it is, and push wishlist items out of reach for no real
   // reason. The app does not quietly start forecasting on averages — a budget
   // is a ceiling — it just says when the ceiling no longer matches reality.
-  const baselineAdvice = baselineChecks(rawExpenses, rawBudgetEntries, rawStoredCycles)
-    .filter(b => !dismissedBaseline.includes(b.expenseId))
+  const baselineAll    = baselineChecks(rawExpenses, rawBudgetEntries, rawStoredCycles)
+  const baselineAdvice = baselineAll.filter(b => !dismissedBaseline.includes(b.expenseId))
   // ── credit line for the focused cycle ──────────────────────────────
   // Derived from the cycle result, not from buildCards(): a credit payment is
   // not an expense row, so it never enters the `cards` array. Rendering it as
@@ -1238,6 +1266,146 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // what was logged, read-only.
   const isCurrentCycle = status === 'now'
   const isFutureCycle  = status === 'future' || status === 'low'
+  // Budget amounts can be planned on any cycle that isn't closed.
+  const canEditBudget  = status !== 'past'
+
+  function openBudEdit(cd: any) {
+    setOpenQuickAdd(null)
+    setBudEdit({ expenseId: cd.expenseId, val: String(cd.totalCents / 100), scope: 'once' })
+  }
+
+  async function saveBudEdit(cd: any, valCents: number, perCents: number) {
+    if (!budEdit) return
+    setBudSaving(true)
+    try {
+      const start = activeCycle.startDate
+      if (budEdit.scope === 'once') {
+        // Setting it back to the usual amount removes the exception rather
+        // than storing one that happens to match.
+        if (valCents === cd.baseTotalCents) await clearBudgetOverride(cd.expenseId, start)
+        else await setBudgetOverride(cd.expenseId, accountId, start, valCents)
+      } else {
+        await setExpenseAmountFrom(cd.expenseId, accountId, start, perCents)
+        // This cycle now follows the new amount. Later one-offs are kept —
+        // they were set on purpose.
+        if (cd.isBudgetOverride) await clearBudgetOverride(cd.expenseId, start)
+      }
+      setBudEdit(null)
+      reload()
+    } catch (e: any) { alert('Could not change the budget: ' + e.message) }
+    finally { setBudSaving(false) }
+  }
+
+  /* The editor that opens inside a budget card. The bars are the same
+     "Your account, each cycle" view the wishlist and credit sheets use. */
+  function budgetEditor(cd: any, spentCents: number) {
+    if (!budEdit || budEdit.expenseId !== cd.expenseId) return null
+    const valCents = Math.max(0, Math.round((parseFloat(budEdit.val) || 0) * 100))
+    const perCents = cd.occCount > 0 ? Math.round(valCents / cd.occCount) : valCents
+    const projected = cycles.filter((c: any) => !c.isHistorical)
+    const after = forecastRows
+      ? previewBudgetChange(forecastRows, floorCents, projected.length, {
+          expenseId: cd.expenseId, cycleStart: activeCycle.startDate,
+          totalCents: valCents, perOccurrenceCents: perCents, scope: budEdit.scope,
+        })
+      : []
+    const from = after.findIndex(c => c.startDate === activeCycle.startDate)
+    const shown = from >= 0 ? after.slice(from, from + 12) : []
+    const beforeHere = projected.find((c: any) => c.startDate === activeCycle.startDate)
+    const lastIdx = shown.length - 1
+    const beforeLast = lastIdx >= 0 ? projected.find((c: any) => c.startDate === shown[lastIdx].startDate) : null
+    const dHere = shown[0] && beforeHere ? shown[0].committedClosingBalanceCents - beforeHere.committedClosingBalanceCents : 0
+    const dLast = beforeLast ? shown[lastIdx].committedClosingBalanceCents - beforeLast.committedClosingBalanceCents : 0
+    const closes = shown.map(c => c.committedClosingBalanceCents)
+    const low = closes.length ? Math.min(...closes) : 0
+    const lowAt = closes.indexOf(low)
+    const top = Math.max(...closes, floorCents * 1.4, 1)
+    const belowSpent = isCurrentCycle && valCents < spentCents
+    const suggestion = baselineAll.find(b => b.expenseId === cd.expenseId)
+    const by = baseYearOf(cycles)
+    const signed = (v: number) => (v > 0 ? '+' : '−') + fmt(Math.abs(v), false)
+
+    return (
+      <div className="budg-edit" onClick={e => e.stopPropagation()}>
+        <div className="pay-controls" style={{ marginTop: 0 }}>
+          <div className="pc">
+            <div className="stepper">
+              <button onClick={() => setBudEdit({ ...budEdit, val: String(Math.max(0, valCents - 1000) / 100) })}>−</button>
+              <input className="v" type="number" inputMode="decimal" value={budEdit.val} autoFocus
+                onChange={e => setBudEdit({ ...budEdit, val: e.target.value })} />
+              <button onClick={() => setBudEdit({ ...budEdit, val: String((valCents + 1000) / 100) })}>+</button>
+            </div>
+          </div>
+        </div>
+
+        {suggestion && suggestion.averageCents !== valCents && (
+          <div className="pay-suggest">
+            <span className="ps-x">You average <b>{fmt(suggestion.averageCents, false)}</b> over the last {suggestion.cyclesCounted} closed cycles.</span>
+            <button onClick={() => setBudEdit({ ...budEdit, val: String(suggestion.averageCents / 100), scope: 'always' })}>use {fmt(suggestion.averageCents, false)}</button>
+          </div>
+        )}
+
+        <div className="budg-scope">
+          <button className={budEdit.scope === 'once' ? 'on' : ''} onClick={() => setBudEdit({ ...budEdit, scope: 'once' })}>
+            Just this cycle<small>{fmtDate(activeCycle.startDate)} only</small>
+          </button>
+          <button className={budEdit.scope === 'always' ? 'on' : ''} onClick={() => setBudEdit({ ...budEdit, scope: 'always' })}>
+            From now on<small>changes the baseline</small>
+          </button>
+        </div>
+        {budEdit.scope === 'always' && cd.occCount > 1 && (
+          <p className="hint" style={{ marginTop: 6 }}>Saved as {fmt(perCents, false)} each time — it falls {cd.occCount} times this cycle.</p>
+        )}
+        {cd.isBudgetOverride && budEdit.scope === 'once' && valCents !== cd.baseTotalCents && (
+          <button className="budg-reset" onClick={() => setBudEdit({ ...budEdit, val: String(cd.baseTotalCents / 100) })}>
+            back to the usual {fmt(cd.baseTotalCents, false)}
+          </button>
+        )}
+
+        {shown.length > 0 && <>
+          <div className="pay-bars-k"><span>Your account, each cycle</span><span>lowest {fmt(low, false)}</span></div>
+          <div className="pay-bars">
+            {floorCents > 0 && (
+              <div className="pay-floor" style={{ bottom: (18 + (floorCents / top) * 52) + 'px' }}>
+                <span>floor {fmt(floorCents, false)}</span>
+              </div>
+            )}
+            {closes.map((v, i) => (
+              <div key={i}
+                className={`pay-bar${v < 0 ? ' breach' : v < floorCents ? ' low' : ''}`}
+                style={{ height: Math.max((Math.max(v, 0) / top) * 52, 3) + 'px' }}>
+                <span className="pb-x">{cycleTickLabel(shown[i].startDate, by)}</span>
+              </div>
+            ))}
+          </div>
+          <div className={`pay-note${low < 0 ? ' bad' : low < floorCents ? ' warn' : ''}`}>
+            {low < 0
+              ? <>The cycle starting <b>{cycleDateLabel(shown[lowAt].startDate, by)}</b> would go <b>{fmt(-low, false)} overdrawn</b>.</>
+              : low < floorCents
+                ? <>The cycle starting <b>{cycleDateLabel(shown[lowAt].startDate, by)}</b> drops to <b>{fmt(low, false)}</b>, under your {fmt(floorCents, false)} floor.</>
+                : dHere === 0 && dLast === 0
+                  ? <>No change yet. The lowest cycle is {fmt(low, false)}.</>
+                  : budEdit.scope === 'once'
+                    ? <>This cycle closes <b>{signed(dHere)}</b> {dHere > 0 ? 'higher' : 'lower'}, and every cycle after it carries the same {signed(dHere)}.</>
+                    : <>This cycle closes <b>{signed(dHere)}</b> {dHere > 0 ? 'higher' : 'lower'}, and the gap grows each cycle: <b>{signed(dLast)}</b> by {cycleDateLabel(shown[lastIdx].startDate, by)}.</>}
+          </div>
+        </>}
+
+        {belowSpent && (
+          <p className="budg-guard">You've already spent {fmt(spentCents, false)} on {cd.name.toLowerCase()} this cycle, so it can't go lower than that.</p>
+        )}
+
+        <div className="navrow" style={{ marginTop: 12 }}>
+          <button onClick={() => setBudEdit(null)}>Cancel</button>
+          <button className="pri" disabled={belowSpent || budSaving}
+            style={{ opacity: belowSpent || budSaving ? 0.4 : 1 }}
+            onClick={() => saveBudEdit(cd, valCents, perCents)}>
+            {budSaving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    )
+  }
   const editAmountCents = Math.round(parseFloat(editAmount || '0') * 100)
   const varAmountCents  = Math.round(parseFloat(varAmount  || '0') * 100)
 
@@ -1512,12 +1680,16 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                           <div className="plan-tick" style={{ left: planPct + '%' }} />
                         )}
                       </div>
-                      <button className="act" type="button"
-                        style={{ color: done ? 'var(--mut)' : 'var(--pos)' }}
-                        disabled={savBusy}
-                        onClick={e => { e.stopPropagation(); toggleSetAside(line.goalId) }}>
-                        {done ? 'undo' : 'set aside →'}
-                      </button>
+                      {/* Setting money aside is a real event, like logging spend —
+                          only on a cycle that's happening, never a future one. */}
+                      {!isFutureCycle && (
+                        <button className="act" type="button"
+                          style={{ color: done ? 'var(--mut)' : 'var(--pos)' }}
+                          disabled={savBusy}
+                          onClick={e => { e.stopPropagation(); toggleSetAside(line.goalId) }}>
+                          {done ? 'undo' : 'set aside →'}
+                        </button>
+                      )}
                     </div>
                   </div>
                   <div className="vl">−{fmt(line.amountCents, false)}</div>
@@ -1654,15 +1826,26 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                     <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
                     <div className="budg-tx">
                       <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
-                      {isFutureCycle
-                        ? <div className="budg-sofar"><b>{fmt(cd.totalCents, false)}</b> planned</div>
-                        : <>
-                            <div className="budg-sofar"><b>{fmt(spent, false)}</b> of {fmt(cd.totalCents, false)}</div>
+                      {(() => {
+                        // The budget amount is its own tap target — dashed, and
+                        // well away from the + — so logging a coffee never
+                        // opens the editor.
+                        const amt = canEditBudget
+                          ? <button type="button" className={`budg-amt${budEdit?.expenseId === cd.expenseId ? ' on' : ''}`}
+                              onClick={e => { e.stopPropagation(); budEdit?.expenseId === cd.expenseId ? setBudEdit(null) : openBudEdit(cd) }}>
+                              {fmt(cd.totalCents, false)}
+                            </button>
+                          : <>{fmt(cd.totalCents, false)}</>
+                        return isFutureCycle
+                          ? <div className="budg-sofar">{amt} planned</div>
+                          : <div className="budg-sofar"><b>{fmt(spent, false)}</b> of {amt}</div>
+                      })()}
+                      {!isFutureCycle && <>
                             <div className="budg-barwrap"><div className={`budg-bar ${barState}`} style={{ width: pct + '%' }} /></div>
                           </>}
                     </div>
                     {isCurrentCycle && (
-                      <button className={`budg-plus${quickAddOpen ? ' on' : ''}`} onClick={e => { e.stopPropagation(); toggleQuickAdd(cd.expenseId) }}>{quickAddOpen ? '×' : '+'}</button>
+                      <button className={`budg-plus${quickAddOpen ? ' on' : ''}`} onClick={e => { e.stopPropagation(); setBudEdit(null); toggleQuickAdd(cd.expenseId) }}>{quickAddOpen ? '×' : '+'}</button>
                     )}
                   </div>
                   <div className={`budg-quickadd${quickAddOpen && isCurrentCycle ? ' on' : ''}`}>
@@ -1677,6 +1860,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                       <button className="budg-qa-save" onClick={e => { e.stopPropagation(); saveQuickAdd(cd.expenseId) }}>Add</button>
                     </div>
                   </div>
+                  {budgetEditor(cd, spent)}
                 </div>
               )
             })}

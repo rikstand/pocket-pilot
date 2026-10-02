@@ -2011,3 +2011,43 @@ body.is-desktop .dwl-pane .sheet.dwl-sheet {
 @media (max-width: 1180px) {
   .dcr { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   BUDGET EDITING IN THE CARD
+   The amount in "$120 of $1,000" is its own tap target: dashed, and well
+   away from the + that logs spend. It opens the editor inside the card.
+   The bars and verdict reuse the wishlist's .pay-* styles on purpose —
+   anything that changes what goes out shows its effect the same way.
+   ══════════════════════════════════════════════════════════════════ */
+.budg-amt {
+  border: 1px dashed var(--faint); background: transparent; color: var(--ink);
+  border-radius: 7px; padding: 0 5px; margin: 0 1px;
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 12.5px;
+  cursor: pointer; line-height: 1.5;
+}
+.budg-amt:hover, .budg-amt.on { border-color: var(--acc); color: var(--acc); border-style: solid; }
+.budg-edit {
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line2); text-align: left;
+}
+.budg-edit .stepper input.v {
+  flex: 1; min-width: 0; border: none; background: transparent; outline: none; text-align: center;
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 17px; color: var(--ink);
+}
+.budg-edit .pay-suggest { margin-top: 10px; }
+.budg-scope { display: flex; gap: 7px; margin-top: 10px; }
+.budg-scope button {
+  flex: 1; border: 1px solid var(--line); background: var(--bg2); color: var(--ink);
+  border-radius: 10px; padding: 8px 6px; cursor: pointer; font-size: 12.5px; font-weight: 600; line-height: 1.25;
+  font-family: inherit;
+}
+.budg-scope button small {
+  display: block; font-family: 'JetBrains Mono', monospace; font-size: 8.5px; color: var(--mut); font-weight: 500; margin-top: 2px;
+}
+.budg-scope button.on { border-color: var(--acc); background: var(--acc-s); color: var(--acc); }
+.budg-scope button.on small { color: var(--acc); }
+.budg-reset {
+  border: none; background: none; padding: 0; margin-top: 8px; cursor: pointer;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600; color: var(--acc);
+}
+.budg-guard { margin-top: 8px; font-size: 11.5px; color: var(--floor); line-height: 1.45; }
+.budg-edit .hint { font-size: 11px; color: var(--mut); line-height: 1.45; }
