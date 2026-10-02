@@ -85,6 +85,9 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // Same cards, same data — only where they sit changes.
   const viewport = useViewport()
   const deskCycle = viewport === 'desktop' && variant === 'cycle'
+  // Desktop Forecast: graph and cycles on the left, the chosen cycle's own
+  // cards on the right — the same cards, with the same actions, as mobile.
+  const deskForecast = viewport === 'desktop' && variant === 'forecast'
 
   // NEW — cycle carousel dot tracking (Available-to-spend / Next-payments swipe)
   const [activeCarouselDot, setActiveCarouselDot] = useState(0)
@@ -284,7 +287,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   }, [accountId, reloadKey, horizonCycles, variant])
 
   useEffect(() => {
-    if (pillsRef.current) {
+    // On desktop the cycles wrap into a grid, so there is no row to scroll.
+    if (pillsRef.current && !deskForecast) {
       const btn = pillsRef.current.children[activeIdx] as HTMLElement
       btn?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' })
     }
@@ -1229,6 +1233,11 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
   const aboveFloor   = activeCycle.committedClosingBalanceCents - floorCents
   const status       = cycleStatus(activeIdx)
+  // Spend logging and 'behind plan' describe real money, so they belong to
+  // the current cycle only. Future cycles show the plan; closed ones show
+  // what was logged, read-only.
+  const isCurrentCycle = status === 'now'
+  const isFutureCycle  = status === 'future' || status === 'low'
   const editAmountCents = Math.round(parseFloat(editAmount || '0') * 100)
   const varAmountCents  = Math.round(parseFloat(varAmount  || '0') * 100)
 
@@ -1486,13 +1495,13 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                       {goal.name}
                       {done
                         ? <span className="chip sav-ok">set aside ✓</span>
-                        : <span className="chip sav-pend">not yet</span>}
-                      {behind > 0 && !done && <span className="chip sav-behind">behind</span>}
+                        : <span className="chip sav-pend">{isFutureCycle ? 'planned' : 'not yet'}</span>}
+                      {isCurrentCycle && behind > 0 && !done && <span className="chip sav-behind">behind</span>}
                       {line.isOverride && <span className="chip drv">this cycle only</span>}
                     </div>
                     <div className="dt">
                       {fmt(saved, false)} of {fmt(target, false)} · {fmt(line.amountCents, false)} this cycle
-                      {behind > 0 && <> · <b style={{ color: 'var(--warn)' }}>{fmt(behind, false)} behind plan</b></>}
+                      {isCurrentCycle && behind > 0 && <> · <b style={{ color: 'var(--warn)' }}>{fmt(behind, false)} behind plan</b></>}
                     </div>
                     <div className="act-row">
                       {/* The tick on the bar is where the plan says you should be.
@@ -1641,16 +1650,22 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               const quickAddOpen = openQuickAdd === cd.expenseId
               return (
                 <div key={'bud'+i} className="budg-card">
-                  <div className="budg-top" onClick={() => openLog(cd)}>
+                  <div className="budg-top" onClick={() => { if (!isFutureCycle) openLog(cd) }}>
                     <div className={`ic ${cd.displayIconClass ?? cd.iconClass}`}>{cd.iconSvg ? <ExpenseIcon name={cd.iconSvg} size={20} /> : cd.icon}</div>
                     <div className="budg-tx">
                       <div className="nm">{cd.name}{cd.chips.map(([cls, label]: string[], j: number) => (<span key={j} className={`chip ${cls}`} style={chipStyle(cls)}>{label}</span>))}</div>
-                      <div className="budg-sofar"><b>{fmt(spent, false)}</b> of {fmt(cd.totalCents, false)}</div>
-                      <div className="budg-barwrap"><div className={`budg-bar ${barState}`} style={{ width: pct + '%' }} /></div>
+                      {isFutureCycle
+                        ? <div className="budg-sofar"><b>{fmt(cd.totalCents, false)}</b> planned</div>
+                        : <>
+                            <div className="budg-sofar"><b>{fmt(spent, false)}</b> of {fmt(cd.totalCents, false)}</div>
+                            <div className="budg-barwrap"><div className={`budg-bar ${barState}`} style={{ width: pct + '%' }} /></div>
+                          </>}
                     </div>
-                    <button className={`budg-plus${quickAddOpen ? ' on' : ''}`} onClick={e => { e.stopPropagation(); toggleQuickAdd(cd.expenseId) }}>{quickAddOpen ? '×' : '+'}</button>
+                    {isCurrentCycle && (
+                      <button className={`budg-plus${quickAddOpen ? ' on' : ''}`} onClick={e => { e.stopPropagation(); toggleQuickAdd(cd.expenseId) }}>{quickAddOpen ? '×' : '+'}</button>
+                    )}
                   </div>
-                  <div className={`budg-quickadd${quickAddOpen ? ' on' : ''}`}>
+                  <div className={`budg-quickadd${quickAddOpen && isCurrentCycle ? ' on' : ''}`}>
                     <div className="budg-qa-inner">
                       <span className="pre">{sym}</span>
                       <input
@@ -1678,6 +1693,98 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     </>
   )
 
+  // Horizon picker, graph and the cycle pills. Above the cycle on the phone;
+  // the left column on desktop.
+  const forecastTop = (
+    <>
+      <div className="horizon">
+        {([[6, '3 months'], [13, '6 months'], [26, '12 months']] as [number, string][]).map(
+          ([n, label]) => (
+            <button key={n}
+              className={horizonCycles === n ? 'on' : ''}
+              onClick={() => setHorizonCycles(n)}>
+              {label}<small>{n} cycles</small>
+            </button>
+          ))}
+      </div>
+
+      <div className="graphwrap">
+        <div className="graph-cap">
+          <span>Projected close · {cycles.length} cycles</span>
+          <span>{monthStart} → {monthEnd}</span>
+        </div>
+        {cycles.length > farFromIdx + 1 && (
+          <div className="horizon-note">
+            Solid to {cycles[farFromIdx] ? fmtDate(cycles[farFromIdx].startDate) : 'about 3 months'} ·
+            faded after that, where the projection is only today's income and expenses carried forward
+          </div>
+        )}
+        <svg className="proj" viewBox="0 0 340 152" aria-label="Balance projection">
+          <line className="axln" x1={xLeft} y1={gTop} x2={xLeft} y2={gBot} />
+          <line className="axln" x1={xLeft} y1={gBot} x2={xRight} y2={gBot} />
+          {ticks.map(tv => (
+            <g key={tv}>
+              {tv !== minTick && (
+                <line className={tv === 0 && minTick < 0 ? 'axln' : 'gridln'}
+                  x1={xLeft} y1={yFor(tv)} x2={xRight} y2={yFor(tv)} />
+              )}
+              <text className="axtx" x={xLeft - 4} y={yFor(tv) + 3} textAnchor="end">{fmtAxis(tv)}</text>
+            </g>
+          ))}
+          {floorCents > 0 && <>
+            <line className="floorln" x1={xLeft} y1={fY} x2={xRight} y2={fY} />
+            <text className="floortx" x={xLeft + 4} y={fY - 4}>{fmt(floorCents,false)} FLOOR</text>
+          </>}
+          <path className="area" d={`M${pts[0][0]},${pts[0][1]} ${pts.map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} L${pts[pts.length-1][0]},${zeroY} L${pts[0][0]},${zeroY} Z`} />
+          <polyline className="pastln" points={pts.slice(0, splitIdx+1).map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
+          <polyline className="futln"
+            points={pts.slice(splitIdx, Math.max(splitIdx + 1, Math.min(farFromIdx + 1, pts.length)))
+              .map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
+          {pts.length > farFromIdx + 1 && (
+            <polyline className="futln far"
+              points={pts.slice(farFromIdx).map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
+          )}
+          {pts.map((p:number[], i:number) => {
+            const s = cycleStatus(i)
+            const isLow = s==='low', isPast = s==='past', isActive = i===activeIdx
+            const isFar = i > farFromIdx
+            // At 27 cycles the dots sit about 12px apart, so past the
+            // boundary only every second one is drawn.
+            if (isFar && !isActive && (i - farFromIdx) % 2 !== 0) return null
+            return (
+              <g key={i} onClick={() => setActiveIdx(i)} style={{ cursor:'pointer' }}>
+                {isActive && <circle className={`focusring${isLow?' low':''}`} cx={p[0]} cy={p[1]} r="8" />}
+                <circle className={`wp${isPast?' past':''}${isLow?' low':''}${isFar?' far':''}`}
+                  cx={p[0]} cy={p[1]} r={isFar ? 3.4 : 4.2} />
+                {isActive && (
+                  <text className={`dotlbl${isLow?' low':''}`} x={p[0]} y={p[1] - 12} textAnchor="middle">
+                    {fmt(cycles[i].committedClosingBalanceCents, false)}
+                  </text>
+                )}
+              </g>
+            )
+          })}
+        </svg>
+      </div>
+
+      <div className="pills" ref={pillsRef}>
+        {cycles.map((c, i) => {
+          const s = cycleStatus(i)
+          return (
+            <button key={i}
+              className={`pill${s==='low'?' low':''}${s==='past'?' past':''}${i===activeIdx?' active':''}${i > farFromIdx ? ' far' : ''}`}
+              onClick={() => setActiveIdx(i)}
+            >
+              <div className="pd">{fmtDate(c.startDate)}</div>
+              <div className="pe">{fmt(c.committedClosingBalanceCents,false)}</div>
+              <div className="ps">{s==='now' ? 'this cycle' : `→ ${fmtDate(c.endDate)}`}</div>
+            </button>
+          )
+        })}
+      </div>
+    </>
+  )
+
   // ── render ────────────────────────────────────────────────────────
   return (
     <>
@@ -1699,95 +1806,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
           </div>
         )}
 
-        {variant === 'forecast' && (
-          <>
-            <div className="horizon">
-              {([[6, '3 months'], [13, '6 months'], [26, '12 months']] as [number, string][]).map(
-                ([n, label]) => (
-                  <button key={n}
-                    className={horizonCycles === n ? 'on' : ''}
-                    onClick={() => setHorizonCycles(n)}>
-                    {label}<small>{n} cycles</small>
-                  </button>
-                ))}
-            </div>
-
-            <div className="graphwrap">
-              <div className="graph-cap">
-                <span>Projected close · {cycles.length} cycles</span>
-                <span>{monthStart} → {monthEnd}</span>
-              </div>
-              {cycles.length > farFromIdx + 1 && (
-                <div className="horizon-note">
-                  Solid to {cycles[farFromIdx] ? fmtDate(cycles[farFromIdx].startDate) : 'about 3 months'} ·
-                  faded after that, where the projection is only today's income and expenses carried forward
-                </div>
-              )}
-              <svg className="proj" viewBox="0 0 340 152" aria-label="Balance projection">
-                <line className="axln" x1={xLeft} y1={gTop} x2={xLeft} y2={gBot} />
-                <line className="axln" x1={xLeft} y1={gBot} x2={xRight} y2={gBot} />
-                {ticks.map(tv => (
-                  <g key={tv}>
-                    {tv !== minTick && (
-                      <line className={tv === 0 && minTick < 0 ? 'axln' : 'gridln'}
-                        x1={xLeft} y1={yFor(tv)} x2={xRight} y2={yFor(tv)} />
-                    )}
-                    <text className="axtx" x={xLeft - 4} y={yFor(tv) + 3} textAnchor="end">{fmtAxis(tv)}</text>
-                  </g>
-                ))}
-                {floorCents > 0 && <>
-                  <line className="floorln" x1={xLeft} y1={fY} x2={xRight} y2={fY} />
-                  <text className="floortx" x={xLeft + 4} y={fY - 4}>{fmt(floorCents,false)} FLOOR</text>
-                </>}
-                <path className="area" d={`M${pts[0][0]},${pts[0][1]} ${pts.map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} L${pts[pts.length-1][0]},${zeroY} L${pts[0][0]},${zeroY} Z`} />
-                <polyline className="pastln" points={pts.slice(0, splitIdx+1).map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
-                <polyline className="futln"
-                  points={pts.slice(splitIdx, Math.max(splitIdx + 1, Math.min(farFromIdx + 1, pts.length)))
-                    .map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
-                {pts.length > farFromIdx + 1 && (
-                  <polyline className="futln far"
-                    points={pts.slice(farFromIdx).map((p:number[]) => `${p[0]},${p[1]}`).join(' ')} />
-                )}
-                {pts.map((p:number[], i:number) => {
-                  const s = cycleStatus(i)
-                  const isLow = s==='low', isPast = s==='past', isActive = i===activeIdx
-                  const isFar = i > farFromIdx
-                  // At 27 cycles the dots sit about 12px apart, so past the
-                  // boundary only every second one is drawn.
-                  if (isFar && !isActive && (i - farFromIdx) % 2 !== 0) return null
-                  return (
-                    <g key={i} onClick={() => setActiveIdx(i)} style={{ cursor:'pointer' }}>
-                      {isActive && <circle className={`focusring${isLow?' low':''}`} cx={p[0]} cy={p[1]} r="8" />}
-                      <circle className={`wp${isPast?' past':''}${isLow?' low':''}${isFar?' far':''}`}
-                        cx={p[0]} cy={p[1]} r={isFar ? 3.4 : 4.2} />
-                      {isActive && (
-                        <text className={`dotlbl${isLow?' low':''}`} x={p[0]} y={p[1] - 12} textAnchor="middle">
-                          {fmt(cycles[i].committedClosingBalanceCents, false)}
-                        </text>
-                      )}
-                    </g>
-                  )
-                })}
-              </svg>
-            </div>
-
-            <div className="pills" ref={pillsRef}>
-              {cycles.map((c, i) => {
-                const s = cycleStatus(i)
-                return (
-                  <button key={i}
-                    className={`pill${s==='low'?' low':''}${s==='past'?' past':''}${i===activeIdx?' active':''}${i > farFromIdx ? ' far' : ''}`}
-                    onClick={() => setActiveIdx(i)}
-                  >
-                    <div className="pd">{fmtDate(c.startDate)}</div>
-                    <div className="pe">{fmt(c.committedClosingBalanceCents,false)}</div>
-                    <div className="ps">{s==='now' ? 'this cycle' : `→ ${fmtDate(c.endDate)}`}</div>
-                  </button>
-                )
-              })}
-            </div>
-          </>
-        )}
+        {variant === 'forecast' && !deskForecast && forecastTop}
 
         {deskCycle ? (
           <div className="dcyc">
@@ -1799,9 +1818,17 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               <div className="dcyc-close">{closeBlock}</div>
             </aside>
           </div>
+        ) : deskForecast ? (
+          <div className="dfc">
+            <div className="dfc-left">{forecastTop}</div>
+            <aside className="dfc-pane">
+              {cycleBody}
+              <div className="dcyc-close">{closeBlock}</div>
+            </aside>
+          </div>
         ) : cycleBody}
 
-        {!deskCycle && closeBlock}
+        {!deskCycle && !deskForecast && closeBlock}
 
       </div>
 
