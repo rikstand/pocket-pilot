@@ -698,8 +698,11 @@ export async function addBudgetSpendEntry(
   accountId: string,
   expenseId: string,
   amountCents: number,
-  label = 'Quick add',
-  spentDate?: string
+  label = '',
+  spentDate?: string,
+  // Where it was spent and an optional note. Both optional — a bare amount is
+  // still a perfectly good entry.
+  place?: { payeeId?: string | null; note?: string | null }
 ) {
   const { data, error } = await supabase
     .from('budget_spend_entries')
@@ -708,6 +711,9 @@ export async function addBudgetSpendEntry(
       expense_id: expenseId,
       amount_cents: amountCents,
       label,
+      payee_id: place?.payeeId ?? null,
+      note: place?.note?.trim() ? place.note.trim() : null,
+      source: 'manual',
       spent_date: spentDate ?? (() => {
         const d = new Date()
         return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -719,10 +725,20 @@ export async function addBudgetSpendEntry(
   return data
 }
 
-export async function updateBudgetSpendEntry(entryId: string, amountCents: number, label: string) {
+export async function updateBudgetSpendEntry(
+  entryId: string,
+  amountCents: number,
+  label: string,
+  place?: { payeeId?: string | null; note?: string | null }
+) {
+  const fields: any = { amount_cents: amountCents, label }
+  if (place) {
+    fields.payee_id = place.payeeId ?? null
+    fields.note = place.note?.trim() ? place.note.trim() : null
+  }
   const { data, error } = await supabase
     .from('budget_spend_entries')
-    .update({ amount_cents: amountCents, label })
+    .update(fields)
     .eq('id', entryId)
     .select()
     .single()
@@ -801,4 +817,55 @@ export async function setExpenseAmountFrom(
   if (e2) console.warn('older same-day amount not removed:', e2.message)
 
   return data
+}
+
+// --- PLACES (payees) ---
+// Where spend happens: Woolworths, New World, Z Energy. One list per account.
+// Entries point at a place rather than copying its name, so renaming a place
+// renames it everywhere — and "how much do I usually spend at New World?"
+// becomes a question the data can answer later.
+export async function getPayees(accountId: string) {
+  const { data, error } = await supabase
+    .from('payees')
+    .select('*')
+    .eq('account_id', accountId)
+    .eq('archived', false)
+    .order('name')
+  if (error) throw error
+  return data
+}
+
+// Find a place by name (any capitalisation, spaces trimmed) or create it.
+// If two taps race to create the same place, the database's unique rule turns
+// the second into a lookup instead of a duplicate.
+export async function findOrCreatePayee(accountId: string, name: string) {
+  const clean = name.trim()
+  if (!clean) return null
+  const key = clean.toLowerCase()
+
+  const { data: found, error: e1 } = await supabase
+    .from('payees')
+    .select('*')
+    .eq('account_id', accountId)
+    .eq('name_key', key)
+    .limit(1)
+  if (e1) throw e1
+  if (found?.[0]) return found[0]
+
+  const { data, error } = await supabase
+    .from('payees')
+    .insert({ account_id: accountId, name: clean })
+    .select()
+    .single()
+  if (!error) return data
+  if (error.code !== '23505') throw error
+
+  const { data: again, error: e3 } = await supabase
+    .from('payees')
+    .select('*')
+    .eq('account_id', accountId)
+    .eq('name_key', key)
+    .limit(1)
+  if (e3) throw e3
+  return again?.[0] ?? null
 }

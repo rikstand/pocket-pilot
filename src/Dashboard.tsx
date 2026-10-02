@@ -17,6 +17,7 @@ import {
   unconfirmCreditPayment,
   updateCreditStrategyExtra,
   setBudgetOverride, clearBudgetOverride, setExpenseAmountFrom,
+  getPayees, findOrCreatePayee,
 } from './lib/repository'
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
@@ -182,7 +183,18 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const [logItem,          setLogItem]          = useState<any>(null)
   const [editingEntryId,   setEditingEntryId]   = useState<string | null>(null)
   const [editEntryAmount,  setEditEntryAmount]  = useState('')
-  const [editEntryLabel,   setEditEntryLabel]   = useState('')
+  const [editEntryPlace,   setEditEntryPlace]   = useState('')
+  const [editEntryNote,    setEditEntryNote]    = useState('')
+  // Logging spend: where (optional), how much, an optional note, today or
+  // yesterday. qaPlace is a picked place; qaWhere is a typed one.
+  const [rawPayees,  setRawPayees]  = useState<any[]>([])
+  const [qaPlace,    setQaPlace]    = useState<string | null>(null)
+  const [qaWhere,    setQaWhere]    = useState('')
+  const [qaNote,     setQaNote]     = useState<string | null>(null)
+  const [qaYesterday, setQaYesterday] = useState(false)
+  const [qaSaving,   setQaSaving]   = useState(false)
+  // Adding shows an Undo for a few seconds instead of asking first.
+  const [undoEntry,  setUndoEntry]  = useState<{ id: string; text: string } | null>(null)
 
   // NEW — Salary / recurring income edit sheet (amount + frequency + payday)
   const [incomeEditItem,      setIncomeEditItem]      = useState<any>(null)
@@ -218,9 +230,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         // the Cycle screen, Wishlist and Settings each had their own copy of the
         // mapping, and two of them had quietly drifted — Wishlist forecast a
         // bigger balance because its copy never loaded the credit card.
-        const [layBys, budgetEntries, forecast] = await Promise.all([
+        const [layBys, budgetEntries, payees, forecast] = await Promise.all([
           getLayBys(accountId),
           getBudgetSpendEntries(accountId),
+          getPayees(accountId),
           // The Cycle page renders only the focused cycle, so a longer projection
           // costs nothing on screen — but the adjust sheet needs it. A payment
           // running fifteen cycles was being judged against six.
@@ -253,6 +266,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         setRawExpenses(expenses)
         setRawLayBys(layBys)
         setRawBudgetEntries(budgetEntries)
+        setRawPayees(payees ?? [])
         setRawStoredCycles(storedCycles)
         setForecastRows(forecast)
 
@@ -313,6 +327,12 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // An open budget editor belongs to the cycle it was opened on. (Above the
   // early returns: hooks must run on every render.)
   useEffect(() => { setBudEdit(null) }, [activeIdx])
+  // The Undo after logging spend fades after a few seconds.
+  useEffect(() => {
+    if (!undoEntry) return
+    const t = setTimeout(() => setUndoEntry(null), 5000)
+    return () => clearTimeout(t)
+  }, [undoEntry])
 
   if (loading) return <div className="app" style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh' }}><p style={{ color:'var(--mut)' }}>Loading…</p></div>
   if (error)   return <div className="app" style={{ padding:24 }}><p style={{ color:'var(--floor)' }}>{error}</p></div>
@@ -966,27 +986,88 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   function toggleQuickAdd(expenseId: string) {
     setOpenQuickAdd(prev => prev === expenseId ? null : expenseId)
     setQuickAddAmount('')
+    setQaPlace(null); setQaWhere(''); setQaNote(null); setQaYesterday(false)
   }
-  async function saveQuickAdd(expenseId: string) {
+
+  /* ── places ── */
+  function payeeName(id: string | null | undefined) {
+    if (!id) return null
+    return rawPayees.find((p: any) => p.id === id)?.name ?? null
+  }
+  // The places you use most for THIS budget, so Groceries offers
+  // supermarkets and Fuel offers petrol stations.
+  function placesFor(expenseId: string) {
+    const counts: Record<string, number> = {}
+    for (const e of rawBudgetEntries) {
+      if (e.expense_id !== expenseId || !e.payee_id) continue
+      counts[e.payee_id] = (counts[e.payee_id] ?? 0) + 1
+    }
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([id, n]) => ({ id, n, name: payeeName(id) }))
+      .filter(p => p.name)
+      .slice(0, 4)
+  }
+  // What an entry is called in the log: the place, else the note, else an old
+  // label that meant something. "Quick add" was a placeholder, not a name.
+  function entryTitle(e: any) {
+    const legacy = e.label && e.label !== 'Quick add' ? e.label : null
+    return payeeName(e.payee_id) ?? e.note ?? legacy ?? 'Spend'
+  }
+  function entrySub(e: any) {
+    return e.payee_id && e.note ? e.note : null
+  }
+
+  // Yesterday only when it's still inside this cycle — otherwise the spend
+  // would land in a cycle that may already be closed.
+  const yesterdayStr = formatDate(addDays(parseDate(today()), -1))
+  const yesterdayInCycle = yesterdayStr >= activeCycle.startDate
+
+  async function saveQuickAdd(expenseId: string, expenseName: string) {
     const cents = Math.round(parseFloat(quickAddAmount || '0') * 100)
-    if (!cents) return
+    if (!cents || qaSaving) return
+    setQaSaving(true)
     try {
-      await addBudgetSpendEntry(accountId, expenseId, cents, 'Quick add', today())
-      setOpenQuickAdd(null); setQuickAddAmount(''); reload()
+      let payeeId = qaPlace
+      if (!payeeId && qaWhere.trim()) {
+        const p = await findOrCreatePayee(accountId, qaWhere)
+        payeeId = p?.id ?? null
+      }
+      const when = qaYesterday && yesterdayInCycle ? yesterdayStr : today()
+      const row = await addBudgetSpendEntry(accountId, expenseId, cents, '', when, { payeeId, note: qaNote })
+      const where = payeeId ? (payeeName(payeeId) ?? qaWhere.trim()) : null
+      setUndoEntry({
+        id: row.id,
+        text: `${where ? where + ' · ' : ''}${fmt(cents, false)} added to ${expenseName}`,
+      })
+      setOpenQuickAdd(null); setQuickAddAmount('')
+      setQaPlace(null); setQaWhere(''); setQaNote(null); setQaYesterday(false)
+      reload()
     } catch (e: any) { alert('Could not log spend: ' + e.message) }
+    finally { setQaSaving(false) }
   }
+  async function undoLastEntry() {
+    if (!undoEntry) return
+    const id = undoEntry.id
+    setUndoEntry(null)
+    try { await deleteBudgetSpendEntry(id); reload() }
+    catch (e: any) { alert('Could not undo: ' + e.message) }
+  }
+
   function openLog(cd: any) { setLogItem(cd); setEditingEntryId(null) }
   function closeLog() { setLogItem(null); setEditingEntryId(null) }
   function startEditEntry(entry: any) {
     setEditingEntryId(entry.id)
     setEditEntryAmount(String(entry.amount_cents / 100))
-    setEditEntryLabel(entry.label)
+    setEditEntryPlace(payeeName(entry.payee_id) ?? '')
+    setEditEntryNote(entry.note ?? (entry.label && entry.label !== 'Quick add' && !entry.payee_id ? entry.label : ''))
   }
   async function saveEditEntry(entry: any) {
     const cents = Math.round(parseFloat(editEntryAmount || '0') * 100)
     if (!cents) return
     try {
-      await updateBudgetSpendEntry(entry.id, cents, editEntryLabel)
+      const p = editEntryPlace.trim() ? await findOrCreatePayee(accountId, editEntryPlace) : null
+      await updateBudgetSpendEntry(entry.id, cents, '', { payeeId: p?.id ?? null, note: editEntryNote })
       setEditingEntryId(null); reload()
     } catch (e: any) { alert('Could not update entry: ' + e.message) }
   }
@@ -1848,18 +1929,51 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                       <button className={`budg-plus${quickAddOpen ? ' on' : ''}`} onClick={e => { e.stopPropagation(); setBudEdit(null); toggleQuickAdd(cd.expenseId) }}>{quickAddOpen ? '×' : '+'}</button>
                     )}
                   </div>
-                  <div className={`budg-quickadd${quickAddOpen && isCurrentCycle ? ' on' : ''}`}>
-                    <div className="budg-qa-inner">
-                      <span className="pre">{sym}</span>
-                      <input
-                        type="number" inputMode="decimal" placeholder="0.00"
-                        value={quickAddAmount} onChange={e => setQuickAddAmount(e.target.value)}
-                        onClick={e => e.stopPropagation()}
-                        onKeyDown={e => { if (e.key === 'Enter') saveQuickAdd(cd.expenseId) }}
-                      />
-                      <button className="budg-qa-save" onClick={e => { e.stopPropagation(); saveQuickAdd(cd.expenseId) }}>Add</button>
-                    </div>
-                  </div>
+                  {quickAddOpen && isCurrentCycle && (() => {
+                    const places = placesFor(cd.expenseId)
+                    return (
+                      <div className="qa" onClick={e => e.stopPropagation()}>
+                        {places.length > 0 && (
+                          <div className="qa-places">
+                            {places.map(p => (
+                              <button key={p.id} type="button" className={`qa-place${qaPlace === p.id ? ' on' : ''}`}
+                                onClick={() => { setQaPlace(qaPlace === p.id ? null : p.id); setQaWhere('') }}>
+                                {p.name}<small>{p.n}×</small>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {!qaPlace && (
+                          <>
+                            <input className="qa-where" list={'qa-places-' + cd.expenseId}
+                              placeholder="Where? (optional)" value={qaWhere}
+                              onChange={e => setQaWhere(e.target.value)} />
+                            <datalist id={'qa-places-' + cd.expenseId}>
+                              {rawPayees.map((p: any) => <option key={p.id} value={p.name} />)}
+                            </datalist>
+                          </>
+                        )}
+                        <div className="qa-row">
+                          <span className="pre">{sym}</span>
+                          <input className="qa-amt" type="number" inputMode="decimal" placeholder="0.00" autoFocus
+                            value={quickAddAmount} onChange={e => setQuickAddAmount(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') saveQuickAdd(cd.expenseId, cd.name) }} />
+                          <button className="budg-qa-save" disabled={qaSaving}
+                            onClick={() => saveQuickAdd(cd.expenseId, cd.name)}>{qaSaving ? '…' : 'Add'}</button>
+                        </div>
+                        {qaNote !== null && (
+                          <input className="qa-where" placeholder="Note (optional)" value={qaNote}
+                            onChange={e => setQaNote(e.target.value)} />
+                        )}
+                        <div className="qa-meta">
+                          {yesterdayInCycle
+                            ? <button type="button" onClick={() => setQaYesterday(y => !y)}>{qaYesterday ? 'yesterday' : 'today'} ▾</button>
+                            : <span>today</span>}
+                          {qaNote === null && <button type="button" onClick={() => setQaNote('')}>+ note</button>}
+                        </div>
+                      </div>
+                    )
+                  })()}
                   {budgetEditor(cd, spent)}
                 </div>
               )
@@ -2395,6 +2509,13 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         </div>
       )}
 
+      {undoEntry && (
+        <div className="undo-toast" role="status">
+          <span>{undoEntry.text}</span>
+          <button onClick={undoLastEntry}>Undo</button>
+        </div>
+      )}
+
       {/* ═══ OVERLAY 5 — Budget spend log ═══ */}
       {logItem && (
         <div className="ov" onClick={closeLog}>
@@ -2403,19 +2524,30 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
             <div className="grab" />
             <h3>{logItem.name}</h3>
             <p className="sd">This cycle · {fmtDate(activeCycle.startDate)} – {fmtDate(activeCycle.endDate)}</p>
+            <datalist id="log-places">
+              {rawPayees.map((p: any) => <option key={p.id} value={p.name} />)}
+            </datalist>
             {entriesForExpenseInCycle(logItem.expenseId).length === 0
               ? <div className="skipnote">No spend logged yet this cycle.</div>
               : entriesForExpenseInCycle(logItem.expenseId).map((entry: any) =>
                   editingEntryId === entry.id ? (
-                    <div key={entry.id} className="entry-row">
-                      <input className="entry-edit-label" value={editEntryLabel} onChange={e => setEditEntryLabel(e.target.value)} />
+                    <div key={entry.id} className="entry-row entry-editing">
+                      <div className="entry-edit-col">
+                        <input className="entry-edit-label" list="log-places" placeholder="Where? (optional)"
+                          value={editEntryPlace} onChange={e => setEditEntryPlace(e.target.value)} />
+                        <input className="entry-edit-label entry-edit-note" placeholder="Note (optional)"
+                          value={editEntryNote} onChange={e => setEditEntryNote(e.target.value)} />
+                      </div>
                       <input className="entry-edit-amount" type="number" inputMode="decimal" value={editEntryAmount} onChange={e => setEditEntryAmount(e.target.value)} />
                       <span className="entry-save" onClick={() => saveEditEntry(entry)}>save</span>
                     </div>
                   ) : (
                     <div key={entry.id} className="entry-row">
                       <div className="entry-date">{fmtDate(entry.spent_date)}</div>
-                      <div className="entry-label" onClick={() => startEditEntry(entry)}>{entry.label}</div>
+                      <div className="entry-label" onClick={() => startEditEntry(entry)}>
+                        {entryTitle(entry)}
+                        {entrySub(entry) && <small className="entry-sub">{entrySub(entry)}</small>}
+                      </div>
                       <div className="entry-amount" onClick={() => startEditEntry(entry)}>{fmt(entry.amount_cents, false)}</div>
                       <span className="entry-del" onClick={() => deleteEntry(entry)}>✕</span>
                     </div>
