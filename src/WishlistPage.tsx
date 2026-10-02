@@ -10,6 +10,7 @@ import { loadForecast, cycleTickLabel, cycleDateLabel, baseYearOf } from './lib/
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
 import { parseDate, formatDate } from './engine/dates'
+import { useViewport } from './lib/useViewport'
 
 // Show the year once a date is far enough out that day-and-month alone could
 // be mistaken for a nearer one. "16 Sep" a year away looked earlier than
@@ -237,6 +238,9 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
   const [boughtSaving,   setBoughtSaving]   = useState(false)
 
   const floorCents = activeAccount?.safety_floor_cents ?? 0
+  // On desktop "how to pay" is a pane beside the list instead of a sheet over
+  // it, so clicking down the list redraws the plan for each item in place.
+  const isDesktop = useViewport() === 'desktop'
 
   useEffect(() => {
     async function load() {
@@ -419,137 +423,314 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
     finally { setUncommitSaving(false) }
   }
 
+  /* ── how to pay: one body, two frames ──
+ A sheet over the list on the phone; a pane beside it on desktop. */
+  const payBody = payTarget ? (() => {
+    const cost = payTarget.amount_cents
+
+    const savePlan = planPayments(cost, saveN, 0)
+    const saveBank = balancesAfter(closings, savePlan.pays)
+    const saveLow  = saveBank.length ? Math.min(...saveBank) : 0
+    const saveLowAt = saveBank.indexOf(saveLow)
+    const saveFit  = fewestCyclesThatFit(closings, cost, floorCents, saveN + 1)
+
+    const lbPlan = planPayments(cost, lbN, lbStart)
+    const lbBank = balancesAfter(closings, lbPlan.pays)
+    const lbLow  = lbBank.length ? Math.min(...lbBank) : 0
+    const lbLowAt = lbBank.indexOf(lbLow)
+    const lbFit  = earliestStartThatFits(closings, cost, lbN, floorCents)
+
+    const isSave = payMode === 'savings'
+    const plan   = isSave ? savePlan : lbPlan
+    const bank   = isSave ? saveBank : lbBank
+    const low    = isSave ? saveLow : lbLow
+    const lowAt  = isSave ? saveLowAt : lbLowAt
+    const endIdx = isSave ? saveN - 1 : lbStart + lbN - 1
+    // Show the cycles this plan touches, not a fixed dozen — a plan over
+    // 10 cycles was previously drawn as 12 bars with the last two blank.
+    const barCount = Math.max(6, Math.min(endIdx + 2, 14))
+    const shown    = bank.slice(0, barCount)
+    const top      = Math.max(...shown, floorCents * 1.4, 1)
+
+    return (
+      <>
+          <h3>How to pay for {payTarget.name}</h3>
+          <p className="sd">
+            This costs {fmt(cost, false)}. Both options spread it across cycles and take it out
+            of your spendable balance, so the forecast tells the truth about what is left.
+          </p>
+
+          <div className="pay-seg">
+            <button className={isSave ? 'on sv' : ''} onClick={() => setPayMode('savings')}>
+              Save up<small>set aside, money stays yours</small>
+            </button>
+            <button className={!isSave ? 'on lb' : ''} onClick={() => setPayMode('layby')}>
+              Lay-by<small>store holds it for you</small>
+            </button>
+          </div>
+
+          <div className="pay-hero">
+            <div className="ph-k">{isSave ? 'Saved up by' : 'Paid off by'}</div>
+            <div className="ph-v">
+              {cycles[endIdx] ? fmtDate(cycles[endIdx].startDate) : 'beyond your forecast'}
+            </div>
+            <div className="ph-s">
+              <b>{fmt(plan.perCents, false)}</b> a cycle
+              {isSave ? <> for {saveN} cycles</> : <> for {lbN} payments{lbStart > 0 && <>, from {fmtDate(cycles[lbStart]?.startDate ?? '')}</>}</>}
+            </div>
+          </div>
+
+          <div className="pay-controls">
+            {isSave ? (
+              <div className="pc">
+                <label>Save over</label>
+                <div className="stepper">
+                  <button disabled={saveN <= 2} onClick={() => setSaveN(saveN - 1)}>−</button>
+                  <div className="v">{saveN} <small>cycles</small></div>
+                  <button disabled={saveN >= 26} onClick={() => setSaveN(saveN + 1)}>+</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="pc">
+                  <label>Start</label>
+                  <div className="stepper">
+                    <button disabled={lbStart <= 0} onClick={() => setLbStart(lbStart - 1)}>−</button>
+                    <div className="v">{lbStart === 0 ? 'now' : '+' + lbStart}</div>
+                    <button disabled={lbStart >= 8} onClick={() => setLbStart(lbStart + 1)}>+</button>
+                  </div>
+                </div>
+                <div className="pc">
+                  <label>Payments</label>
+                  <div className="stepper">
+                    <button disabled={lbN <= 2} onClick={() => setLbN(lbN - 1)}>−</button>
+                    <div className="v">{lbN}</div>
+                    <button disabled={lbN >= 26} onClick={() => setLbN(lbN + 1)}>+</button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* what it does to each cycle */}
+          <div className="pay-bars-k">
+            <span>Your account, each cycle</span>
+            <span>lowest {fmt(low, false)}</span>
+          </div>
+          <div className="pay-bars">
+            {floorCents > 0 && (
+              <div className="pay-floor" style={{ bottom: (18 + (floorCents / top) * 52) + 'px' }}>
+                <span>floor {fmt(floorCents, false)}</span>
+              </div>
+            )}
+            {shown.map((v, i) => (
+              <div key={i}
+                className={`pay-bar${v < 0 ? ' breach' : v < floorCents ? ' low' : ''}`}
+                style={{ height: Math.max((Math.max(v, 0) / top) * 52, 3) + 'px' }}>
+                <span className="pb-x">{cycles[i] ? cycleTickLabel(cycles[i].startDate, baseYear) : ''}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* a suggestion only when it actually fixes something */}
+          {low < floorCents && isSave && saveFit !== null && (
+            <div className="pay-suggest">
+              <span className="ps-x">
+                Stretching to <b>{saveFit} cycles</b> drops it to{' '}
+                {fmt(planPayments(cost, saveFit, 0).perCents, false)} a cycle and clears your floor.
+              </span>
+              <button onClick={() => setSaveN(saveFit)}>use it</button>
+            </div>
+          )}
+          {low < floorCents && !isSave && lbFit !== null && lbFit > lbStart && (
+            <div className="pay-suggest">
+              <span className="ps-x">
+                Starting <b>{fmtDate(cycles[lbFit]?.startDate ?? '')}</b> instead clears your
+                floor, and still finishes {fmtDate(cycles[lbFit + lbN - 1]?.startDate ?? '')}.
+              </span>
+              <button onClick={() => setLbStart(lbFit)}>use it</button>
+            </div>
+          )}
+
+          <div className={`pay-note${low < 0 ? ' bad' : low < floorCents ? ' warn' : ''}`}>
+            {low < 0
+              ? <>The cycle starting <b>{cycles[lowAt] ? cycleDateLabel(cycles[lowAt].startDate, baseYear) : '—'}</b> would go <b>{fmt(-low, false)} overdrawn</b>.</>
+              : low < floorCents
+                ? <>The cycle starting <b>{cycles[lowAt] ? cycleDateLabel(cycles[lowAt].startDate, baseYear) : '—'}</b> drops to <b>{fmt(low, false)}</b>, under your {fmt(floorCents, false)} floor. You can still go ahead, but it will be tight.</>
+                : <>Comfortable — the tightest cycle still leaves <b>{fmt(low, false)}</b>, and there is no interest either way.</>}
+          </div>
+
+          <p className="pay-what">
+            {isSave
+              ? <>Adds <b>{fmt(savePlan.perCents, false)}</b> to each of your next {saveN} cycles.</>
+              : <>Adds <b>{lbN} payments</b> of {fmt(lbPlan.perCents, false)}{lbStart > 0 && <>, starting {fmtDate(cycles[lbStart]?.startDate ?? '')}</>}.</>}
+          </p>
+
+          <div className="navrow">
+            <button onClick={() => setPayTarget(null)}>Cancel</button>
+            <button className="pri"
+              style={{ background: isSave ? 'var(--pos)' : 'var(--event)' }}
+              onClick={isSave ? doStartSaving : doStartLayby}
+              disabled={paySaving}>
+              {paySaving ? 'Saving…' : isSave ? 'Start saving' : 'Start lay-by'}
+            </button>
+          </div>
+      </>
+    )
+  })() : null
+
+  const listBody = (
+    <>
+
+    <div style={{ padding:'14px 20px 2px' }}>
+      <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:10, letterSpacing:'.18em', textTransform:'uppercase', color:'var(--mut)' }}>Wishlist</div>
+      <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontWeight:600, fontSize:22, letterSpacing:'-.02em', marginTop:4 }}>What you're saving toward</div>
+      <div className="wish-basis">
+        Based on saving up. Lay-by or credit can be faster — tap an item to compare.
+      </div>
+    </div>
+
+    {committedWithRisk.length > 0 && (
+      <>
+        <div className="wish-secttl">Committed</div>
+        <div className="cards">
+          {committedWithRisk.map(item => (
+            <div key={item.id} className={`card${item.atRisk ? ' risk' : ''}`}>
+              <div className="ic wish">☆</div>
+              <div className="tx">
+                <div className="nm">
+                  {item.name}
+                  {goalFor(item)
+                    ? <span className="chip reach-ok">saving</span>
+                    : <span className={`chip ${item.atRisk ? 'risk' : 'committed'}`}>{item.atRisk ? 'at risk' : 'committed ✓'}</span>}
+                </div>
+                <div className="dt">
+                  {(() => {
+                    const goal = goalFor(item)
+                    if (goal) {
+                      const saved = savedFor(goal)
+                      const left = Math.max(0, goal.target_cents - saved)
+                      return <>
+                        <b>{fmt(saved, false)}</b> of {fmt(goal.target_cents, false)} set aside ·
+                        {' '}{fmt(goal.per_cycle_cents, false)} a cycle · {fmt(left, false)} to go
+                      </>
+                    }
+                    // Lay-by and older commitments still have a real cycle date.
+                    if (!item.committed_cycle_start) return <>committed</>
+                    return item.atRisk
+                      ? <>committed to <b>{fmtDate(item.committed_cycle_start)}</b> — now {fmt(item.shortfallCents, false)} short</>
+                      : <>committed to <b>{fmtDate(item.committed_cycle_start)}</b></>
+                  })()}
+                </div>
+                <div className="act-row">
+                  {goalFor(item) && (() => {
+                    const goal = goalFor(item)!
+                    const saved = savedFor(goal)
+                    const pct = goal.target_cents > 0
+                      ? Math.min(100, Math.round((saved / goal.target_cents) * 100)) : 0
+                    return (
+                      <div className="exp-prog" style={{ flex: 1, marginTop: 0 }}>
+                        <div className="fill" style={{ width: pct + '%', background: 'var(--pos)' }} />
+                      </div>
+                    )
+                  })()}
+                  <button className="act" type="button" style={{ color:'var(--floor)' }}
+                    onClick={() => setUncommitTarget(item)}>
+                    {goalFor(item) ? 'stop saving' : 'uncommit'}
+                  </button>
+                </div>
+              </div>
+              <div className="vl">{fmt(item.amount_cents, false)}</div>
+              <div className="check-btn" onClick={e => { e.stopPropagation(); setBoughtTarget(item) }}>✓</div>
+            </div>
+          ))}
+        </div>
+      </>
+    )}
+
+    {forecastDips && (
+      <div className="wish-dip">
+        <b>Your forecast already dips below your floor</b> around{' '}
+        {cycles[baseDipIndex] ? fmtDate(cycles[baseDipIndex].startDate) : 'later this year'},
+        closing at {fmt(baseTightest, false)} against a {fmt(floorCents, false)} floor —
+        before anything on this list. Until that changes, everything here will read as out
+        of reach, because any amount set aside makes that cycle lower still.
+      </div>
+    )}
+
+    <div className="wish-secttl">Active</div>
+    <div className="cards">
+      {resolved.length === 0 && (
+        <div className="skipnote" style={{ margin:'0 16px' }}>Nothing on your wishlist yet.</div>
+      )}
+      {resolved.map(item => {
+        const p = item.plan as ItemPlan
+        const finish = p.finishIndex !== null ? cycles[p.finishIndex] : null
+        const thinCents = p.tightestCents - floorCents
+        return (
+          <div key={item.id}
+            className={`card${isDesktop ? ' pickable' : ''}${isDesktop && payTarget?.id === item.id ? ' picked' : ''}`}
+            onClick={isDesktop ? () => openPay(item) : undefined}>
+            <div className="ic wish">☆</div>
+            <div className="tx">
+              <div className="nm">
+                {item.name}
+                <span className={`chip ${REACH_CHIP[p.reach]}`}>{REACH_LABEL[p.reach]}</span>
+              </div>
+              <div className="dt">
+                {p.cycles === null
+                  ? (forecastDips
+                      ? <>Even spread across a year, this would take your tightest cycle lower
+                          still. Worth sorting the dip above first.</>
+                      : <>Even spread across a year, setting aside enough would drop you under
+                          your {fmt(floorCents, false)} floor. Nothing to change yet — it will
+                          move as your forecast does.</>)
+                  : <>
+                      <b>{p.cycles} {p.cycles === 1 ? 'cycle' : 'cycles'}</b> of setting aside{' '}
+                      {fmt(p.perCycleCents, false)}
+                      {finish && <> · done by {fmtDate(finish.startDate)}</>}
+                      {p.reach === 'stretch' && thinCents < 10000 && (
+                        <> · the tightest cycle leaves only {fmt(thinCents, false)} spare</>
+                      )}
+                    </>}
+              </div>
+              <div className="act-row">
+                {/* Always available. It used to be hidden unless you could buy the
+                    item outright in a single cycle, which is not a route we offer. */}
+                <span className="act" onClick={e => { e.stopPropagation(); openPay(item) }}>
+                  {isDesktop && payTarget?.id === item.id ? 'shown on the right' : 'how to pay →'}
+                </span>
+              </div>
+            </div>
+            <div className="vl">{fmt(item.amount_cents, false)}</div>
+            <div className="check-btn" onClick={e => { e.stopPropagation(); setBoughtTarget(item) }}>✓</div>
+          </div>
+        )
+      })}
+    </div>
+
+    <div style={{ padding:'14px 16px 24px' }}>
+      <button className="addbtn" onClick={openAdd}>+ Add wishlist item</button>
+    </div>
+    </>
+  )
+
   return (
     <>
       <div className="scrollarea">
-
-        <div style={{ padding:'14px 20px 2px' }}>
-          <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:10, letterSpacing:'.18em', textTransform:'uppercase', color:'var(--mut)' }}>Wishlist</div>
-          <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontWeight:600, fontSize:22, letterSpacing:'-.02em', marginTop:4 }}>What you're saving toward</div>
-          <div className="wish-basis">
-            Based on saving up. Lay-by or credit can be faster — tap an item to compare.
+        {isDesktop ? (
+          <div className="dwl">
+            <div className="dwl-list">{listBody}</div>
+            <aside className="dwl-pane">
+              {payBody
+                ? <div className="sheet dwl-sheet">{payBody}</div>
+                : <div className="dwl-empty">
+                    <div className="dwl-empty-t">Pick an item</div>
+                    <div className="dwl-empty-d">Its saving and lay-by plans show here, with what each does to your account every cycle.</div>
+                  </div>}
+            </aside>
           </div>
-        </div>
-
-        {committedWithRisk.length > 0 && (
-          <>
-            <div className="wish-secttl">Committed</div>
-            <div className="cards">
-              {committedWithRisk.map(item => (
-                <div key={item.id} className={`card${item.atRisk ? ' risk' : ''}`}>
-                  <div className="ic wish">☆</div>
-                  <div className="tx">
-                    <div className="nm">
-                      {item.name}
-                      {goalFor(item)
-                        ? <span className="chip reach-ok">saving</span>
-                        : <span className={`chip ${item.atRisk ? 'risk' : 'committed'}`}>{item.atRisk ? 'at risk' : 'committed ✓'}</span>}
-                    </div>
-                    <div className="dt">
-                      {(() => {
-                        const goal = goalFor(item)
-                        if (goal) {
-                          const saved = savedFor(goal)
-                          const left = Math.max(0, goal.target_cents - saved)
-                          return <>
-                            <b>{fmt(saved, false)}</b> of {fmt(goal.target_cents, false)} set aside ·
-                            {' '}{fmt(goal.per_cycle_cents, false)} a cycle · {fmt(left, false)} to go
-                          </>
-                        }
-                        // Lay-by and older commitments still have a real cycle date.
-                        if (!item.committed_cycle_start) return <>committed</>
-                        return item.atRisk
-                          ? <>committed to <b>{fmtDate(item.committed_cycle_start)}</b> — now {fmt(item.shortfallCents, false)} short</>
-                          : <>committed to <b>{fmtDate(item.committed_cycle_start)}</b></>
-                      })()}
-                    </div>
-                    <div className="act-row">
-                      {goalFor(item) && (() => {
-                        const goal = goalFor(item)!
-                        const saved = savedFor(goal)
-                        const pct = goal.target_cents > 0
-                          ? Math.min(100, Math.round((saved / goal.target_cents) * 100)) : 0
-                        return (
-                          <div className="exp-prog" style={{ flex: 1, marginTop: 0 }}>
-                            <div className="fill" style={{ width: pct + '%', background: 'var(--pos)' }} />
-                          </div>
-                        )
-                      })()}
-                      <button className="act" type="button" style={{ color:'var(--floor)' }}
-                        onClick={() => setUncommitTarget(item)}>
-                        {goalFor(item) ? 'stop saving' : 'uncommit'}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="vl">{fmt(item.amount_cents, false)}</div>
-                  <div className="check-btn" onClick={() => setBoughtTarget(item)}>✓</div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {forecastDips && (
-          <div className="wish-dip">
-            <b>Your forecast already dips below your floor</b> around{' '}
-            {cycles[baseDipIndex] ? fmtDate(cycles[baseDipIndex].startDate) : 'later this year'},
-            closing at {fmt(baseTightest, false)} against a {fmt(floorCents, false)} floor —
-            before anything on this list. Until that changes, everything here will read as out
-            of reach, because any amount set aside makes that cycle lower still.
-          </div>
-        )}
-
-        <div className="wish-secttl">Active</div>
-        <div className="cards">
-          {resolved.length === 0 && (
-            <div className="skipnote" style={{ margin:'0 16px' }}>Nothing on your wishlist yet.</div>
-          )}
-          {resolved.map(item => {
-            const p = item.plan as ItemPlan
-            const finish = p.finishIndex !== null ? cycles[p.finishIndex] : null
-            const thinCents = p.tightestCents - floorCents
-            return (
-              <div key={item.id} className="card">
-                <div className="ic wish">☆</div>
-                <div className="tx">
-                  <div className="nm">
-                    {item.name}
-                    <span className={`chip ${REACH_CHIP[p.reach]}`}>{REACH_LABEL[p.reach]}</span>
-                  </div>
-                  <div className="dt">
-                    {p.cycles === null
-                      ? (forecastDips
-                          ? <>Even spread across a year, this would take your tightest cycle lower
-                              still. Worth sorting the dip above first.</>
-                          : <>Even spread across a year, setting aside enough would drop you under
-                              your {fmt(floorCents, false)} floor. Nothing to change yet — it will
-                              move as your forecast does.</>)
-                      : <>
-                          <b>{p.cycles} {p.cycles === 1 ? 'cycle' : 'cycles'}</b> of setting aside{' '}
-                          {fmt(p.perCycleCents, false)}
-                          {finish && <> · done by {fmtDate(finish.startDate)}</>}
-                          {p.reach === 'stretch' && thinCents < 10000 && (
-                            <> · the tightest cycle leaves only {fmt(thinCents, false)} spare</>
-                          )}
-                        </>}
-                  </div>
-                  <div className="act-row">
-                    {/* Always available. It used to be hidden unless you could buy the
-                        item outright in a single cycle, which is not a route we offer. */}
-                    <span className="act" onClick={() => openPay(item)}>how to pay →</span>
-                  </div>
-                </div>
-                <div className="vl">{fmt(item.amount_cents, false)}</div>
-                <div className="check-btn" onClick={() => setBoughtTarget(item)}>✓</div>
-              </div>
-            )
-          })}
-        </div>
-
-        <div style={{ padding:'14px 16px 24px' }}>
-          <button className="addbtn" onClick={openAdd}>+ Add wishlist item</button>
-        </div>
-
+        ) : listBody}
       </div>
 
       {/* ── add item ── */}
@@ -635,165 +816,16 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
         </div>
       )}
 
-      {/* ── how to pay ── */}
-      {payTarget && (() => {
-        const cost = payTarget.amount_cents
-
-        const savePlan = planPayments(cost, saveN, 0)
-        const saveBank = balancesAfter(closings, savePlan.pays)
-        const saveLow  = saveBank.length ? Math.min(...saveBank) : 0
-        const saveLowAt = saveBank.indexOf(saveLow)
-        const saveFit  = fewestCyclesThatFit(closings, cost, floorCents, saveN + 1)
-
-        const lbPlan = planPayments(cost, lbN, lbStart)
-        const lbBank = balancesAfter(closings, lbPlan.pays)
-        const lbLow  = lbBank.length ? Math.min(...lbBank) : 0
-        const lbLowAt = lbBank.indexOf(lbLow)
-        const lbFit  = earliestStartThatFits(closings, cost, lbN, floorCents)
-
-        const isSave = payMode === 'savings'
-        const plan   = isSave ? savePlan : lbPlan
-        const bank   = isSave ? saveBank : lbBank
-        const low    = isSave ? saveLow : lbLow
-        const lowAt  = isSave ? saveLowAt : lbLowAt
-        const endIdx = isSave ? saveN - 1 : lbStart + lbN - 1
-        // Show the cycles this plan touches, not a fixed dozen — a plan over
-        // 10 cycles was previously drawn as 12 bars with the last two blank.
-        const barCount = Math.max(6, Math.min(endIdx + 2, 14))
-        const shown    = bank.slice(0, barCount)
-        const top      = Math.max(...shown, floorCents * 1.4, 1)
-
-        return (
-          <div className="ov" onClick={e => { if (e.target === e.currentTarget) setPayTarget(null) }}>
-            <div className="sheet">
-              <button className="xbtn" onClick={() => setPayTarget(null)}>×</button>
-              <div className="grab" />
-              <h3>How to pay for {payTarget.name}</h3>
-              <p className="sd">
-                This costs {fmt(cost, false)}. Both options spread it across cycles and take it out
-                of your spendable balance, so the forecast tells the truth about what is left.
-              </p>
-
-              <div className="pay-seg">
-                <button className={isSave ? 'on sv' : ''} onClick={() => setPayMode('savings')}>
-                  Save up<small>set aside, money stays yours</small>
-                </button>
-                <button className={!isSave ? 'on lb' : ''} onClick={() => setPayMode('layby')}>
-                  Lay-by<small>store holds it for you</small>
-                </button>
-              </div>
-
-              <div className="pay-hero">
-                <div className="ph-k">{isSave ? 'Saved up by' : 'Paid off by'}</div>
-                <div className="ph-v">
-                  {cycles[endIdx] ? fmtDate(cycles[endIdx].startDate) : 'beyond your forecast'}
-                </div>
-                <div className="ph-s">
-                  <b>{fmt(plan.perCents, false)}</b> a cycle
-                  {isSave ? <> for {saveN} cycles</> : <> for {lbN} payments{lbStart > 0 && <>, from {fmtDate(cycles[lbStart]?.startDate ?? '')}</>}</>}
-                </div>
-              </div>
-
-              <div className="pay-controls">
-                {isSave ? (
-                  <div className="pc">
-                    <label>Save over</label>
-                    <div className="stepper">
-                      <button disabled={saveN <= 2} onClick={() => setSaveN(saveN - 1)}>−</button>
-                      <div className="v">{saveN} <small>cycles</small></div>
-                      <button disabled={saveN >= 26} onClick={() => setSaveN(saveN + 1)}>+</button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="pc">
-                      <label>Start</label>
-                      <div className="stepper">
-                        <button disabled={lbStart <= 0} onClick={() => setLbStart(lbStart - 1)}>−</button>
-                        <div className="v">{lbStart === 0 ? 'now' : '+' + lbStart}</div>
-                        <button disabled={lbStart >= 8} onClick={() => setLbStart(lbStart + 1)}>+</button>
-                      </div>
-                    </div>
-                    <div className="pc">
-                      <label>Payments</label>
-                      <div className="stepper">
-                        <button disabled={lbN <= 2} onClick={() => setLbN(lbN - 1)}>−</button>
-                        <div className="v">{lbN}</div>
-                        <button disabled={lbN >= 26} onClick={() => setLbN(lbN + 1)}>+</button>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* what it does to each cycle */}
-              <div className="pay-bars-k">
-                <span>Your account, each cycle</span>
-                <span>lowest {fmt(low, false)}</span>
-              </div>
-              <div className="pay-bars">
-                {floorCents > 0 && (
-                  <div className="pay-floor" style={{ bottom: (18 + (floorCents / top) * 52) + 'px' }}>
-                    <span>floor {fmt(floorCents, false)}</span>
-                  </div>
-                )}
-                {shown.map((v, i) => (
-                  <div key={i}
-                    className={`pay-bar${v < 0 ? ' breach' : v < floorCents ? ' low' : ''}`}
-                    style={{ height: Math.max((Math.max(v, 0) / top) * 52, 3) + 'px' }}>
-                    <span className="pb-x">{cycles[i] ? cycleTickLabel(cycles[i].startDate, baseYear) : ''}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* a suggestion only when it actually fixes something */}
-              {low < floorCents && isSave && saveFit !== null && (
-                <div className="pay-suggest">
-                  <span className="ps-x">
-                    Stretching to <b>{saveFit} cycles</b> drops it to{' '}
-                    {fmt(planPayments(cost, saveFit, 0).perCents, false)} a cycle and clears your floor.
-                  </span>
-                  <button onClick={() => setSaveN(saveFit)}>use it</button>
-                </div>
-              )}
-              {low < floorCents && !isSave && lbFit !== null && lbFit > lbStart && (
-                <div className="pay-suggest">
-                  <span className="ps-x">
-                    Starting <b>{fmtDate(cycles[lbFit]?.startDate ?? '')}</b> instead clears your
-                    floor, and still finishes {fmtDate(cycles[lbFit + lbN - 1]?.startDate ?? '')}.
-                  </span>
-                  <button onClick={() => setLbStart(lbFit)}>use it</button>
-                </div>
-              )}
-
-              <div className={`pay-note${low < 0 ? ' bad' : low < floorCents ? ' warn' : ''}`}>
-                {low < 0
-                  ? <>The cycle starting <b>{cycles[lowAt] ? cycleDateLabel(cycles[lowAt].startDate, baseYear) : '—'}</b> would go <b>{fmt(-low, false)} overdrawn</b>.</>
-                  : low < floorCents
-                    ? <>The cycle starting <b>{cycles[lowAt] ? cycleDateLabel(cycles[lowAt].startDate, baseYear) : '—'}</b> drops to <b>{fmt(low, false)}</b>, under your {fmt(floorCents, false)} floor. You can still go ahead, but it will be tight.</>
-                    : <>Comfortable — the tightest cycle still leaves <b>{fmt(low, false)}</b>, and there is no interest either way.</>}
-              </div>
-
-              <p className="pay-what">
-                {isSave
-                  ? <>Adds <b>{fmt(savePlan.perCents, false)}</b> to each of your next {saveN} cycles.</>
-                  : <>Adds <b>{lbN} payments</b> of {fmt(lbPlan.perCents, false)}{lbStart > 0 && <>, starting {fmtDate(cycles[lbStart]?.startDate ?? '')}</>}.</>}
-              </p>
-
-              <div className="navrow">
-                <button onClick={() => setPayTarget(null)}>Cancel</button>
-                <button className="pri"
-                  style={{ background: isSave ? 'var(--pos)' : 'var(--event)' }}
-                  onClick={isSave ? doStartSaving : doStartLayby}
-                  disabled={paySaving}>
-                  {paySaving ? 'Saving…' : isSave ? 'Start saving' : 'Start lay-by'}
-                </button>
-              </div>
-
-            </div>
+      {/* ── how to pay (phone: sheet) ── */}
+      {payTarget && !isDesktop && (
+        <div className="ov" onClick={e => { if (e.target === e.currentTarget) setPayTarget(null) }}>
+          <div className="sheet">
+            <button className="xbtn" onClick={() => setPayTarget(null)}>×</button>
+            <div className="grab" />
+            {payBody}
           </div>
-        )
-      })()}
+        </div>
+      )}
     </>
   )
 }

@@ -53,7 +53,7 @@ const NAV_MANAGE: { page: Page; label: string; icon: ReactNode; di: string }[] =
 
 // Pages that have their own desktop layout get the full width. The rest keep
 // the phone-shaped column until their desktop branch lands.
-const WIDE_PAGES: Page[] = ['cycle']
+const WIDE_PAGES: Page[] = ['cycle', 'forecast', 'wishlist']
 
 export default function AppShell({ active, onNavigate, darkMode, onToggleDark, onAddAccount, children }: AppShellProps) {
   const { accounts, activeAccount, setActiveAccountId } = useAccount()

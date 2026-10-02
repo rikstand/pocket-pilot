@@ -1934,3 +1934,64 @@ body.is-desktop .dcol.wide { max-width: 1180px; }
 .dcyc-close .closebtn { margin: 2px 0 6px; width: 100%; }
 .dcyc-close .closehint { padding: 0 4px; }
 .dcyc-close:empty { display: none; }
+
+/* ══════════════════════════════════════════════════════════════════
+   DESKTOP FORECAST PAGE
+   Graph, horizon and cycles on the left. The chosen cycle's own cards on
+   the right, with every action the phone has. The pane scrolls on its own
+   so picking a cycle never moves the graph.
+   ══════════════════════════════════════════════════════════════════ */
+.dfc {
+  display: grid; grid-template-columns: minmax(0, 1fr) 460px;
+  gap: 24px; align-items: start;
+}
+.dfc-left { min-width: 0; }
+.dfc-left .horizon { padding: 14px 0 0; max-width: 420px; }
+.dfc-left .graphwrap { margin: 12px 0 0; }
+.dfc-left .pills {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  overflow: visible; padding: 14px 0 4px; scroll-snap-type: none;
+}
+.dfc-left .pill { min-width: 0; }
+.dfc-pane {
+  position: sticky; top: 18px; padding-top: 4px;
+  max-height: calc(100vh - 36px); overflow-y: auto; scrollbar-width: thin;
+  border-left: 1px solid var(--line);
+}
+@media (max-width: 1180px) {
+  .dfc { grid-template-columns: minmax(0, 1fr) 380px; }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   DESKTOP WISHLIST
+   The list on the left; "how to pay" as a pane on the right instead of a
+   sheet over the list. Same content as the phone sheet — only the frame
+   changes — so clicking down the list compares items in place.
+   ══════════════════════════════════════════════════════════════════ */
+.dwl {
+  display: grid; grid-template-columns: minmax(0, 1fr) 440px;
+  gap: 24px; align-items: start;
+}
+.dwl-list { min-width: 0; }
+.dwl-pane {
+  position: sticky; top: 18px; padding-top: 14px;
+  max-height: calc(100vh - 36px); overflow-y: auto; scrollbar-width: thin;
+}
+/* the phone sheet, unframed: no overlay, no slide-up, no drag handle */
+body.is-desktop .dwl-pane .sheet.dwl-sheet {
+  position: static; max-width: none; width: auto; max-height: none; overflow: visible;
+  border: 1px solid var(--line); border-radius: 18px; background: var(--bg2);
+  box-shadow: none; animation: none; padding: 18px 18px 20px;
+}
+.dwl-empty {
+  border: 1.5px dashed var(--line); border-radius: 18px; padding: 28px 22px; text-align: left;
+}
+.dwl-empty-t { font-family: 'Space Grotesk', sans-serif; font-size: 16px; font-weight: 600; }
+.dwl-empty-d { font-size: 12.5px; color: var(--mut); margin-top: 6px; line-height: 1.5; }
+.card.pickable { cursor: pointer; }
+.card.pickable:hover { border-color: var(--faint); }
+.card.picked { border-color: #b8860b; box-shadow: 0 0 0 2px #faf1de; }
+[data-theme="dark"] .card.picked { border-color: #e0b355; box-shadow: 0 0 0 2px #2b2413; }
+@media (max-width: 1180px) {
+  .dwl { grid-template-columns: minmax(0, 1fr) 380px; }
+}
