@@ -112,6 +112,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const [varCard,   setVarCard]   = useState<any>(null)
   const [varAmount, setVarAmount] = useState('')
   const [varSaving, setVarSaving] = useState(false)
+  // Confirming is "this cycle only" unless you also choose to make the real
+  // figure the usual estimate. Off by default: one odd bill shouldn't quietly
+  // reset the forecast.
+  const [varAlsoUsual, setVarAlsoUsual] = useState(false)
   const [varError,  setVarError]  = useState('')
 
   const [closeOpen,          setCloseOpen]          = useState(false)
@@ -633,6 +637,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     setVarCard(cd)
     // The whole cycle's figure: a confirmed one if there is one, else the estimate.
     setVarAmount(cd.totalCents ? String(cd.totalCents / 100) : '')
+    setVarAlsoUsual(false)
     setVarError('')
   }
   function openClose() {
@@ -985,7 +990,14 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     if (!varAmountCents || varSaving) return
     setVarSaving(true); setVarError('')
     try {
-      await setExpenseOverride(varCard.expenseId, accountId, activeCycle.startDate, varAmountCents)
+      const start = activeCycle.startDate
+      await setExpenseOverride(varCard.expenseId, accountId, start, varAmountCents)
+      // Optionally the real figure becomes the usual estimate from this cycle
+      // on. The override stays, so this cycle still shows as confirmed.
+      if (varAlsoUsual) {
+        const per = Math.round(varAmountCents / Math.max(1, varCard.occCount ?? 1))
+        await setExpenseAmountFrom(varCard.expenseId, accountId, start, per)
+      }
       setVarCard(null); reload()
     } catch (e: any) { setVarError(e.message) }
     finally { setVarSaving(false) }
@@ -2214,6 +2226,17 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               </div>
               {varCard.baseTotalCents > 0 && <p className="hint">Estimated at {fmt(varCard.baseTotalCents, false)}.</p>}
             </div>
+            {varAmountCents > 0 && varAmountCents !== varCard.baseTotalCents && (
+              <div className={`opt${varAlsoUsual ? ' sel' : ''}`} onClick={() => setVarAlsoUsual(v => !v)}
+                role="checkbox" aria-checked={varAlsoUsual}>
+                <div className="ot">{varAlsoUsual ? '✓ ' : ''}Also use {fmt(varAmountCents, false)} as the estimate from now on</div>
+                <div className="os">
+                  Currently estimated at {fmt(varCard.baseTotalCents, false)}
+                  {varCard.occCount > 1 ? ` (${fmt(varCard.unitCents, false)} × ${varCard.occCount})` : ''}.
+                  {' '}Leave this off if this bill was unusual. Cycles you've changed on their own keep their change.
+                </div>
+              </div>
+            )}
             {varError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:8 }}>{varError}</p>}
             <div className="navrow">
               <button onClick={() => setVarCard(null)}>Cancel</button>
