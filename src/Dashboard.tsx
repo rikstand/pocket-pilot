@@ -18,6 +18,7 @@ import {
   updateCreditStrategyExtra,
   setExpenseOverride, clearExpenseOverride, setExpenseAmountFrom,
   getPayees, findOrCreatePayee,
+  createBnplPlan,
 } from './lib/repository'
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
@@ -864,44 +865,18 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     }
     setLaybySaving(true); setAddError('')
     try {
-      const lastPaymentCents = laybyPerPaymentCents + laybyRemainderCents
-
-      const { data: layby, error: e1 } = await supabase
-        .from('lay_bys')
-        .insert({
-          profile_id: userId,
-          account_id: accountId,
-          name: laybyName.trim(),
-          target_amount_cents: laybyTotalCents,
-          target_date: laybyEndDate,
-          payment_amount_cents: laybyPerPaymentCents,
-          payments_total: laybyCountNum,
-        })
-        .select().single()
-      if (e1) throw e1
-
-      const { data: exp, error: e2 } = await supabase
-        .from('expenses')
-        .insert({
-          profile_id: userId,
-          account_id: accountId,
-          name: laybyName.trim(),
-          frequency: laybyFrequency,
-          anchor_date: laybyFirstDate,
-          mode: 'fixed',
-          end_date: laybyEndDate,
-          lay_by_id: layby.id,
-        })
-        .select().single()
-      if (e2) throw e2
-
-      const versionRows = laybyDates.map((date, i) => ({
-        expense_id: exp.id,
-        amount_cents: i === laybyDates.length - 1 ? lastPaymentCents : laybyPerPaymentCents,
-        effective_from: date,
-      }))
-      const { error: e3 } = await supabase.from('expense_amount_versions').insert(versionRows)
-      if (e3) throw e3
+      // Same save as a BNPL plan started from the wishlist — see
+      // createBnplPlan in repository.ts. The last payment takes the rounding.
+      await createBnplPlan(accountId, userId, {
+        name: laybyName.trim(),
+        frequency: laybyFrequency,
+        payments: laybyDates.map((date, i) => ({
+          date,
+          amountCents: i === laybyDates.length - 1
+            ? laybyPerPaymentCents + laybyRemainderCents
+            : laybyPerPaymentCents,
+        })),
+      })
 
       setLaybyResult({ name: laybyName.trim(), totalCents: laybyTotalCents, perPaymentCents: laybyPerPaymentCents, count: laybyCountNum, endDate: laybyEndDate })
       setAddStep(2)

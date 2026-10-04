@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
-import { supabase } from './lib/supabase'
 import {
-  createSavingsGoal, setWishlistPaymentMethod,
+  createSavingsGoal, createBnplPlan, setWishlistPaymentMethod,
   getSavingsGoals, getAllSavingsContributions, updateSavingsGoal, releaseWishlistItem,
   getWishlistItems, addWishlistItem,
   commitWishlistItem, uncommitWishlistItem, deleteWishlistItem,
@@ -9,7 +8,7 @@ import {
 import { loadForecast, cycleTickLabel, cycleDateLabel, baseYearOf } from './lib/forecast'
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
-import { parseDate, formatDate } from './engine/dates'
+import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
 import { useViewport } from './lib/useViewport'
 
 // Show the year once a date is far enough out that day-and-month alone could
@@ -91,6 +90,19 @@ function cycleFrequencyFrom(cycles: any[]): 'weekly' | 'fortnightly' | 'monthly'
   if (days <= 15)  return 'fortnightly'
   if (days <= 31)  return 'monthly'
   return 'annually'
+}
+
+/* A date n payments on from a start date, at the cycle's own frequency.
+ * Counted from the start each time (not step by step) so monthly payments
+ * don't drift: 31 Jan → 28 Feb → 31 Mar, not → 28 Mar. */
+function paymentDate(
+  start: string, freq: 'weekly' | 'fortnightly' | 'monthly' | 'annually', n: number
+): string {
+  const d = parseDate(start)
+  if (freq === 'weekly')      return formatDate(addDays(d, 7 * n))
+  if (freq === 'fortnightly') return formatDate(addDays(d, 14 * n))
+  if (freq === 'monthly')     return formatDate(addMonths(d, n))
+  return formatDate(addYears(d, n))
 }
 
 /* ── how reachable is each item on its own ───────────────────────────
@@ -368,35 +380,30 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
     finally { setPaySaving(false) }
   }
 
-  // BNPL from the wishlist. Still saved as a plain fixed expense (no lay_bys
-  // row) — fix/wishlist-bnpl-plan changes that to match the Cycle sheet.
+  // A real BNPL plan, saved the same way as one added on the Cycle screen: it
+  // shows in the Expenses BNPL section with its payment count and progress,
+  // and the last payment carries the rounding — exactly what the preview
+  // showed. Payments fall on cycle start dates. Dates are worked out from the
+  // first payment rather than read off the forecast, which may be shorter
+  // than the plan.
   async function doStartLayby() {
     if (!payTarget) return
     const plan = planPayments(payTarget.amount_cents, lbN, lbStart)
-    const startDate = cycles[lbStart]?.startDate ?? today()
-    const endDate   = cycles[Math.min(lbStart + lbN - 1, cycles.length - 1)]?.startDate ?? null
+    const firstStart = cycles[0]?.startDate ?? today()
+    const startDate  = cycles[lbStart]?.startDate ?? paymentDate(firstStart, cycleFrequency, lbStart)
+    const payments = Array.from({ length: lbN }, (_, k) => ({
+      date: paymentDate(startDate, cycleFrequency, k),
+      amountCents: k === lbN - 1 ? plan.lastCents : plan.perCents,
+    }))
     setPaySaving(true)
     try {
-      const { data: exp, error: e1 } = await supabase
-        .from('expenses')
-        .insert({
-          profile_id: userId,
-          account_id: accountId,
-          name: payTarget.name + ' (BNPL)',
-          frequency: cycleFrequency,
-          anchor_date: startDate,
-          mode: 'fixed',
-          end_date: endDate,
-        })
-        .select().single()
-      if (e1) throw e1
+      const { expense } = await createBnplPlan(accountId, userId, {
+        name: payTarget.name,
+        frequency: cycleFrequency,
+        payments,
+      })
 
-      const { error: e2 } = await supabase
-        .from('expense_amount_versions')
-        .insert({ expense_id: exp.id, amount_cents: plan.perCents, effective_from: startDate })
-      if (e2) throw e2
-
-      await commitWishlistItem(payTarget.id, exp.id, startDate)
+      await commitWishlistItem(payTarget.id, expense.id, startDate)
       await setWishlistPaymentMethod(payTarget.id, 'layby', null)
       setPayTarget(null); reload()
     } catch (e: any) { alert('Could not start BNPL plan: ' + e.message) }

@@ -98,6 +98,80 @@ export async function getLayBys(accountId: string) {
   return data
 }
 
+// --- BNPL PLANS ---
+// A BNPL plan is three rows saved together: the plan itself (lay_bys — the
+// table keeps its old name), the expense that carries it, and one amount per
+// payment, with the last payment taking any rounding top-up. The Cycle sheet
+// and the wishlist both come through here so they cannot drift apart again:
+// the wishlist used to save a plain expense with a single amount, which lost
+// the last payment's top-up and kept the plan out of the BNPL section.
+//
+// Not one transaction: if a later step fails, the earlier rows are switched
+// off so nothing half-made reaches the forecast.
+export async function createBnplPlan(
+  accountId: string,
+  userId: string,
+  plan: {
+    name: string
+    frequency: 'weekly' | 'fortnightly' | 'monthly' | 'annually'
+    payments: { date: string; amountCents: number }[]
+  }
+) {
+  const pays = plan.payments
+  if (!pays.length) throw new Error('A BNPL plan needs at least one payment.')
+  const totalCents = pays.reduce((s, p) => s + p.amountCents, 0)
+  const firstDate  = pays[0].date
+  const lastDate   = pays[pays.length - 1].date
+
+  const { data: layby, error: e1 } = await supabase
+    .from('lay_bys')
+    .insert({
+      profile_id: userId,
+      account_id: accountId,
+      name: plan.name,
+      target_amount_cents: totalCents,
+      target_date: lastDate,
+      payment_amount_cents: pays[0].amountCents,
+      payments_total: pays.length,
+    })
+    .select().single()
+  if (e1) throw e1
+
+  const { data: expense, error: e2 } = await supabase
+    .from('expenses')
+    .insert({
+      profile_id: userId,
+      account_id: accountId,
+      name: plan.name,
+      frequency: plan.frequency,
+      anchor_date: firstDate,
+      mode: 'fixed',
+      end_date: lastDate,
+      lay_by_id: layby.id,
+    })
+    .select().single()
+  if (e2) {
+    await supabase.from('lay_bys').update({ is_active: false }).eq('id', layby.id)
+    throw e2
+  }
+
+  const { error: e3 } = await supabase
+    .from('expense_amount_versions')
+    .insert(pays.map(p => ({
+      expense_id: expense.id,
+      account_id: accountId,
+      amount_cents: p.amountCents,
+      effective_from: p.date,
+    })))
+  if (e3) {
+    await supabase.from('expenses').update({ is_active: false }).eq('id', expense.id)
+    await supabase.from('lay_bys').update({ is_active: false }).eq('id', layby.id)
+    throw e3
+  }
+
+  return { layby, expense }
+}
+
 // --- CYCLES ---
 export async function getCycles(accountId: string) {
   const { data, error } = await supabase
@@ -193,13 +267,32 @@ export async function commitWishlistItem(
   return data
 }
 
+// Takes back a commitment that has an expense: a BNPL plan, or an older
+// single-payment commit. A BNPL plan's lay_bys row is switched off too, or it
+// would be left behind with nothing pointing at it. payment_method is cleared
+// so the item no longer reads as paid by BNPL once it is back on the list.
 export async function uncommitWishlistItem(itemId: string, expenseId: string) {
+  const { data: exp, error: e0 } = await supabase
+    .from('expenses')
+    .select('lay_by_id')
+    .eq('id', expenseId)
+    .maybeSingle()
+  if (e0) throw e0
+
   const { error: e1 } = await supabase.from('expenses').delete().eq('id', expenseId)
   if (e1) throw e1
 
+  if (exp?.lay_by_id) {
+    const { error: eL } = await supabase
+      .from('lay_bys')
+      .update({ is_active: false })
+      .eq('id', exp.lay_by_id)
+    if (eL) throw eL
+  }
+
   const { data, error: e2 } = await supabase
     .from('wishlist_items')
-    .update({ status: 'active', committed_expense_id: null, committed_cycle_start: null })
+    .update({ status: 'active', payment_method: null, committed_expense_id: null, committed_cycle_start: null })
     .eq('id', itemId)
     .select()
     .single()
