@@ -149,6 +149,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const [oneOffDeleting, setOneOffDeleting] = useState(false)
   const [oneOffError,    setOneOffError]    = useState('')
 
+  // BNPL plans. Stored as lay-bys (lay_bys table, lay_by_id) — only the
+  // wording the user sees changed.
   const [laybyName,      setLaybyName]      = useState('')
   const [laybyTotal,     setLaybyTotal]     = useState('')
   const [laybyFrequency, setLaybyFrequency] = useState<'weekly'|'fortnightly'|'monthly'|'annually'>('fortnightly')
@@ -475,7 +477,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         icon = '◫'
         iconSvg = exp.icon || 'gift'
         displayIconClass = 'evt'
-        chips = [['evt', 'lay-by']]
+        chips = [['evt', 'BNPL']]
         act = null
 
         const layby = rawLayBys.find((l: any) => l.id === exp.lay_by_id)
@@ -522,10 +524,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     return cards
   }
 
-  // NEW — flattened, per-occurrence fixed/lay-by payments for the carousel.
+  // NEW — flattened, per-occurrence fixed/BNPL payments for the carousel.
   // Distinct from buildCards(), which aggregates occurrences into one card per expense.
   // This returns one entry per individual future occurrence, chronologically ordered,
-  // mixing plain fixed expenses and lay-by payments together (per design decision).
+  // mixing plain fixed expenses and BNPL payments together (per design decision).
   function buildFixedOccurrences() {
     type PaymentItem = {
       name: string, date: string, amountCents: number,
@@ -1525,9 +1527,9 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     0
   )
   // Built from the engine's own committedClosingBalanceCents (which already correctly
-  // nets every fixed/lay-by payment — past and future — plus the full estimate total)
+  // nets every fixed/BNPL payment — past and future — plus the full estimate total)
   // rather than recomputing fixed-remaining by occurrence date, which under-subtracted
-  // any fixed/lay-by payment that had already happened earlier in the cycle.
+  // any fixed/BNPL payment that had already happened earlier in the cycle.
   // We add back the unspent portion of the budget baseline, since "available to spend"
   // only counts budget spend actually logged, not the full baseline.
   // availableToSpendCents needs no change for credit: committedClosingBalanceCents
@@ -2445,7 +2447,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               </div>
               <div className="typeopt" onClick={() => selectAddType('layby')}>
                 <div className="ti ic evt">◫</div>
-                <div className="tx2"><div className="tt2">Lay-by or instalment</div><div className="ts2">A fixed total, paid off over time. Self-retires when done.</div></div>
+                <div className="tx2"><div className="tt2">Buy Now Pay Later</div><div className="ts2">Yours now, paid in instalments. Stops once paid off.</div></div>
               </div>
             </>}
             {addStep === 1 && addType === 'oneoff' && <>
@@ -2505,8 +2507,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               </div>
             </>}
             {addStep === 1 && addType === 'layby' && <>
-              <h3>Lay-by or instalment</h3>
-              <p className="sd">A fixed total, split into equal payments. Stops itself once paid off.</p>
+              <h3>Buy Now Pay Later</h3>
+              <p className="sd">A fixed total, split into equal payments. Stops itself once paid off. BNPL is credit: missed payments can incur late fees.</p>
               <div className="field"><label>What's it for?</label>
                 <div className="inrow"><input type="text" value={laybyName} onChange={e => setLaybyName(e.target.value)} placeholder="e.g. Winter coat" /></div>
               </div>
@@ -2543,11 +2545,11 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               {addError && <p style={{ color:'var(--floor)', fontSize:13, marginBottom:10 }}>{addError}</p>}
               <div className="navrow">
                 <button onClick={() => setAddStep(0)}>Back</button>
-                <button className="pri" onClick={saveLayby} style={{ opacity: laybySaving ? 0.6 : 1 }}>{laybySaving ? 'Saving…' : 'Add lay-by'}</button>
+                <button className="pri" onClick={saveLayby} style={{ opacity: laybySaving ? 0.6 : 1 }}>{laybySaving ? 'Saving…' : 'Add BNPL plan'}</button>
               </div>
             </>}
             {addStep === 2 && addType === 'layby' && laybyResult && <>
-              <h3>Lay-by added</h3>
+              <h3>BNPL plan added</h3>
               <p className="sd">{laybyResult.name} is now tracked across {laybyResult.count} cycles.</p>
               <div className="recline"><span>Total</span><b>{fmt(laybyResult.totalCents)}</b></div>
               <div className="recline"><span>Per payment</span><b>{fmt(laybyResult.perPaymentCents)}</b></div>

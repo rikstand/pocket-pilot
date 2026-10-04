@@ -224,7 +224,7 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
   const [addSaving, setAddSaving] = useState(false)
   const [addError,  setAddError]  = useState('')
 
-  // how-to-pay sheet
+  // how-to-pay sheet ('layby' is the BNPL option — the stored name is kept)
   const [payTarget, setPayTarget] = useState<any>(null)
   const [payMode,   setPayMode]   = useState<'savings' | 'layby'>('savings')
   const [saveN,     setSaveN]     = useState(8)
@@ -368,6 +368,8 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
     finally { setPaySaving(false) }
   }
 
+  // BNPL from the wishlist. Still saved as a plain fixed expense (no lay_bys
+  // row) — fix/wishlist-bnpl-plan changes that to match the Cycle sheet.
   async function doStartLayby() {
     if (!payTarget) return
     const plan = planPayments(payTarget.amount_cents, lbN, lbStart)
@@ -380,7 +382,7 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
         .insert({
           profile_id: userId,
           account_id: accountId,
-          name: payTarget.name + ' (lay-by)',
+          name: payTarget.name + ' (BNPL)',
           frequency: cycleFrequency,
           anchor_date: startDate,
           mode: 'fixed',
@@ -397,7 +399,7 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
       await commitWishlistItem(payTarget.id, exp.id, startDate)
       await setWishlistPaymentMethod(payTarget.id, 'layby', null)
       setPayTarget(null); reload()
-    } catch (e: any) { alert('Could not start lay-by: ' + e.message) }
+    } catch (e: any) { alert('Could not start BNPL plan: ' + e.message) }
     finally { setPaySaving(false) }
   }
 
@@ -465,7 +467,7 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
               Save up<small>set aside, money stays yours</small>
             </button>
             <button className={!isSave ? 'on lb' : ''} onClick={() => setPayMode('layby')}>
-              Lay-by<small>store holds it for you</small>
+              BNPL<small>yours now, pay over time</small>
             </button>
           </div>
 
@@ -493,7 +495,7 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
             ) : (
               <>
                 <div className="pc">
-                  <label>Start</label>
+                  <label>First payment</label>
                   <div className="stepper">
                     <button disabled={lbStart <= 0} onClick={() => setLbStart(lbStart - 1)}>−</button>
                     <div className="v">{lbStart === 0 ? 'now' : '+' + lbStart}</div>
@@ -565,6 +567,7 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
               ? <>Adds <b>{fmt(savePlan.perCents, false)}</b> to each of your next {saveN} cycles.</>
               : <>Adds <b>{lbN} payments</b> of {fmt(lbPlan.perCents, false)}{lbStart > 0 && <>, starting {fmtDate(cycles[lbStart]?.startDate ?? '')}</>}.</>}
           </p>
+          {!isSave && <p className="pay-what">BNPL is credit. Missed payments can incur late fees.</p>}
 
           <div className="navrow">
             <button onClick={() => setPayTarget(null)}>Cancel</button>
@@ -572,7 +575,7 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
               style={{ background: isSave ? 'var(--pos)' : 'var(--event)' }}
               onClick={isSave ? doStartSaving : doStartLayby}
               disabled={paySaving}>
-              {paySaving ? 'Saving…' : isSave ? 'Start saving' : 'Start lay-by'}
+              {paySaving ? 'Saving…' : isSave ? 'Start saving' : 'Start BNPL plan'}
             </button>
           </div>
       </>
@@ -586,7 +589,7 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
       <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:10, letterSpacing:'.18em', textTransform:'uppercase', color:'var(--mut)' }}>Wishlist</div>
       <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontWeight:600, fontSize:22, letterSpacing:'-.02em', marginTop:4 }}>What you're saving toward</div>
       <div className="wish-basis">
-        Based on saving up. Lay-by or credit can be faster — tap an item to compare.
+        Based on saving up. With BNPL you have it sooner — tap an item to compare.
       </div>
     </div>
 
@@ -615,7 +618,7 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
                         {' '}{fmt(goal.per_cycle_cents, false)} a cycle · {fmt(left, false)} to go
                       </>
                     }
-                    // Lay-by and older commitments still have a real cycle date.
+                    // BNPL and older commitments still have a real cycle date.
                     if (!item.committed_cycle_start) return <>committed</>
                     return item.atRisk
                       ? <>committed to <b>{fmtDate(item.committed_cycle_start)}</b> — now {fmt(item.shortfallCents, false)} short</>
@@ -726,7 +729,7 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
                 ? <div className="sheet dwl-sheet">{payBody}</div>
                 : <div className="dwl-empty">
                     <div className="dwl-empty-t">Pick an item</div>
-                    <div className="dwl-empty-d">Its saving and lay-by plans show here, with what each does to your account every cycle.</div>
+                    <div className="dwl-empty-d">Its saving and BNPL plans show here, with what each does to your account every cycle.</div>
                   </div>}
             </aside>
           </div>

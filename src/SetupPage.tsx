@@ -519,7 +519,7 @@ export default function SetupPage({
             {error && <p style={{ color:'var(--floor)', fontSize:13, marginTop:12 }}>{error}</p>}
 
             <div className="skipnote" style={{ marginTop:14 }}>
-              <b>What's not here:</b> bonuses, one-offs, lay-bys. You'll add those from a cycle.
+              <b>What's not here:</b> bonuses, one-offs, BNPL plans. You'll add those from a cycle.
             </div>
           </div>
         )}

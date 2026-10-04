@@ -56,14 +56,15 @@ function cycleDetail(cents: number, freq: string, isEstimate: boolean, currencyC
   return `${raw}/${abbr} → ${norm}/fn`
 }
 
-/** Chronological — oldest payment first. Used for lay-by payment strips. */
+/** Chronological — oldest payment first. Used for BNPL payment strips. */
 function sortedVersions(exp: any): any[] {
   return [...(exp.expense_amount_versions ?? [])].sort(byOldest)
 }
 
 /**
- * A lay-by is "finished" when every scheduled payment date is strictly in the
- * past. Strict `<` keeps it visible on its final payment day.
+ * A BNPL plan (stored as a lay-by) is "finished" when every scheduled payment
+ * date is strictly in the past. Strict `<` keeps it visible on its final
+ * payment day.
  *
  * NOTE: this is derived from dates, not verified payment. A missed final
  * payment looks identical to a completed one — hence the section reads
@@ -87,7 +88,7 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
   const [loading,  setLoading]  = useState(true)
   const [saving,   setSaving]   = useState(false)
 
-  // 'completed' seeded closed — finished lay-bys are archive, not working set
+  // 'completed' seeded closed — finished BNPL plans are archive, not working set
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set(['completed']))
 
   const [sheet,      setSheet]      = useState<Sheet>(null)
@@ -225,7 +226,7 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
   const fixedTotal  = groupTotalFn(fixedExps)
   const varTotal    = groupTotalFn(varExps)
   const budgetTotal = groupTotalFn(budgetExps)
-  // finished lay-bys deliberately excluded — that money isn't going out any more
+  // finished BNPL plans deliberately excluded — that money isn't going out any more
   const laybyTotal  = groupTotalFn(laybyExps)
 
   const m = sheet ? MODE_META[mode] : MODE_META['fixed']
@@ -321,7 +322,7 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
     { key: 'fixed',     label: 'Fixed',     color: 'var(--acc)',   exps: fixedExps,  total: fixedTotal },
     { key: 'variable',  label: 'Estimates', color: 'var(--warn)',  exps: varExps,    total: varTotal },
     { key: 'budget',    label: 'Budget',    color: 'var(--mut)',   exps: budgetExps, total: budgetTotal },
-    { key: 'layby',     label: 'Lay-bys',   color: 'var(--event)', exps: laybyExps,  total: laybyTotal, isLayby: true },
+    { key: 'layby',     label: 'BNPL',      color: 'var(--event)', exps: laybyExps,  total: laybyTotal, isLayby: true },
     { key: 'completed', label: 'Finished',  color: 'var(--faint)', exps: laybyDone,  total: 0, isLayby: true, isDone: true },
   ].filter(s => s.exps.length > 0)
 
@@ -347,7 +348,7 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
             {fixedTotal > 0  && <span><span className="dot" style={{ background: 'var(--acc)' }} />{fmt(fixedTotal)} fixed</span>}
             {varTotal > 0    && <span><span className="dot" style={{ background: 'var(--warn)' }} />{fmt(varTotal)} varies</span>}
             {budgetTotal > 0 && <span><span className="dot" style={{ background: 'var(--mut)' }} />{fmt(budgetTotal)} budget</span>}
-            {laybyTotal > 0  && <span><span className="dot" style={{ background: 'var(--event)' }} />{fmt(laybyTotal)} lay-by</span>}
+            {laybyTotal > 0  && <span><span className="dot" style={{ background: 'var(--event)' }} />{fmt(laybyTotal)} BNPL</span>}
           </div>
 
           {sections.map(sec => {
@@ -481,7 +482,7 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
         </div>
       )}
 
-      {/* ═══ LAY-BY MANAGEMENT SHEET ═══ */}
+      {/* ═══ BNPL MANAGEMENT SHEET ═══ */}
       {laybyExp && (
         <div className="ov" onClick={() => setLaybyExp(null)}>
           <div className="sheet" onClick={e => e.stopPropagation()}>
@@ -522,7 +523,7 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
               background:'none', border:'none', cursor:'pointer',
               color:'var(--floor)', fontSize:13, fontWeight:600,
               fontFamily:"'Space Grotesk',sans-serif",
-            }}>Delete this lay-by</button>
+            }}>Delete this BNPL plan</button>
           </div>
         </div>
       )}
