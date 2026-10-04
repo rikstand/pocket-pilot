@@ -19,6 +19,9 @@ import {
   setExpenseOverride, clearExpenseOverride, setExpenseAmountFrom,
   getPayees, findOrCreatePayee,
   createBnplPlan,
+  addExpense, updateExpense, addExpenseAmount, deactivateExpense,
+  addIncomeSource, updateIncomeSource, addIncomeAmount, deactivateIncomeSource,
+  closeCycle,
 } from './lib/repository'
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
@@ -740,15 +743,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     }
     setAddSaving(true); setAddError('')
     try {
-      const { data: exp, error: e1 } = await supabase
-        .from('expenses')
-        .insert({ profile_id: userId, account_id: accountId, name: oneoffName.trim(), frequency: 'once', anchor_date: oneoffDate, mode: 'fixed' })
-        .select().single()
-      if (e1) throw e1
-      const { error: e2 } = await supabase
-        .from('expense_amount_versions')
-        .insert({ expense_id: exp.id, amount_cents: amountCents, effective_from: oneoffDate })
-      if (e2) throw e2
+      await addExpense(accountId, userId, {
+        name: oneoffName.trim(), frequency: 'once', anchorDate: oneoffDate,
+        mode: 'fixed', amountCents,
+      })
       closeAddSheet(); reload()
     } catch (e: any) { setAddError(e.message) }
     finally { setAddSaving(false) }
@@ -761,22 +759,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     }
     setAddSaving(true); setAddError('')
     try {
-      const { data: src, error: e1 } = await supabase
-        .from('income_sources')
-        .insert({
-          profile_id: userId,
-          account_id: accountId,
-          name: incomeName.trim(),
-          frequency: 'once',
-          anchor_date: incomeDate,
-          is_potential: !incomeCertain,
-        })
-        .select().single()
-      if (e1) throw e1
-      const { error: e2 } = await supabase
-        .from('income_amount_versions')
-        .insert({ income_source_id: src.id, amount_cents: amountCents, effective_from: incomeDate })
-      if (e2) throw e2
+      await addIncomeSource(accountId, userId, {
+        name: incomeName.trim(), frequency: 'once', anchorDate: incomeDate,
+        amountCents, isPotential: !incomeCertain,
+      })
       closeAddSheet(); reload()
     } catch (e: any) { setAddError(e.message) }
     finally { setAddSaving(false) }
@@ -804,37 +790,11 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       const amountChanged = amountCents !== oneOffItem.unitCents
 
       if (oneOffItem.oneOffKind === 'income') {
-        const { error: e1 } = await supabase
-          .from('income_sources')
-          .update({ name: oneOffName.trim(), is_potential: !oneOffCertain })
-          .eq('id', oneOffItem.incomeId)
-        if (e1) throw e1
-        if (amountChanged) {
-          const { error: e2 } = await supabase
-            .from('income_amount_versions')
-            .insert({
-              income_source_id: oneOffItem.incomeId,
-              amount_cents: amountCents,
-              effective_from: effectiveFrom,
-            })
-          if (e2) throw e2
-        }
+        await updateIncomeSource(oneOffItem.incomeId, { name: oneOffName.trim(), is_potential: !oneOffCertain })
+        if (amountChanged) await addIncomeAmount(oneOffItem.incomeId, amountCents, effectiveFrom)
       } else {
-        const { error: e1 } = await supabase
-          .from('expenses')
-          .update({ name: oneOffName.trim() })
-          .eq('id', oneOffItem.expenseId)
-        if (e1) throw e1
-        if (amountChanged) {
-          const { error: e2 } = await supabase
-            .from('expense_amount_versions')
-            .insert({
-              expense_id: oneOffItem.expenseId,
-              amount_cents: amountCents,
-              effective_from: effectiveFrom,
-            })
-          if (e2) throw e2
-        }
+        await updateExpense(oneOffItem.expenseId, { name: oneOffName.trim() })
+        if (amountChanged) await addExpenseAmount(oneOffItem.expenseId, accountId, amountCents, effectiveFrom)
       }
       setOneOffItem(null); reload()
     } catch (e: any) { setOneOffError(e.message) }
@@ -845,15 +805,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     if (!oneOffItem || oneOffDeleting) return
     setOneOffDeleting(true); setOneOffError('')
     try {
-      if (oneOffItem.oneOffKind === 'income') {
-        const { error } = await supabase
-          .from('income_sources').update({ is_active: false }).eq('id', oneOffItem.incomeId)
-        if (error) throw error
-      } else {
-        const { error } = await supabase
-          .from('expenses').update({ is_active: false }).eq('id', oneOffItem.expenseId)
-        if (error) throw error
-      }
+      if (oneOffItem.oneOffKind === 'income') await deactivateIncomeSource(oneOffItem.incomeId)
+      else await deactivateExpense(oneOffItem.expenseId)
       setOneOffItem(null); reload()
     } catch (e: any) { setOneOffError(e.message) }
     finally { setOneOffDeleting(false) }
@@ -929,22 +882,17 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       else if (freq === 'monthly')     nextEnd = formatDate(addDays(addMonths(nsDate, 1), -1))
       else                             nextEnd = formatDate(addDays(addYears(nsDate, 1), -1))
 
-      // One call, one transaction. Closing this cycle, saving the actuals and
-      // opening the next one either all happen or none do. Doing them as
-      // three separate writes is what left a cycle marked closed with no
-      // cycle after it on 30 Sep 2026. See close_cycle.sql.
+      // One call, one transaction — see closeCycle in repository.ts.
       //
       // The balance passed is the one with next cycle's pay taken out. It is
       // both this cycle's closing balance and the next one's opening balance.
-      const { error } = await supabase.rpc('close_cycle', {
-        p_account_id:    accountId,
-        p_cycle_id:      activeCycle.id ?? null,
-        p_closing_cents: adjustedRealCents,
-        p_next_start:    nextStart,
-        p_next_end:      nextEnd,
-        p_actuals:       actuals,
+      await closeCycle(accountId, {
+        cycleId:      activeCycle.id ?? null,
+        closingCents: adjustedRealCents,
+        nextStart,
+        nextEnd,
+        actuals,
       })
-      if (error) throw error
 
       setCloseFrozen(true)
       setTimeout(() => {

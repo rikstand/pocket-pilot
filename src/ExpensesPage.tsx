@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
-import { supabase } from './lib/supabase'
-import { getExpenses, getLayBys } from './lib/repository'
+import {
+  getExpenses, getLayBys,
+  addExpense, updateExpense, addExpenseAmount, deactivateExpense, deactivateBnplPlan,
+} from './lib/repository'
 import { formatMoney, moneyFormatter, currencySymbol } from './lib/money'
 import { useAccount } from './lib/AccountContext'
 import { ExpenseIcon, guessIcon, iconLabel, ICON_GROUPS } from './lib/icons'
@@ -161,28 +163,17 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
     setSaving(true); setFormError('')
     try {
       if (sheet === 'add') {
-        const { data: exp, error: e1 } = await supabase
-          .from('expenses')
-          .insert({ profile_id: userId, account_id: accountId, name: name.trim(), frequency, anchor_date: anchorDate, mode, icon })
-          .select().single()
-        if (e1) throw e1
-        const { error: e2 } = await supabase
-          .from('expense_amount_versions')
-          .insert({ expense_id: exp.id, amount_cents: Math.round(parseFloat(amount) * 100), effective_from: anchorDate })
-        if (e2) throw e2
+        await addExpense(accountId, userId, {
+          name: name.trim(), frequency, anchorDate, mode, icon,
+          amountCents: Math.round(parseFloat(amount) * 100),
+        })
       } else {
-        const { error: e1 } = await supabase
-          .from('expenses')
-          .update({ name: name.trim(), frequency, anchor_date: anchorDate, mode, icon })
-          .eq('id', editingExp.id)
-        if (e1) throw e1
+        await updateExpense(editingExp.id, { name: name.trim(), frequency, anchor_date: anchorDate, mode, icon })
         const oldV = latestVersion(editingExp.expense_amount_versions)
         const newCents = Math.round(parseFloat(amount) * 100)
+        // Still dated today, not from the cycle start — an open question.
         if (!oldV || oldV.amount_cents !== newCents) {
-          const { error: e2 } = await supabase
-            .from('expense_amount_versions')
-            .insert({ expense_id: editingExp.id, amount_cents: newCents, effective_from: todayStr() })
-          if (e2) throw e2
+          await addExpenseAmount(editingExp.id, accountId, newCents, todayStr())
         }
       }
       closeSheet(); await load()
@@ -192,17 +183,14 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
 
   async function handleDeleteLayby(exp: any) {
     try {
-      await supabase.from('expenses').update({ is_active: false }).eq('id', exp.id)
-      if (exp.lay_by_id) {
-        await supabase.from('lay_bys').update({ is_active: false }).eq('id', exp.lay_by_id)
-      }
+      await deactivateBnplPlan(exp.id, exp.lay_by_id ?? null)
       setLaybyExp(null); await load()
     } catch (e: any) { console.error(e) }
   }
 
   async function handleDelete(id: string) {
     try {
-      await supabase.from('expenses').update({ is_active: false }).eq('id', id)
+      await deactivateExpense(id)
       closeSheet(); await load()
     } catch (e: any) { setFormError(e.message) }
   }

@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
-import { supabase } from './lib/supabase'
-import { upsertProfile, createAccount } from './lib/repository'
+import { upsertProfile, createAccount, addIncomeSource, addExpense, createCycle } from './lib/repository'
 import { CURRENCIES, formatMoney } from './lib/money'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
 
@@ -149,45 +148,23 @@ export default function SetupPage({
       const accountId    = account.id
 
       if (!skipIncome) {
-        const { data: incomeSource, error: e1 } = await supabase
-          .from('income_sources')
-          .insert({
-            profile_id:  userId,
-            account_id:  accountId,
-            name:        incomeName.trim(),
-            frequency:   incomeFrequency,
-            anchor_date: incomeAnchor,
-            is_primary:  true,
-          })
-          .select().single()
-        if (e1) throw e1
-        const { error: e2 } = await supabase
-          .from('income_amount_versions')
-          .insert({
-            income_source_id: incomeSource.id,
-            amount_cents:     Math.round(parseFloat(incomeAmount) * 100),
-            effective_from:   incomeAnchor,
-          })
-        if (e2) throw e2
+        await addIncomeSource(accountId, userId, {
+          name:        incomeName.trim(),
+          frequency:   incomeFrequency,
+          anchorDate:  incomeAnchor,
+          amountCents: Math.round(parseFloat(incomeAmount) * 100),
+          isPrimary:   true,
+        })
       }
 
       for (const exp of expenses) {
-        const { data: row, error: e3 } = await supabase
-          .from('expenses')
-          .insert({
-            profile_id:  userId,
-            account_id:  accountId,
-            name:        exp.name,
-            frequency:   exp.frequency,
-            anchor_date: exp.anchorDate,
-            mode:        exp.mode,
-          })
-          .select().single()
-        if (e3) throw e3
-        const { error: e4 } = await supabase
-          .from('expense_amount_versions')
-          .insert({ expense_id: row.id, amount_cents: exp.amountCents, effective_from: exp.anchorDate })
-        if (e4) throw e4
+        await addExpense(accountId, userId, {
+          name:        exp.name,
+          frequency:   exp.frequency,
+          anchorDate:  exp.anchorDate,
+          mode:        exp.mode,
+          amountCents: exp.amountCents,
+        })
       }
 
       // First cycle window. This row anchors the entire perpetuation chain —
@@ -210,16 +187,7 @@ export default function SetupPage({
         endDate = addDays(addYears(startDate, 1), -1)
       }
 
-      const { error: e5 } = await supabase
-        .from('cycles')
-        .insert({
-          profile_id:            userId,
-          account_id:            accountId,
-          start_date:            formatDate(startDate),
-          end_date:              formatDate(endDate),
-          opening_balance_cents: openingCents,
-        })
-      if (e5) throw e5
+      await createCycle(accountId, userId, formatDate(startDate), formatDate(endDate), openingCents)
 
       onComplete()
     } catch (e: any) { setError(e.message) }

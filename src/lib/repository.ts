@@ -74,6 +74,67 @@ export async function getIncomeSources(accountId: string) {
   return data
 }
 
+// Every write below throws when the database refuses it, so a page can show
+// the error instead of carrying on as if it worked.
+
+// A new income: a bonus, a refund (frequency 'once') or the main salary from
+// Setup. is_potential / is_primary are only sent when given, so the
+// database defaults apply otherwise — the same rows the pages wrote before.
+export async function addIncomeSource(
+  accountId: string,
+  userId: string,
+  income: {
+    name: string
+    frequency: string
+    anchorDate: string
+    amountCents: number
+    isPotential?: boolean
+    isPrimary?: boolean
+  }
+) {
+  const row: Record<string, unknown> = {
+    profile_id: userId,
+    account_id: accountId,
+    name: income.name,
+    frequency: income.frequency,
+    anchor_date: income.anchorDate,
+  }
+  if (income.isPotential !== undefined) row.is_potential = income.isPotential
+  if (income.isPrimary !== undefined) row.is_primary = income.isPrimary
+
+  const { data: src, error: e1 } = await supabase
+    .from('income_sources')
+    .insert(row)
+    .select().single()
+  if (e1) throw e1
+
+  await addIncomeAmount(src.id, income.amountCents, income.anchorDate)
+  return src
+}
+
+export async function updateIncomeSource(
+  incomeId: string,
+  fields: { name?: string; is_potential?: boolean }
+) {
+  const { error } = await supabase.from('income_sources').update(fields).eq('id', incomeId)
+  if (error) throw error
+}
+
+// A new amount from a date. Always a new row, never an edit of an old one, so
+// the history stays and the newest row on a date wins.
+export async function addIncomeAmount(incomeId: string, amountCents: number, effectiveFrom: string) {
+  const { error } = await supabase
+    .from('income_amount_versions')
+    .insert({ income_source_id: incomeId, amount_cents: amountCents, effective_from: effectiveFrom })
+  if (error) throw error
+}
+
+// Switched off, not deleted: the row stays for history.
+export async function deactivateIncomeSource(incomeId: string) {
+  const { error } = await supabase.from('income_sources').update({ is_active: false }).eq('id', incomeId)
+  if (error) throw error
+}
+
 // --- EXPENSES ---
 export async function getExpenses(accountId: string) {
   const { data, error } = await supabase
@@ -84,6 +145,69 @@ export async function getExpenses(accountId: string) {
     .order('created_at')
   if (error) throw error
   return data
+}
+
+// A new expense with its first amount, dated from its anchor date. Used for a
+// one-off from the Cycle screen, the Expenses page and Setup. icon is only
+// sent when given.
+export async function addExpense(
+  accountId: string,
+  userId: string,
+  expense: {
+    name: string
+    frequency: string
+    anchorDate: string
+    mode: 'fixed' | 'variable' | 'budget'
+    amountCents: number
+    icon?: string
+  }
+) {
+  const row: Record<string, unknown> = {
+    profile_id: userId,
+    account_id: accountId,
+    name: expense.name,
+    frequency: expense.frequency,
+    anchor_date: expense.anchorDate,
+    mode: expense.mode,
+  }
+  if (expense.icon !== undefined) row.icon = expense.icon
+
+  const { data: exp, error: e1 } = await supabase
+    .from('expenses')
+    .insert(row)
+    .select().single()
+  if (e1) throw e1
+
+  await addExpenseAmount(exp.id, accountId, expense.amountCents, expense.anchorDate)
+  return exp
+}
+
+export async function updateExpense(
+  expenseId: string,
+  fields: { name?: string; frequency?: string; anchor_date?: string; mode?: string; icon?: string }
+) {
+  const { error } = await supabase.from('expenses').update(fields).eq('id', expenseId)
+  if (error) throw error
+}
+
+// A new amount from a date, as a new row. Unlike setExpenseAmountFrom this
+// leaves older rows on the same date alone — the newest still wins.
+export async function addExpenseAmount(
+  expenseId: string,
+  accountId: string,
+  amountCents: number,
+  effectiveFrom: string
+) {
+  const { error } = await supabase
+    .from('expense_amount_versions')
+    .insert({ expense_id: expenseId, account_id: accountId, amount_cents: amountCents, effective_from: effectiveFrom })
+  if (error) throw error
+}
+
+// Switched off, not deleted: the row and its amounts stay for history.
+export async function deactivateExpense(expenseId: string) {
+  const { error } = await supabase.from('expenses').update({ is_active: false }).eq('id', expenseId)
+  if (error) throw error
 }
 
 // --- LAY-BYS ---
@@ -172,6 +296,16 @@ export async function createBnplPlan(
   return { layby, expense }
 }
 
+// Removes a BNPL plan from the forecast: its expense and its plan row are
+// both switched off.
+export async function deactivateBnplPlan(expenseId: string, laybyId: string | null) {
+  await deactivateExpense(expenseId)
+  if (laybyId) {
+    const { error } = await supabase.from('lay_bys').update({ is_active: false }).eq('id', laybyId)
+    if (error) throw error
+  }
+}
+
 // --- CYCLES ---
 export async function getCycles(accountId: string) {
   const { data, error } = await supabase
@@ -201,6 +335,52 @@ export async function upsertCycle(
     .single()
   if (error) throw error
   return data
+}
+
+// The first cycle, written by Setup. Every later cycle is opened by
+// closeCycle, so this one anchors the whole chain.
+export async function createCycle(
+  accountId: string,
+  userId: string,
+  startDate: string,
+  endDate: string,
+  openingBalanceCents: number
+) {
+  const { error } = await supabase
+    .from('cycles')
+    .insert({
+      profile_id: userId,
+      account_id: accountId,
+      start_date: startDate,
+      end_date: endDate,
+      opening_balance_cents: openingBalanceCents,
+    })
+  if (error) throw error
+}
+
+// Closing a cycle is one database call, one transaction (close_cycle.sql):
+// close this cycle, save the confirmed actuals and open the next one — all of
+// it or none of it. Three separate writes once left a cycle closed with no
+// cycle after it (30 Sep 2026).
+export async function closeCycle(
+  accountId: string,
+  close: {
+    cycleId: string | null
+    closingCents: number
+    nextStart: string
+    nextEnd: string
+    actuals: { expense_id: string; actual_amount_cents: number }[]
+  }
+) {
+  const { error } = await supabase.rpc('close_cycle', {
+    p_account_id:    accountId,
+    p_cycle_id:      close.cycleId,
+    p_closing_cents: close.closingCents,
+    p_next_start:    close.nextStart,
+    p_next_end:      close.nextEnd,
+    p_actuals:       close.actuals,
+  })
+  if (error) throw error
 }
 
 // --- WISHLIST ---
