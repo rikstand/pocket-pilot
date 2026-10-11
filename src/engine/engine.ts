@@ -32,20 +32,30 @@ function cycleDayCount(startDate: string, endDate: string): number {
   return Math.round(ms / 86400000) + 1
 }
 
-// Pick the latest amount version whose effectiveFrom <= cycleStart.
-// Falls back to amountCents if no versions are available or none apply yet.
-function getAmountForCycle(
+// The amount in force on one payment's date: the latest version whose
+// effectiveFrom <= that date. Falls back to the earliest version when none
+// applies yet, and to amountCents when there are no versions at all.
+//
+// Looked up per payment, not once per cycle at the cycle start. The cycle-start
+// lookup ignored any amount dated after the start: an edited one-off dated
+// mid-cycle kept its original amount, and a BNPL plan paying mid-cycle lost
+// its last payment's rounding top-up. For amounts that change on a cycle start
+// (every "from now on" edit) the result is the same as before.
+//
+// Ties on the same date go to the newest written. forecast.ts hands versions
+// over newest-first (lib/versions byNewest), and Array.sort is stable, so a
+// comparator that returns 0 on equal dates keeps that order.
+function getAmountOn(
   versions: AmountVersion[],
   fallback: number,
-  cycleStart: string
+  onDate: string
 ): number {
   if (!versions || versions.length === 0) return fallback
-  const applicable = versions
-    .filter(v => v.effectiveFrom <= cycleStart)
-    .sort((a, b) => a.effectiveFrom > b.effectiveFrom ? -1 : 1)
+  const byDateDesc = (a: AmountVersion, b: AmountVersion) =>
+    a.effectiveFrom === b.effectiveFrom ? 0 : (a.effectiveFrom > b.effectiveFrom ? -1 : 1)
+  const applicable = versions.filter(v => v.effectiveFrom <= onDate).sort(byDateDesc)
   if (applicable.length > 0) return applicable[0].amountCents
-  // Fallback: use earliest version if none are effective yet for this cycle
-  const earliest = [...versions].sort((a, b) => a.effectiveFrom < b.effectiveFrom ? -1 : 1)[0]
+  const earliest = [...versions].sort(byDateDesc)[versions.length - 1]
   return earliest?.amountCents ?? fallback
 }
 
@@ -187,12 +197,13 @@ export function projectCycles(input: CycleInput): CycleResult[] {
     let budgetActualCents     = 0
     for (const exp of expenses) {
       const occs       = getOccurrencesInRange(exp.anchorDate, exp.frequency, cycleStart, cycleEnd, exp.endDate)
-      const unitCents  = getAmountForCycle(exp.amountVersions, exp.amountCents, cycleStart)
+      // Each payment at the amount in force on its own date.
+      const usual      = occs.reduce((sum, d) => sum + getAmountOn(exp.amountVersions, exp.amountCents, d), 0)
       // A one-cycle amount replaces the usual one for this cycle only, for any
       // kind of expense. It only applies where the expense actually falls in
       // the cycle.
       const override   = occs.length > 0 ? expenseOverrideFor(expenseOverrides, exp.id, cycleStart) : null
-      const total      = override ?? occs.length * unitCents
+      const total      = override ?? usual
       if      (exp.mode === 'fixed')    fixedExpensesCents    += total
       else if (exp.mode === 'variable') variableExpensesCents += total
       else if (exp.mode === 'budget') {

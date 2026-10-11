@@ -50,6 +50,19 @@ function findCurrentIdx(cycles: any[]) {
 function addOneDay(dateStr: string): string {
   return formatDate(addDays(parseDate(dateStr), 1))
 }
+// What an expense comes to in a cycle: each payment at the amount in force on
+// its own date — the same rule the engine uses (getAmountOn in engine.ts), so
+// the card and the closing balance cannot disagree. unit is the amount on the
+// cycle's last payment, the one to call "usual" from here on.
+function amountsOn(versions: any[], occs: string[]): { unit: number; total: number } {
+  let total = 0
+  let unit = 0
+  for (const d of occs) {
+    unit = versionForDate(versions, d)?.amount_cents ?? 0
+    total += unit
+  }
+  return { unit, total }
+}
 function chipStyle(cls: string): { color: string, borderColor: string, background: string } | undefined {
   if (cls === 'evt') return { color: 'var(--event)', borderColor: 'var(--event)', background: 'var(--event-s)' }
   return undefined
@@ -434,14 +447,14 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, cycle.startDate, cycle.endDate, exp.end_date ?? undefined)
       if (!occs.length) continue
 
-      const v         = versionForDate(exp.expense_amount_versions, cycle.startDate)
-      const unitCents = v?.amount_cents ?? 0
+      const amounts   = amountsOn(exp.expense_amount_versions, occs)
+      const unitCents = amounts.unit
       const mode      = exp.mode ?? 'fixed'
       // Any expense can have a different amount for this one cycle — a
       // Christmas budget, a confirmed power bill. The card shows it, the
       // section total adds it up, and the engine projects with it.
       const override  = exp.lay_by_id ? null : overrideFor(exp.id, cycle.startDate)
-      const baseTotal = unitCents * occs.length
+      const baseTotal = amounts.total
       const total     = override ? override.amount_cents : baseTotal
 
       let icon = '▤', iconClass = 'fix', chips: string[][] = [['lock','fixed']], act: string | null = null
@@ -593,10 +606,9 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     .map(exp => {
       const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, activeCycle.startDate, activeCycle.endDate)
       if (!occs.length) return null
-      const v = versionForDate(exp.expense_amount_versions, activeCycle.startDate)
       // A figure confirmed during the cycle beats the estimate.
       const override = overrideFor(exp.id, activeCycle.startDate)
-      const estimatedCents = override ? override.amount_cents : (v?.amount_cents ?? 0) * occs.length
+      const estimatedCents = override ? override.amount_cents : amountsOn(exp.expense_amount_versions, occs).total
       return { id: exp.id, name: exp.name, estimatedCents }
     })
     .filter(Boolean) as { id: string, name: string, estimatedCents: number }[]
