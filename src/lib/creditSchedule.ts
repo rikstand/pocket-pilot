@@ -6,7 +6,10 @@
 // minimum payment.
 
 import type { CreditAccountModel, CreditCycleLine } from '../engine/credit'
-import { stepCredit } from '../engine/credit'
+import {
+  stepCredit, projectBalanceForward, elapsedCyclesBetween,
+  firstFloorBreach, maxAffordableExtraCents,
+} from '../engine/credit'
 import { parseDate, formatDate, addDays } from '../engine/dates'
 import { getOccurrencesInRange } from '../engine/recurrence'
 
@@ -114,5 +117,84 @@ export function runCardForward(
     lines,
     totalInterestCents: totalInterest,
     cyclesToPayoff: balance <= 0 ? lines.length : null,
+  }
+}
+
+/** Days in a cycle, from its own start and end dates. */
+export function cycleDaysOf(cycle: { startDate: string; endDate: string } | undefined): number {
+  if (!cycle) return 14
+  return Math.round(
+    (parseDate(cycle.endDate).getTime() - parseDate(cycle.startDate).getTime()) / 86400000
+  ) + 1
+}
+
+/**
+ * The card's balance at the start of a cycle, carried forward from the last
+ * figure you typed in.
+ *
+ * A measured balance is only true on the day it was taken. Work out how many
+ * whole cycles have passed since, and run the card forward that many cycles.
+ * Lives here, not on the Credit page, so the Credit page and the Cycle screen
+ * start from the same number.
+ */
+export function carriedCardBalance(card: any, firstCycleStart: string, cycleDays: number) {
+  const model = creditModelFrom(card)
+  const measuredCents = card.current_balance_cents ?? 0
+  const elapsedCycles = card.balance_as_of
+    ? elapsedCyclesBetween(
+        parseDate(card.balance_as_of).getTime(),
+        parseDate(firstCycleStart).getTime(),
+        cycleDays
+      )
+    : 0
+  // Catching up runs through PAST cycles, so step i is (elapsedCycles - i)
+  // cycles before the current one — not cycle i ahead of it.
+  const due = buildMinimumDueSchedule(card, firstCycleStart, cycleDays)
+  const drift = projectBalanceForward(
+    measuredCents, model,
+    card.strategy_committed ? card.strategy_extra_cents : 0,
+    cycleDays, elapsedCycles, (i: number) => due(i - elapsedCycles)
+  )
+  return { ...drift, measuredCents, elapsedCycles }
+}
+
+export interface PlanCheck {
+  /** First cycle the committed plan pushes under the floor, or null. */
+  breach: { startDate: string; closingCents: number } | null
+  /** True when even the minimum alone breaks the floor somewhere. */
+  minimumAloneBreaks: boolean
+  /** The largest flat extra that fits right now. */
+  maxExtraCents: number
+}
+
+/**
+ * Does the committed plan still fit the forecast as it stands today?
+ *
+ * Committing stores the extra as a number, and the forecast keeps moving —
+ * budgets change, bills are confirmed, savings goals start. This is checked
+ * every time either page loads, so a plan that has stopped fitting says so.
+ *
+ * `noCardCycles` is the shared forecast projected with the card left out
+ * (projectFromRows with creditCard: null).
+ */
+export function committedPlanCheck(
+  card: any,
+  noCardCycles: { startDate: string; endDate: string; committedClosingBalanceCents: number }[],
+  floorCents: number
+): PlanCheck | null {
+  if (!card || !card.strategy_committed || noCardCycles.length === 0) return null
+  const first = noCardCycles[0]
+  const days = cycleDaysOf(first)
+  const model = creditModelFrom(card)
+  const balance = carriedCardBalance(card, first.startDate, days).balanceCents
+  const due = buildMinimumDueSchedule(card, first.startDate, days)
+  const surplus = noCardCycles.map(c => c.committedClosingBalanceCents)
+
+  const hit = firstFloorBreach(balance, model, card.strategy_extra_cents ?? 0, days, surplus, floorCents, due)
+  const minHit = firstFloorBreach(balance, model, 0, days, surplus, floorCents, due)
+  return {
+    breach: hit ? { startDate: noCardCycles[hit.index].startDate, closingCents: hit.closingCents } : null,
+    minimumAloneBreaks: !!minHit,
+    maxExtraCents: maxAffordableExtraCents(balance, model, days, surplus, floorCents, due),
   }
 }

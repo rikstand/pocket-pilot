@@ -218,15 +218,51 @@ export function projectCreditPayoff(
 }
 
 /**
+ * The first cycle a plan pushes under the safety floor, or null if it fits.
+ *
+ * `cycleSurplusCents[i]` is what cycle i closes with BEFORE any card payment.
+ * The caller builds it from the full forecast with the card left out — the
+ * same forecast every other page uses, so savings goals, one-cycle amounts and
+ * logged spend all count.
+ *
+ * Closing balances CHAIN, so by cycle 5 the account has absorbed five card
+ * payments, not one. Comparing a single cycle's payment against that cycle's
+ * closing balance overstates what is affordable — badly, and increasingly so
+ * the further out you look. Payments must accumulate.
+ *
+ * Every cycle in the series is checked, including those after the card clears:
+ * the money already paid stays paid, so a big bill after payoff can still be
+ * the cycle that breaks.
+ */
+export function firstFloorBreach(
+  startingBalanceCents: number,
+  account: CreditAccountModel,
+  extraCents: number,
+  cycleDays: number,
+  cycleSurplusCents: number[],
+  safetyFloorCents: number,
+  minimumDue?: MinimumDueSchedule
+): { index: number; closingCents: number } | null {
+  if (cycleSurplusCents.length === 0) return null
+  const proj = projectCreditPayoff(
+    startingBalanceCents, account, extraCents, cycleDays,
+    Math.min(cycleSurplusCents.length, 400), minimumDue
+  )
+  let cumulativePaidCents = 0
+  for (let i = 0; i < cycleSurplusCents.length; i++) {
+    cumulativePaidCents += proj.lines[i]?.paymentCents ?? 0
+    const closing = cycleSurplusCents[i] - cumulativePaidCents
+    if (closing < safetyFloorCents) return { index: i, closingCents: closing }
+  }
+  return null
+}
+
+/**
  * Largest flat extra payment that never drops a projected cycle's closing
- * balance below the safety floor. Binary search over the surplus array.
+ * balance below the safety floor. Binary search on firstFloorBreach.
  *
- * `cycleSurplusCents[i]` is what cycle i closes with BEFORE any credit
- * payment. Caller supplies this from projectCycles run without a card.
- *
- * NOTE: with safety_floor_cents currently zeroed, this returns "drain every
- * cycle to nothing", which is not a number to act on. The Credit page should
- * say so until the floor has a real value.
+ * NOTE: with a $0 safety floor this returns "drain every cycle to nothing",
+ * which is not a number to act on. The Credit page says so.
  */
 export function maxAffordableExtraCents(
   startingBalanceCents: number,
@@ -237,23 +273,9 @@ export function maxAffordableExtraCents(
   minimumDue?: MinimumDueSchedule
 ): number {
   if (cycleSurplusCents.length === 0) return 0
-
-  // Closing balances CHAIN, so by cycle 5 the account has absorbed five card
-  // payments, not one. Comparing a single cycle's payment against that cycle's
-  // closing balance overstates what is affordable — badly, and increasingly so
-  // the further out you look. Payments must accumulate.
-  const fits = (extra: number): boolean => {
-    const proj = projectCreditPayoff(
-      startingBalanceCents, account, extra, cycleDays,
-      Math.min(cycleSurplusCents.length, 400), minimumDue
-    )
-    let cumulativePaidCents = 0
-    for (let i = 0; i < proj.lines.length && i < cycleSurplusCents.length; i++) {
-      cumulativePaidCents += proj.lines[i].paymentCents
-      if (cycleSurplusCents[i] - cumulativePaidCents < safetyFloorCents) return false
-    }
-    return true
-  }
+  const fits = (extra: number): boolean =>
+    firstFloorBreach(startingBalanceCents, account, extra, cycleDays,
+      cycleSurplusCents, safetyFloorCents, minimumDue) === null
 
   if (!fits(0)) return 0
 

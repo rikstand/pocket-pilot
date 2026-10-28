@@ -25,8 +25,8 @@ import {
 } from './lib/repository'
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
-import { creditModelFrom, buildMinimumDueSchedule, dueDateInCycle, runCardForward } from './lib/creditSchedule'
-import { loadForecast, cycleTickLabel, cycleDateLabel, baseYearOf, baselineChecks, previewBudgetChange } from './lib/forecast'
+import { creditModelFrom, buildMinimumDueSchedule, dueDateInCycle, runCardForward, committedPlanCheck } from './lib/creditSchedule'
+import { loadForecast, projectFromRows, cycleTickLabel, cycleDateLabel, baseYearOf, baselineChecks, previewBudgetChange } from './lib/forecast'
 import type { ForecastResult } from './lib/forecast'
 import { getOccurrencesInRange } from './engine/recurrence'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
@@ -1110,6 +1110,17 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   }
 
   const showCredit         = !activeCycle.isHistorical && creditPaymentCents > 0
+
+  // Does the committed card plan still fit? Committing stores the extra as a
+  // number, and the forecast keeps moving. Same check, same inputs as the
+  // Credit page (committedPlanCheck), so the two can never disagree.
+  const creditPlanCheck = rawCredit?.strategy_committed && forecastRows
+    ? committedPlanCheck(
+        rawCredit,
+        projectFromRows({ ...forecastRows, creditCard: null, creditOverrideRows: [] }, floorCents, 24),
+        floorCents
+      )
+    : null
   // Progress is against the balance when the strategy was committed, not the
   // original purchase — a revolving balance has no single starting point.
   const creditPct = rawCredit?.current_balance_cents
@@ -1794,6 +1805,17 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               </div>
               <div className="vl">−{fmt(creditPaymentCents, false)}</div>
             </div>
+          </div>
+        )}
+        {openSecs.credit && status === 'now' && creditPlanCheck?.breach && (
+          <div className="pay-note bad credit-fitnote">
+            <b>Your card plan no longer fits.</b>{' '}
+            {creditPlanCheck.minimumAloneBreaks
+              ? <>Even the minimum alone takes the cycle starting {fmtDate(creditPlanCheck.breach.startDate)} under
+                  your {fmt(floorCents, false)} floor.</>
+              : <>The cycle starting {fmtDate(creditPlanCheck.breach.startDate)} would close
+                  at {fmt(creditPlanCheck.breach.closingCents, false)}, under your {fmt(floorCents, false)} floor.
+                  Up to {fmt(creditPlanCheck.maxExtraCents, false)} extra a cycle fits now — recommit on the Credit page.</>}
           </div>
         )}
       </>

@@ -2,19 +2,20 @@ import { useEffect, useState } from 'react'
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
 import {
-  getIncomeSources, getExpenses, getCycles,
-  getCreditAccount, createCreditAccount, updateCreditAccount,
+  createCreditAccount, updateCreditAccount,
   commitCreditStrategy, uncommitCreditStrategy,
   addCreditSnapshot, getCreditSnapshots,
 } from './lib/repository'
-import { projectCycles } from './engine/index'
+import { loadForecast, projectFromRows } from './lib/forecast'
 import {
-  projectCreditPayoff, maxAffordableExtraCents,
-  projectBalanceForward, elapsedCyclesBetween,
+  projectCreditPayoff, maxAffordableExtraCents, firstFloorBreach,
 } from './engine/credit'
-import type { CreditAccountModel, CreditProjection } from './engine/credit'
+import type { CreditProjection } from './engine/credit'
+import {
+  creditModelFrom, buildMinimumDueSchedule, carriedCardBalance,
+  committedPlanCheck, cycleDaysOf,
+} from './lib/creditSchedule'
 import { parseDate, formatDate, addDays } from './engine/dates'
-import { getOccurrencesInRange } from './engine/recurrence'
 import { useViewport } from './lib/useViewport'
 
 /* ── formatting ───────────────────────────────────────────────────── */
@@ -28,7 +29,10 @@ function fmtDateLong(d: string) {
 function todayStr() { return formatDate(new Date()) }
 
 const CYCLES_AHEAD = 4
+// The chart always spans this many cycles, whichever strategy is picked, so
+// switching only redraws the line — the scale never moves under you.
 const CHART_CYCLES = 60
+const FORECAST_CYCLES = 24
 
 type StrategyKey = 'minimum' | 'extra' | 'max'
 
@@ -76,54 +80,28 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
     async function load() {
       setLoading(true)
       try {
-        const [income, expenses, storedCycles, creditCard] = await Promise.all([
-          getIncomeSources(accountId),
-          getExpenses(accountId),
-          getCycles(accountId),
-          getCreditAccount(accountId),
-        ])
+        // The same forecast every other page uses. This page used to build its
+        // own copy without savings goals, one-cycle amounts or logged spend,
+        // so "Max available" was measured against money already promised
+        // elsewhere — and disagreed with the Cycle screen.
+        const forecast = await loadForecast(accountId, floorCents, { numCycles: FORECAST_CYCLES })
+        const creditCard = forecast.creditCard
         setCard(creditCard)
         if (creditCard) {
           setSnapshots(await getCreditSnapshots(creditCard.id))
-          setExtraStr(String((creditCard.strategy_extra_cents ?? 0) / 100))
-          if (creditCard.strategy_committed) setStrategy('extra')
+          const committedExtra = creditCard.strategy_extra_cents ?? 0
+          setExtraStr(String(committedExtra / 100))
+          // Open on the plan you committed to, so the page starts by showing it.
+          setStrategy(creditCard.strategy_committed && committedExtra === 0 ? 'minimum' : 'extra')
         }
 
-        const engineIncome = income.map((src: any) => {
-          const v = (src.income_amount_versions ?? [])
-            .sort((a: any, b: any) => a.effective_from > b.effective_from ? -1 : 1)[0]
-          return {
-            id: src.id, name: src.name, frequency: src.frequency,
-            anchorDate: src.anchor_date, amountCents: v?.amount_cents ?? 0,
-            isPotential: src.is_potential ?? false, isPrimary: src.is_primary ?? false,
-          }
-        })
-        const engineExpenses = expenses.map((exp: any) => {
-          const versions = (exp.expense_amount_versions ?? [])
-            .map((v: any) => ({ amountCents: v.amount_cents, effectiveFrom: v.effective_from }))
-          const latest = [...versions].sort((a: any, b: any) => a.effectiveFrom > b.effectiveFrom ? -1 : 1)[0]
-          return {
-            id: exp.id, name: exp.name, frequency: exp.frequency,
-            anchorDate: exp.anchor_date, amountCents: latest?.amountCents ?? 0,
-            amountVersions: versions, mode: exp.mode ?? 'fixed',
-            endDate: exp.end_date ?? undefined,
-          }
-        })
-
-        const openCycles  = storedCycles.filter((c: any) => !c.is_closed)
-        const projectFrom = openCycles[0] ?? storedCycles[storedCycles.length - 1]
-
-        // Projected WITHOUT the card. This is the surplus baseline the
-        // affordability search measures against — feeding it a projection that
-        // already contains card payments would double-count them.
-        setCycles(projectCycles({
-          incomeSources: engineIncome,
-          expenses: engineExpenses,
-          openingBalanceCents: projectFrom?.opening_balance_cents ?? 0,
-          startDate: projectFrom?.start_date ?? todayStr(),
-          numCycles: 24,
-          safetyFloorCents: floorCents,
-        }))
+        // Projected WITHOUT the card: what each cycle closes with before any
+        // card payment. Feeding it a projection that already contains card
+        // payments would count them twice.
+        setCycles(projectFromRows(
+          { ...forecast, creditCard: null, creditOverrideRows: [] },
+          floorCents, FORECAST_CYCLES
+        ))
       } catch (e: any) { setError(e.message) }
       finally { setLoading(false) }
     }
@@ -222,68 +200,22 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
   }
 
   /* ── card exists ──────────────────────────────────────────────── */
-  const model: CreditAccountModel = {
-    aprBasisPoints:       card.apr_basis_points,
-    minPaymentPct:        Number(card.min_payment_pct),
-    minPaymentFloorCents: card.min_payment_floor_cents,
-    assumedSpendCents:    card.assumed_spend_cents,
-    paymentFrequency:     card.payment_frequency ?? 'per_cycle',
-  }
-  const measuredCents = card.current_balance_cents ?? 0
-
-  const cycleDays = cycles.length > 0
-    ? Math.round((parseDate(cycles[0].endDate).getTime() - parseDate(cycles[0].startDate).getTime()) / 86400000) + 1
-    : 14
-
-  // ── which cycles actually carry a minimum ─────────────────────────
-  // The payoff projection runs far beyond the cycles we have dates for, so
-  // work each cycle's window out arithmetically and ask the same recurrence
-  // code the engine uses. That keeps this page and the forecast in agreement
-  // instead of quietly disagreeing past the horizon.
+  const model = creditModelFrom(card)
+  const cycleDays = cycleDaysOf(cycles[0])
   const firstCycleStart = cycles[0]?.startDate ?? todayStr()
   const isMonthlyCard = (card.payment_frequency ?? 'per_cycle') === 'monthly'
     && !!card.payment_anchor_date
-
-  // `offset` is counted from the current cycle and may be negative, because
-  // catching up a stale balance walks through cycles that have already been.
-  const dueInCycleOffset = (offset: number): boolean => {
-    if (!isMonthlyCard) return true
-    const start = addDays(parseDate(firstCycleStart), offset * cycleDays)
-    const end   = addDays(start, cycleDays - 1)
-    return getOccurrencesInRange(
-      card.payment_anchor_date, 'monthly', formatDate(start), formatDate(end)
-    ).length > 0
-  }
-
-  // Forward from now.
-  const minimumDue = isMonthlyCard ? (i: number) => dueInCycleOffset(i) : undefined
+  // Which cycles carry a minimum, counted forward from the current one.
+  const minimumDue = buildMinimumDueSchedule(card, firstCycleStart, cycleDays)
 
   // ── keeping the balance current ───────────────────────────────────
-  // A measured balance is only true on the day it was taken. Work out how many
-  // cycles have passed since, then run the card forward that many cycles so the
-  // figure shown matches what the forecast is already using.
-  const elapsedCycles = card.balance_as_of && cycles[0]?.startDate
-    ? elapsedCyclesBetween(
-        parseDate(card.balance_as_of).getTime(),
-        parseDate(cycles[0].startDate).getTime(),
-        cycleDays
-      )
-    : 0
+  // A measured balance is only true on the day it was taken, so it is carried
+  // forward to the start of this cycle. Shared with the Cycle screen.
+  const drift = carriedCardBalance(card, firstCycleStart, cycleDays)
+  const balanceCents  = drift.balanceCents
+  const measuredCents = drift.measuredCents
+  const elapsedCycles = drift.elapsedCycles
 
-  // Catching up runs through PAST cycles, so step i here is
-  // (elapsedCycles - i) cycles before the current one — not cycle i ahead of it.
-  const minimumDueWhileCatchingUp = isMonthlyCard
-    ? (i: number) => dueInCycleOffset(i - elapsedCycles)
-    : undefined
-
-  const drift = projectBalanceForward(
-    measuredCents, model,
-    card.strategy_committed ? card.strategy_extra_cents : 0,
-    cycleDays, elapsedCycles, minimumDueWhileCatchingUp
-  )
-  const balanceCents = drift.balanceCents
-
-  // Surplus baseline, card excluded — see the projection call above.
   const surplusSeries = cycles.map(c => c.committedClosingBalanceCents)
 
   const extraCents = Math.max(0, Math.round(parseFloat(extraStr || '0') * 100))
@@ -295,10 +227,30 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
   const active = strategy === 'minimum' ? minProj : strategy === 'max' ? maxProj : extProj
   const activeExtra = strategy === 'minimum' ? 0 : strategy === 'max' ? maxExtraCents : extraCents
 
+  // ── what is committed, and does it still fit? ─────────────────────
+  // Committing stores the extra as a number. The forecast keeps moving, so
+  // the committed plan is checked against it every time this page loads.
+  const committed = !!card.strategy_committed
+  const committedExtra = card.strategy_extra_cents ?? 0
+  const isCurrentPlan = committed && activeExtra === committedExtra
+  const planCheck = committedPlanCheck(card, cycles, floorCents)
+  // The plan on screen, if it is not the committed one.
+  const previewBreach = isCurrentPlan
+    ? null
+    : firstFloorBreach(balanceCents, model, activeExtra, cycleDays, surplusSeries, floorCents, minimumDue)
+
+  function planDesc(extra: number): string {
+    return extra > 0 ? `minimum + ${fmt(extra, false)} a cycle` : 'minimum only'
+  }
   function payoffDateStr(proj: CreditProjection): string {
     if (proj.neverClears || proj.cyclesToPayoff === null) return 'never'
-    const d = addDays(parseDate(cycles[0]?.startDate ?? todayStr()), cycleDays * proj.cyclesToPayoff)
+    const d = addDays(parseDate(firstCycleStart), cycleDays * proj.cyclesToPayoff)
     return fmtDateLong(formatDate(d))
+  }
+  function payoffMonth(proj: CreditProjection): string {
+    if (proj.neverClears || proj.cyclesToPayoff === null) return 'never'
+    const d = addDays(parseDate(firstCycleStart), cycleDays * proj.cyclesToPayoff)
+    return d.toLocaleDateString('en-NZ', { month: 'short', year: 'numeric' })
   }
   function payoffLabel(proj: CreditProjection): string {
     if (proj.neverClears || proj.cyclesToPayoff === null) return 'balance grows — never paid off'
@@ -384,22 +336,316 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
     finally { setSaving(false) }
   }
 
-  /* payoff curve — minimum-only baseline against the selected strategy */
-  function chartPath(proj: CreditProjection, w: number, h: number, maxBal: number, maxLen: number) {
+  /* payoff curve — minimum-only baseline against the selected strategy.
+     Always CHART_CYCLES wide, so the scale never changes between strategies. */
+  function chartPath(proj: CreditProjection, w: number, h: number, maxBal: number, span: number) {
     const pts: string[] = []
-    const series = [balanceCents, ...proj.lines.map(l => l.closingBalanceCents)].slice(0, maxLen)
+    const series = [balanceCents, ...proj.lines.map(l => l.closingBalanceCents)].slice(0, span)
     series.forEach((b, i) => {
-      const x = (i / Math.max(maxLen - 1, 1)) * w
+      const x = (i / Math.max(span - 1, 1)) * w
       const y = h - (Math.max(b, 0) / maxBal) * h
       pts.push(`${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`)
     })
     return pts.join(' ')
   }
-  const chartLen = Math.min(
-    Math.max(minProj.lines.length, active.lines.length) + 1,
-    CHART_CYCLES
-  )
   const chartMax = Math.max(balanceCents, 1)
+  const interestSaved = Math.max(minProj.totalInterestCents - active.totalInterestCents, 0)
+  const thisCycle = active.lines[0]
+
+  /* ── the pieces, in reading order ─────────────────────────────── */
+
+  const balanceCard = (
+    <div className="credit-bal">
+      <div className="credit-bal-hdr">
+        <div className="credit-bal-title">{card.name} · balance</div>
+        <button className="credit-act" type="button"
+          onClick={() => { setBalStr(String(balanceCents / 100)); setBalOpen(true) }}>update →</button>
+      </div>
+      <div className="credit-bal-amt">{fmt(balanceCents, false)}</div>
+      <div className="credit-bal-sub">
+        {lastSnap
+          ? elapsedCycles > 0
+            ? <>Projected · last measured <b>{fmt(measuredCents, false)}</b> on {fmtDate(lastSnap.as_of_date)}</>
+            : <>Measured <b>{fmtDate(lastSnap.as_of_date)}</b>{card.assumed_spend_cents > 0 && <> · assuming {fmt(card.assumed_spend_cents, false)}/cycle new spend</>}</>
+          : <>No balance recorded yet</>}
+        {isStale && <span className="credit-stale">not measured this cycle</span>}
+      </div>
+
+      {elapsedCycles > 0 && (
+        <div className="credit-var">
+          Since {fmtDate(lastSnap.as_of_date)} this assumes {fmt(drift.interestCents, false)} interest
+          {drift.paidCents > 0 && <> and {fmt(drift.paidCents, false)} paid</>}
+          {drift.spentCents > 0 && <> and {fmt(drift.spentCents, false)} new spend</>}.
+          {' '}<b>Update it</b> to replace the estimate with a real figure.
+        </div>
+      )}
+
+      {varianceCents != null && (
+        <div className={`credit-var${Math.abs(varianceCents) < 100 ? ' match' : ''}`}>
+          {Math.abs(varianceCents) < 100
+            ? <>Your last measured balance matched what was predicted.</>
+            : <>
+                On {fmtDate(lastSnap.as_of_date)} this predicted <b>{fmt(projectedAtSnap!, false)}</b> and the real
+                balance was {fmt(lastSnap.balance_cents, false)} — {varianceCents > 0 ? 'more' : 'less'} owing
+                than expected by {fmt(Math.abs(varianceCents), false)}.
+                {varianceCents > 0 && card.assumed_spend_cents === 0 && <> Possibly new spending, which is currently assumed to be none.</>}
+              </>}
+        </div>
+      )}
+
+      <div className="credit-lines">
+        <div className="credit-line">
+          <div className="cl-dot" /><div className="cl-lbl">Minimum due this cycle</div>
+          <div className="cl-val bad">{fmt(minProj.lines[0]?.minimumCents ?? 0, false)}</div>
+        </div>
+        <div className="credit-line">
+          <div className="cl-dot" /><div className="cl-lbl">Interest this cycle</div>
+          <div className="cl-val">{fmt(minProj.lines[0]?.interestCents ?? 0, false)}</div>
+        </div>
+        <div className="credit-line">
+          <div className="cl-dot" style={{ background:'var(--mut)' }} />
+          <div className="cl-lbl">Assumed new spend</div>
+          <div className="cl-val">{card.assumed_spend_cents > 0 ? fmt(card.assumed_spend_cents, false) : 'none'}</div>
+        </div>
+      </div>
+
+      <div className="credit-meta">
+        <div className="cm-tx">
+          <div className="cm-l">Card terms</div>
+          <div className="cm-v">
+            {(card.apr_basis_points / 100).toFixed(2)}% p.a. · minimum {Number(card.min_payment_pct)}% monthly
+            {isMonthlyCard
+              ? <> · due {parseDate(card.payment_anchor_date).getDate()}{'th'} of the month</>
+              : <> · paid every cycle</>}
+          </div>
+        </div>
+        <button className="credit-act" type="button" onClick={openSettings}>edit →</button>
+      </div>
+    </div>
+  )
+
+  // Pinned: the answer for whichever strategy is on screen. Fixed size, so
+  // picking a different strategy changes the numbers, never the layout.
+  const results = (
+    <div className="credit-results">
+      <div className="credit-res">
+        <div className="l">Debt free</div>
+        <div className="v">{payoffMonth(active)}</div>
+        <div className="d">minimum only: {payoffMonth(minProj)}</div>
+      </div>
+      <div className="credit-res">
+        <div className="l">Interest</div>
+        <div className="v">{active.neverClears ? '—' : fmt(active.totalInterestCents, false)}</div>
+        <div className="d">{interestSaved > 0 ? `${fmt(interestSaved, false)} less than minimum` : 'same as minimum'}</div>
+      </div>
+      <div className="credit-res">
+        <div className="l">This cycle</div>
+        <div className="v">{fmt(thisCycle?.paymentCents ?? 0, false)}</div>
+        <div className="d">{isCurrentPlan ? 'your plan' : committed ? 'if you recommit' : 'if you commit'}</div>
+      </div>
+    </div>
+  )
+
+  const chart = (
+    <div className="credit-chart-wrap">
+      <div className="credit-chart-k">
+        <span>Balance to zero · {CHART_CYCLES} cycles</span>
+        <span>{active.neverClears ? 'balance grows' : payoffLabel(active)}</span>
+      </div>
+      <div className="credit-chart">
+        <svg viewBox="0 0 320 74" preserveAspectRatio="none">
+          <line x1="0" y1="74" x2="320" y2="74" stroke="var(--groundln)" strokeWidth="1" />
+          <path className="base-ln"  d={chartPath(minProj, 320, 74, chartMax, CHART_CYCLES)} />
+          <path className="strat-ln" d={chartPath(active,  320, 74, chartMax, CHART_CYCLES)} />
+          {!active.neverClears && active.cyclesToPayoff !== null && active.cyclesToPayoff < CHART_CYCLES && (
+            <circle className="zero-dot" r="3.5" cy="74"
+              cx={(active.cyclesToPayoff / Math.max(CHART_CYCLES - 1, 1)) * 320} />
+          )}
+        </svg>
+      </div>
+      <div className="credit-chart-legend">
+        <div className="cll"><div className="swatch" style={{ background:'var(--line)' }} />minimum only</div>
+        <div className="cll"><div className="swatch" style={{ background:'var(--credit)' }} />this strategy</div>
+      </div>
+    </div>
+  )
+
+  // Always the same height whichever strategy is picked — the slider used to
+  // appear and disappear here, which is what made the page jump.
+  const optionBody = (
+    <div className={`credit-optbody${active.neverClears ? ' bad' : ''}`}>
+      {active.neverClears ? (
+        <>At {fmt(card.assumed_spend_cents, false)} of new spend a cycle, this payment never gets ahead
+          of interest — <b>the balance grows and the card never clears</b>.</>
+      ) : strategy === 'extra' ? (
+        <div className="credit-slider">
+          <div className="credit-slider-top">
+            <span className="l">Extra per cycle</span>
+            <span className="v">{fmt(extraCents, false)}</span>
+          </div>
+          <input type="range" min={0} max={Math.max(maxExtraCents, 100)} step={500}
+            value={Math.min(extraCents, Math.max(maxExtraCents, 100))}
+            onChange={e => setExtraStr(String(parseInt(e.target.value, 10) / 100))} />
+          <div className="credit-slider-ends">
+            <span>$0</span>
+            <span>{fmt(maxExtraCents, false)} · max that fits</span>
+          </div>
+        </div>
+      ) : strategy === 'max' ? (
+        <>The most you can pay <b>every</b> cycle without any cycle closing under
+          your {fmt(floorCents, false)} floor: {fmt(maxExtraCents, false)} on top of the minimum. Saved as
+          that amount when you commit — you'll be told if it stops fitting.</>
+      ) : (
+        <>Only what the card agreement asks. Clears {payoffDateStr(minProj)} and costs
+          {' '}<b>{fmt(minProj.totalInterestCents, false)}</b> in interest
+          — {Math.round(minProj.totalInterestCents / Math.max(balanceCents, 1) * 100)}% of what you owe.</>
+      )}
+    </div>
+  )
+
+  const strategyPicker = (
+    <>
+      <div className="section-hdr sh-crd">
+        <span className="sh-label">Payoff strategy</span>
+        <span className="sh-total">{payoffDateStr(active)}</span>
+      </div>
+
+      {floorCents === 0 && (
+        <div className="skipnote" style={{ margin:'8px 16px 0' }}>
+          Your safety floor is <b>$0</b>, so "max available" means draining every cycle to nothing.
+          Set a floor in Settings before treating that number as a plan.
+        </div>
+      )}
+
+      <div style={{ padding:'8px 16px 0' }}>
+        <div className={`modeopt${strategy === 'minimum' ? ' sel' : ''}`} onClick={() => setStrategy('minimum')}>
+          <div className="mi" style={{ background:'var(--floor-s)', color:'var(--floor)' }}>!</div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div className="mt">Minimum only</div>
+            <div className="ms">{payoffLabel(minProj)} · {fmt(minProj.totalInterestCents, false)} interest</div>
+          </div>
+          <div className="strat-amt">{fmt(minProj.lines[0]?.minimumCents ?? 0, false)}<small>falling</small></div>
+        </div>
+
+        <div className={`modeopt${strategy === 'extra' ? ' sel' : ''}`} onClick={() => setStrategy('extra')}>
+          <div className="mi" style={{ background:'var(--credit-s)', color:'var(--credit)' }}>+</div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div className="mt">Minimum + extra</div>
+            <div className="ms">{payoffLabel(extProj)} · {fmt(extProj.totalInterestCents, false)} interest</div>
+          </div>
+          <div className="strat-amt">{fmt((extProj.lines[0]?.paymentCents ?? 0), false)}<small>min + {fmt(extraCents, false)}</small></div>
+        </div>
+
+        <div className={`modeopt${strategy === 'max' ? ' sel' : ''}`} onClick={() => setStrategy('max')}>
+          <div className="mi" style={{ background:'var(--pos-s)', color:'var(--pos)' }}>▲</div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div className="mt">Max available</div>
+            <div className="ms">{payoffLabel(maxProj)} · {fmt(maxProj.totalInterestCents, false)} interest</div>
+          </div>
+          <div className="strat-amt">{fmt((maxProj.lines[0]?.paymentCents ?? 0), false)}<small>min + {fmt(maxExtraCents, false)}</small></div>
+        </div>
+      </div>
+
+      {optionBody}
+    </>
+  )
+
+  // Commit stays explicit: picking a strategy only previews it. When the
+  // committed plan has stopped fitting the forecast, this is where it says so.
+  const commitBlock = (
+    <div className="credit-commit">
+      {committed && planCheck?.breach && (
+        <div className="pay-note bad credit-fitnote">
+          <b>Your plan no longer fits.</b>{' '}
+          {planCheck.minimumAloneBreaks
+            ? <>Even the minimum alone takes the cycle starting {fmtDate(planCheck.breach.startDate)} under
+                your {fmt(floorCents, false)} floor — your forecast is tight there before the card.</>
+            : <>Since you committed ({planDesc(committedExtra)}), your forecast has changed: the cycle
+                starting {fmtDate(planCheck.breach.startDate)} would close at {fmt(planCheck.breach.closingCents, false)},
+                under your {fmt(floorCents, false)} floor. Up to {fmt(planCheck.maxExtraCents, false)} extra a cycle fits now.</>}
+        </div>
+      )}
+
+      {isCurrentPlan ? (
+        <>
+          <div className="credit-plan">
+            <span>✓ This is your plan</span>
+            <button className="credit-act" type="button" style={{ color:'var(--floor)' }}
+              onClick={doUncommit} disabled={saving}>uncommit</button>
+          </div>
+          <div className="credit-subact">
+            {planDesc(committedExtra)}
+            {!planCheck?.breach && planCheck && planCheck.maxExtraCents >= committedExtra + 5000
+              && <> · up to {fmt(planCheck.maxExtraCents, false)} extra would still fit</>}
+          </div>
+        </>
+      ) : (
+        <>
+          <button className="credit-btn" onClick={doCommit} disabled={saving}>
+            {saving ? 'Saving…' : `${committed ? 'Recommit' : 'Commit'}: ${planDesc(activeExtra)} →`}
+          </button>
+          <div className="credit-subact">
+            {previewBreach
+              ? <span style={{ color:'var(--floor)' }}>
+                  Careful: the cycle starting {cycles[previewBreach.index] ? fmtDate(cycles[previewBreach.index].startDate) : '—'} would
+                  close at {fmt(previewBreach.closingCents, false)}, under your floor.
+                </span>
+              : committed
+                ? <>currently committed: {planDesc(committedExtra)}</>
+                : active.neverClears
+                  ? 'adds a credit line to every cycle — balance still grows'
+                  : `adds a credit line to the next ${active.cyclesToPayoff} cycles, ending ${payoffDateStr(active)}`}
+          </div>
+        </>
+      )}
+    </div>
+  )
+
+  const cyclesAhead = (
+    <>
+      <div className="section-hdr sh-crd">
+        <span className="sh-label">Cycles ahead</span>
+        <span className="sh-total">
+          −{fmt(active.lines.slice(0, CYCLES_AHEAD).reduce((s, l) => s + l.paymentCents, 0), false)}
+        </span>
+      </div>
+      <div className="credit-subact" style={{ textAlign:'left', padding:'0 18px 2px' }}>
+        derived each cycle from the balance — not stored expenses
+      </div>
+
+      <div className="cards">
+        {active.lines.slice(0, CYCLES_AHEAD).map((line, i) => {
+          const pct = balanceCents > 0
+            ? Math.min(100, Math.max(0, Math.round((1 - line.closingBalanceCents / balanceCents) * 100)))
+            : 0
+          const start = cycles[i]?.startDate
+          return (
+            <div key={i} className="card">
+              <div className="ic crd">▭</div>
+              <div className="tx">
+                <div className="nm">
+                  Credit payments
+                  <span className="chip drv">derived</span>
+                  {!isCurrentPlan && <span className="chip bl">preview</span>}
+                </div>
+                <div className="dt">
+                  {start ? fmtDate(start) : `cycle ${i + 1}`} · min {fmt(line.minimumCents, false)}
+                  {line.extraCents > 0 && <> + extra {fmt(line.extraCents, false)}</>}
+                  {' · '}{fmt(line.closingBalanceCents, false)} left
+                </div>
+                <div className="act-row">
+                  <div className="exp-prog" style={{ flex:1, marginTop:0 }}>
+                    <div className="fill" style={{ width: pct + '%', background:'var(--credit)' }} />
+                  </div>
+                </div>
+              </div>
+              <div className="vl">−{fmt(line.paymentCents, false)}</div>
+            </div>
+          )
+        })}
+      </div>
+    </>
+  )
 
   return (
     <>
@@ -410,478 +656,15 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
           <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontWeight:600, fontSize:22, letterSpacing:'-.02em', marginTop:4 }}>What you owe, and the way out</div>
         </div>
 
+        {/* Desktop: what you owe and how fast it falls on the left; the choice
+            on the right. The phone reads the same pieces top to bottom. */}
         {isDesktop ? (
           <div className="dcr">
-            <div className="dcr-col">
-        {/* ── balance ── */}
-        <div className="credit-bal">
-          <div className="credit-bal-hdr">
-            <div className="credit-bal-title">{card.name} · balance</div>
-            <button className="credit-act" type="button"
-              onClick={() => { setBalStr(String(balanceCents / 100)); setBalOpen(true) }}>update →</button>
-          </div>
-          <div className="credit-bal-amt">{fmt(balanceCents, false)}</div>
-          <div className="credit-bal-sub">
-            {lastSnap
-              ? elapsedCycles > 0
-                ? <>Projected · last measured <b>{fmt(measuredCents, false)}</b> on {fmtDate(lastSnap.as_of_date)}</>
-                : <>Measured <b>{fmtDate(lastSnap.as_of_date)}</b>{card.assumed_spend_cents > 0 && <> · assuming {fmt(card.assumed_spend_cents, false)}/cycle new spend</>}</>
-              : <>No balance recorded yet</>}
-            {isStale && <span className="credit-stale">not measured this cycle</span>}
-          </div>
-
-          {elapsedCycles > 0 && (
-            <div className="credit-var">
-              Since {fmtDate(lastSnap.as_of_date)} this assumes {fmt(drift.interestCents, false)} interest
-              {drift.paidCents > 0 && <> and {fmt(drift.paidCents, false)} paid</>}
-              {drift.spentCents > 0 && <> and {fmt(drift.spentCents, false)} new spend</>}.
-              {' '}<b>Update it</b> to replace the estimate with a real figure.
-            </div>
-          )}
-
-          {varianceCents != null && (
-            <div className={`credit-var${Math.abs(varianceCents) < 100 ? ' match' : ''}`}>
-              {Math.abs(varianceCents) < 100
-                ? <>Your last measured balance matched what was predicted.</>
-                : <>
-                    On {fmtDate(lastSnap.as_of_date)} this predicted <b>{fmt(projectedAtSnap!, false)}</b> and the real
-                    balance was {fmt(lastSnap.balance_cents, false)} — {varianceCents > 0 ? 'more' : 'less'} owing
-                    than expected by {fmt(Math.abs(varianceCents), false)}.
-                    {varianceCents > 0 && card.assumed_spend_cents === 0 && <> Possibly new spending, which is currently assumed to be none.</>}
-                  </>}
-            </div>
-          )}
-
-          <div className="credit-lines">
-            <div className="credit-line">
-              <div className="cl-dot" /><div className="cl-lbl">Minimum due this cycle</div>
-              <div className="cl-val bad">{fmt(minProj.lines[0]?.minimumCents ?? 0, false)}</div>
-            </div>
-            <div className="credit-line">
-              <div className="cl-dot" /><div className="cl-lbl">Interest this cycle</div>
-              <div className="cl-val">{fmt(minProj.lines[0]?.interestCents ?? 0, false)}</div>
-            </div>
-            <div className="credit-line">
-              <div className="cl-dot" style={{ background:'var(--mut)' }} />
-              <div className="cl-lbl">Assumed new spend</div>
-              <div className="cl-val">{card.assumed_spend_cents > 0 ? fmt(card.assumed_spend_cents, false) : 'none'}</div>
-            </div>
-          </div>
-
-          <div className="credit-meta">
-            <div className="cm-tx">
-              <div className="cm-l">Card terms</div>
-              <div className="cm-v">
-                {(card.apr_basis_points / 100).toFixed(2)}% p.a. · minimum {Number(card.min_payment_pct)}% monthly
-                {isMonthlyCard
-                  ? <> · due {parseDate(card.payment_anchor_date).getDate()}{'th'} of the month</>
-                  : <> · paid every cycle</>}
-              </div>
-            </div>
-            <button className="credit-act" type="button" onClick={openSettings}>edit →</button>
-          </div>
-        </div>
-
-        {/* ── payoff curve ── */}
-        <div className="credit-chart-wrap">
-          <div className="credit-chart-k">
-            <span>Balance to zero</span>
-            <span>{active.neverClears ? 'balance grows' : `${fmt(active.totalInterestCents, false)} interest`}</span>
-          </div>
-          <div className="credit-chart">
-            <svg viewBox="0 0 320 74" preserveAspectRatio="none">
-              <line x1="0" y1="74" x2="320" y2="74" stroke="var(--groundln)" strokeWidth="1" />
-              <path className="base-ln"  d={chartPath(minProj, 320, 74, chartMax, chartLen)} />
-              <path className="strat-ln" d={chartPath(active,  320, 74, chartMax, chartLen)} />
-              {!active.neverClears && active.cyclesToPayoff !== null && active.cyclesToPayoff < chartLen && (
-                <circle className="zero-dot" r="3.5" cy="74"
-                  cx={(active.cyclesToPayoff / Math.max(chartLen - 1, 1)) * 320} />
-              )}
-            </svg>
-          </div>
-          <div className="credit-chart-legend">
-            <div className="cll"><div className="swatch" style={{ background:'var(--line)' }} />minimum only</div>
-            <div className="cll"><div className="swatch" style={{ background:'var(--credit)' }} />this strategy</div>
-          </div>
-        </div>
-
-        {active.neverClears ? (
-          <div className="skipnote" style={{ margin:'12px 16px 0', borderLeft:'2px solid var(--floor)', color:'var(--floor)' }}>
-            At {fmt(card.assumed_spend_cents, false)} of new spend a cycle, this payment never gets
-            ahead of interest — <b>the balance grows and the card never clears</b>. You can still
-            commit it, but nothing here pays it off.
+            <div className="dcr-col">{balanceCard}{results}{chart}</div>
+            <div className="dcr-col">{strategyPicker}{commitBlock}{cyclesAhead}</div>
           </div>
         ) : (
-          <div className="skipnote" style={{ margin:'12px 16px 0' }}>
-            {strategy === 'minimum'
-              ? <>Minimum only runs to <b>{payoffDateStr(minProj)}</b> and costs {fmt(minProj.totalInterestCents, false)} in interest — {Math.round(minProj.totalInterestCents / Math.max(balanceCents, 1) * 100)}% of what you owe.</>
-              : <>Clears <b>{Math.max((minProj.cyclesToPayoff ?? 0) - (active.cyclesToPayoff ?? 0), 0)} cycles sooner</b> than the minimum and saves {fmt(Math.max(minProj.totalInterestCents - active.totalInterestCents, 0), false)} in interest.</>}
-          </div>
-        )}
-
-            </div>
-            <div className="dcr-col">
-        {/* ── strategy ── */}
-        <div className="section-hdr sh-crd">
-          <span className="sh-label">Payoff strategy</span>
-          <span className="sh-total">{payoffDateStr(active)}</span>
-        </div>
-
-        <div style={{ padding:'8px 16px 0' }}>
-          <div className={`modeopt${strategy === 'minimum' ? ' sel' : ''}`} onClick={() => setStrategy('minimum')}>
-            <div className="mi" style={{ background:'var(--floor-s)', color:'var(--floor)' }}>!</div>
-            <div style={{ flex:1, minWidth:0 }}>
-              <div className="mt">Minimum only</div>
-              <div className="ms">{payoffLabel(minProj)} · {fmt(minProj.totalInterestCents, false)} interest</div>
-            </div>
-            <div className="strat-amt">{fmt(minProj.lines[0]?.minimumCents ?? 0, false)}<small>falling</small></div>
-          </div>
-
-          <div className={`modeopt${strategy === 'extra' ? ' sel' : ''}`} onClick={() => setStrategy('extra')}>
-            <div className="mi" style={{ background:'var(--credit-s)', color:'var(--credit)' }}>+</div>
-            <div style={{ flex:1, minWidth:0 }}>
-              <div className="mt">Minimum + extra</div>
-              <div className="ms">{payoffLabel(extProj)} · {fmt(extProj.totalInterestCents, false)} interest</div>
-            </div>
-            <div className="strat-amt">{fmt((extProj.lines[0]?.paymentCents ?? 0), false)}<small>min + {fmt(extraCents, false)}</small></div>
-          </div>
-
-          <div className={`modeopt${strategy === 'max' ? ' sel' : ''}`} onClick={() => setStrategy('max')}>
-            <div className="mi" style={{ background:'var(--pos-s)', color:'var(--pos)' }}>▲</div>
-            <div style={{ flex:1, minWidth:0 }}>
-              <div className="mt">Max available</div>
-              <div className="ms">{payoffLabel(maxProj)} · {fmt(maxProj.totalInterestCents, false)} interest</div>
-            </div>
-            <div className="strat-amt">{fmt((maxProj.lines[0]?.paymentCents ?? 0), false)}<small>min + {fmt(maxExtraCents, false)}</small></div>
-          </div>
-        </div>
-
-        {strategy === 'extra' && (
-          <div className="credit-slider">
-            <div className="credit-slider-top">
-              <span className="l">Extra per cycle</span>
-              <span className="v">{fmt(extraCents, false)}</span>
-            </div>
-            <input type="range" min={0} max={Math.max(maxExtraCents, 100)} step={500}
-              value={Math.min(extraCents, Math.max(maxExtraCents, 100))}
-              onChange={e => setExtraStr(String(parseInt(e.target.value, 10) / 100))} />
-            <div className="credit-slider-ends">
-              <span>$0</span>
-              <span>{fmt(maxExtraCents, false)} · max available</span>
-            </div>
-          </div>
-        )}
-
-        {floorCents === 0 && (
-          <div className="skipnote" style={{ margin:'12px 16px 0' }}>
-            Your safety floor is <b>$0</b>, so "max available" means draining every cycle to nothing.
-            Set a floor in Settings before treating that number as a plan.
-          </div>
-        )}
-
-        {card.strategy_committed ? (
-          <>
-            <button className="credit-btn" onClick={doCommit} disabled={saving}>
-              {saving ? 'Updating…' : 'Update committed strategy →'}
-            </button>
-            <div className="credit-subact">
-              committed {fmt(card.strategy_extra_cents, false)}/cycle extra ·{' '}
-              <button className="credit-act" type="button"
-                style={{ color:'var(--floor)' }} onClick={doUncommit}>uncommit</button>
-            </div>
-          </>
-        ) : (
-          <>
-            <button className="credit-btn" onClick={doCommit} disabled={saving}>
-              {saving ? 'Committing…' : 'Commit strategy →'}
-            </button>
-            <div className="credit-subact">
-              {active.neverClears
-                ? 'adds a credit line to every cycle — balance still grows'
-                : `adds a credit line to the next ${active.cyclesToPayoff} cycles, ending ${payoffDateStr(active)}`}
-            </div>
-          </>
-        )}
-
-        {/* ── cycles ahead ── */}
-        <div className="section-hdr sh-crd">
-          <span className="sh-label">Cycles ahead</span>
-          <span className="sh-total">
-            −{fmt(active.lines.slice(0, CYCLES_AHEAD).reduce((s, l) => s + l.paymentCents, 0), false)}
-          </span>
-        </div>
-        <div className="credit-subact" style={{ textAlign:'left', padding:'0 18px 2px' }}>
-          derived each cycle from the balance — not stored expenses
-        </div>
-
-        <div className="cards">
-          {active.lines.slice(0, CYCLES_AHEAD).map((line, i) => {
-            const pct = balanceCents > 0
-              ? Math.min(100, Math.max(0, Math.round((1 - line.closingBalanceCents / balanceCents) * 100)))
-              : 0
-            const start = cycles[i]?.startDate
-            return (
-              <div key={i} className="card">
-                <div className="ic crd">▭</div>
-                <div className="tx">
-                  <div className="nm">
-                    Credit payments
-                    <span className="chip drv">derived</span>
-                    {!card.strategy_committed && <span className="chip bl">not committed</span>}
-                  </div>
-                  <div className="dt">
-                    {start ? fmtDate(start) : `cycle ${i + 1}`} · min {fmt(line.minimumCents, false)}
-                    {line.extraCents > 0 && <> + extra {fmt(line.extraCents, false)}</>}
-                    {' · '}{fmt(line.closingBalanceCents, false)} left
-                  </div>
-                  <div className="act-row">
-                    <div className="exp-prog" style={{ flex:1, marginTop:0 }}>
-                      <div className="fill" style={{ width: pct + '%', background:'var(--credit)' }} />
-                    </div>
-                  </div>
-                </div>
-                <div className="vl">−{fmt(line.paymentCents, false)}</div>
-              </div>
-            )
-          })}
-        </div>
-
-            </div>
-          </div>
-        ) : (
-          <>
-        {/* ── balance ── */}
-        <div className="credit-bal">
-          <div className="credit-bal-hdr">
-            <div className="credit-bal-title">{card.name} · balance</div>
-            <button className="credit-act" type="button"
-              onClick={() => { setBalStr(String(balanceCents / 100)); setBalOpen(true) }}>update →</button>
-          </div>
-          <div className="credit-bal-amt">{fmt(balanceCents, false)}</div>
-          <div className="credit-bal-sub">
-            {lastSnap
-              ? elapsedCycles > 0
-                ? <>Projected · last measured <b>{fmt(measuredCents, false)}</b> on {fmtDate(lastSnap.as_of_date)}</>
-                : <>Measured <b>{fmtDate(lastSnap.as_of_date)}</b>{card.assumed_spend_cents > 0 && <> · assuming {fmt(card.assumed_spend_cents, false)}/cycle new spend</>}</>
-              : <>No balance recorded yet</>}
-            {isStale && <span className="credit-stale">not measured this cycle</span>}
-          </div>
-
-          {elapsedCycles > 0 && (
-            <div className="credit-var">
-              Since {fmtDate(lastSnap.as_of_date)} this assumes {fmt(drift.interestCents, false)} interest
-              {drift.paidCents > 0 && <> and {fmt(drift.paidCents, false)} paid</>}
-              {drift.spentCents > 0 && <> and {fmt(drift.spentCents, false)} new spend</>}.
-              {' '}<b>Update it</b> to replace the estimate with a real figure.
-            </div>
-          )}
-
-          {varianceCents != null && (
-            <div className={`credit-var${Math.abs(varianceCents) < 100 ? ' match' : ''}`}>
-              {Math.abs(varianceCents) < 100
-                ? <>Your last measured balance matched what was predicted.</>
-                : <>
-                    On {fmtDate(lastSnap.as_of_date)} this predicted <b>{fmt(projectedAtSnap!, false)}</b> and the real
-                    balance was {fmt(lastSnap.balance_cents, false)} — {varianceCents > 0 ? 'more' : 'less'} owing
-                    than expected by {fmt(Math.abs(varianceCents), false)}.
-                    {varianceCents > 0 && card.assumed_spend_cents === 0 && <> Possibly new spending, which is currently assumed to be none.</>}
-                  </>}
-            </div>
-          )}
-
-          <div className="credit-lines">
-            <div className="credit-line">
-              <div className="cl-dot" /><div className="cl-lbl">Minimum due this cycle</div>
-              <div className="cl-val bad">{fmt(minProj.lines[0]?.minimumCents ?? 0, false)}</div>
-            </div>
-            <div className="credit-line">
-              <div className="cl-dot" /><div className="cl-lbl">Interest this cycle</div>
-              <div className="cl-val">{fmt(minProj.lines[0]?.interestCents ?? 0, false)}</div>
-            </div>
-            <div className="credit-line">
-              <div className="cl-dot" style={{ background:'var(--mut)' }} />
-              <div className="cl-lbl">Assumed new spend</div>
-              <div className="cl-val">{card.assumed_spend_cents > 0 ? fmt(card.assumed_spend_cents, false) : 'none'}</div>
-            </div>
-          </div>
-
-          <div className="credit-meta">
-            <div className="cm-tx">
-              <div className="cm-l">Card terms</div>
-              <div className="cm-v">
-                {(card.apr_basis_points / 100).toFixed(2)}% p.a. · minimum {Number(card.min_payment_pct)}% monthly
-                {isMonthlyCard
-                  ? <> · due {parseDate(card.payment_anchor_date).getDate()}{'th'} of the month</>
-                  : <> · paid every cycle</>}
-              </div>
-            </div>
-            <button className="credit-act" type="button" onClick={openSettings}>edit →</button>
-          </div>
-        </div>
-
-        {/* ── strategy ── */}
-        <div className="section-hdr sh-crd">
-          <span className="sh-label">Payoff strategy</span>
-          <span className="sh-total">{payoffDateStr(active)}</span>
-        </div>
-
-        <div style={{ padding:'8px 16px 0' }}>
-          <div className={`modeopt${strategy === 'minimum' ? ' sel' : ''}`} onClick={() => setStrategy('minimum')}>
-            <div className="mi" style={{ background:'var(--floor-s)', color:'var(--floor)' }}>!</div>
-            <div style={{ flex:1, minWidth:0 }}>
-              <div className="mt">Minimum only</div>
-              <div className="ms">{payoffLabel(minProj)} · {fmt(minProj.totalInterestCents, false)} interest</div>
-            </div>
-            <div className="strat-amt">{fmt(minProj.lines[0]?.minimumCents ?? 0, false)}<small>falling</small></div>
-          </div>
-
-          <div className={`modeopt${strategy === 'extra' ? ' sel' : ''}`} onClick={() => setStrategy('extra')}>
-            <div className="mi" style={{ background:'var(--credit-s)', color:'var(--credit)' }}>+</div>
-            <div style={{ flex:1, minWidth:0 }}>
-              <div className="mt">Minimum + extra</div>
-              <div className="ms">{payoffLabel(extProj)} · {fmt(extProj.totalInterestCents, false)} interest</div>
-            </div>
-            <div className="strat-amt">{fmt((extProj.lines[0]?.paymentCents ?? 0), false)}<small>min + {fmt(extraCents, false)}</small></div>
-          </div>
-
-          <div className={`modeopt${strategy === 'max' ? ' sel' : ''}`} onClick={() => setStrategy('max')}>
-            <div className="mi" style={{ background:'var(--pos-s)', color:'var(--pos)' }}>▲</div>
-            <div style={{ flex:1, minWidth:0 }}>
-              <div className="mt">Max available</div>
-              <div className="ms">{payoffLabel(maxProj)} · {fmt(maxProj.totalInterestCents, false)} interest</div>
-            </div>
-            <div className="strat-amt">{fmt((maxProj.lines[0]?.paymentCents ?? 0), false)}<small>min + {fmt(maxExtraCents, false)}</small></div>
-          </div>
-        </div>
-
-        {strategy === 'extra' && (
-          <div className="credit-slider">
-            <div className="credit-slider-top">
-              <span className="l">Extra per cycle</span>
-              <span className="v">{fmt(extraCents, false)}</span>
-            </div>
-            <input type="range" min={0} max={Math.max(maxExtraCents, 100)} step={500}
-              value={Math.min(extraCents, Math.max(maxExtraCents, 100))}
-              onChange={e => setExtraStr(String(parseInt(e.target.value, 10) / 100))} />
-            <div className="credit-slider-ends">
-              <span>$0</span>
-              <span>{fmt(maxExtraCents, false)} · max available</span>
-            </div>
-          </div>
-        )}
-
-        {floorCents === 0 && (
-          <div className="skipnote" style={{ margin:'12px 16px 0' }}>
-            Your safety floor is <b>$0</b>, so "max available" means draining every cycle to nothing.
-            Set a floor in Settings before treating that number as a plan.
-          </div>
-        )}
-
-        {/* ── payoff curve ── */}
-        <div className="credit-chart-wrap">
-          <div className="credit-chart-k">
-            <span>Balance to zero</span>
-            <span>{active.neverClears ? 'balance grows' : `${fmt(active.totalInterestCents, false)} interest`}</span>
-          </div>
-          <div className="credit-chart">
-            <svg viewBox="0 0 320 74" preserveAspectRatio="none">
-              <line x1="0" y1="74" x2="320" y2="74" stroke="var(--groundln)" strokeWidth="1" />
-              <path className="base-ln"  d={chartPath(minProj, 320, 74, chartMax, chartLen)} />
-              <path className="strat-ln" d={chartPath(active,  320, 74, chartMax, chartLen)} />
-              {!active.neverClears && active.cyclesToPayoff !== null && active.cyclesToPayoff < chartLen && (
-                <circle className="zero-dot" r="3.5" cy="74"
-                  cx={(active.cyclesToPayoff / Math.max(chartLen - 1, 1)) * 320} />
-              )}
-            </svg>
-          </div>
-          <div className="credit-chart-legend">
-            <div className="cll"><div className="swatch" style={{ background:'var(--line)' }} />minimum only</div>
-            <div className="cll"><div className="swatch" style={{ background:'var(--credit)' }} />this strategy</div>
-          </div>
-        </div>
-
-        {active.neverClears ? (
-          <div className="skipnote" style={{ margin:'12px 16px 0', borderLeft:'2px solid var(--floor)', color:'var(--floor)' }}>
-            At {fmt(card.assumed_spend_cents, false)} of new spend a cycle, this payment never gets
-            ahead of interest — <b>the balance grows and the card never clears</b>. You can still
-            commit it, but nothing here pays it off.
-          </div>
-        ) : (
-          <div className="skipnote" style={{ margin:'12px 16px 0' }}>
-            {strategy === 'minimum'
-              ? <>Minimum only runs to <b>{payoffDateStr(minProj)}</b> and costs {fmt(minProj.totalInterestCents, false)} in interest — {Math.round(minProj.totalInterestCents / Math.max(balanceCents, 1) * 100)}% of what you owe.</>
-              : <>Clears <b>{Math.max((minProj.cyclesToPayoff ?? 0) - (active.cyclesToPayoff ?? 0), 0)} cycles sooner</b> than the minimum and saves {fmt(Math.max(minProj.totalInterestCents - active.totalInterestCents, 0), false)} in interest.</>}
-          </div>
-        )}
-
-        {card.strategy_committed ? (
-          <>
-            <button className="credit-btn" onClick={doCommit} disabled={saving}>
-              {saving ? 'Updating…' : 'Update committed strategy →'}
-            </button>
-            <div className="credit-subact">
-              committed {fmt(card.strategy_extra_cents, false)}/cycle extra ·{' '}
-              <button className="credit-act" type="button"
-                style={{ color:'var(--floor)' }} onClick={doUncommit}>uncommit</button>
-            </div>
-          </>
-        ) : (
-          <>
-            <button className="credit-btn" onClick={doCommit} disabled={saving}>
-              {saving ? 'Committing…' : 'Commit strategy →'}
-            </button>
-            <div className="credit-subact">
-              {active.neverClears
-                ? 'adds a credit line to every cycle — balance still grows'
-                : `adds a credit line to the next ${active.cyclesToPayoff} cycles, ending ${payoffDateStr(active)}`}
-            </div>
-          </>
-        )}
-
-        {/* ── cycles ahead ── */}
-        <div className="section-hdr sh-crd">
-          <span className="sh-label">Cycles ahead</span>
-          <span className="sh-total">
-            −{fmt(active.lines.slice(0, CYCLES_AHEAD).reduce((s, l) => s + l.paymentCents, 0), false)}
-          </span>
-        </div>
-        <div className="credit-subact" style={{ textAlign:'left', padding:'0 18px 2px' }}>
-          derived each cycle from the balance — not stored expenses
-        </div>
-
-        <div className="cards">
-          {active.lines.slice(0, CYCLES_AHEAD).map((line, i) => {
-            const pct = balanceCents > 0
-              ? Math.min(100, Math.max(0, Math.round((1 - line.closingBalanceCents / balanceCents) * 100)))
-              : 0
-            const start = cycles[i]?.startDate
-            return (
-              <div key={i} className="card">
-                <div className="ic crd">▭</div>
-                <div className="tx">
-                  <div className="nm">
-                    Credit payments
-                    <span className="chip drv">derived</span>
-                    {!card.strategy_committed && <span className="chip bl">not committed</span>}
-                  </div>
-                  <div className="dt">
-                    {start ? fmtDate(start) : `cycle ${i + 1}`} · min {fmt(line.minimumCents, false)}
-                    {line.extraCents > 0 && <> + extra {fmt(line.extraCents, false)}</>}
-                    {' · '}{fmt(line.closingBalanceCents, false)} left
-                  </div>
-                  <div className="act-row">
-                    <div className="exp-prog" style={{ flex:1, marginTop:0 }}>
-                      <div className="fill" style={{ width: pct + '%', background:'var(--credit)' }} />
-                    </div>
-                  </div>
-                </div>
-                <div className="vl">−{fmt(line.paymentCents, false)}</div>
-              </div>
-            )
-          })}
-        </div>
-
-          </>
+          <>{balanceCard}{results}{chart}{strategyPicker}{commitBlock}{cyclesAhead}</>
         )}
 
         <div style={{ height:24 }} />
