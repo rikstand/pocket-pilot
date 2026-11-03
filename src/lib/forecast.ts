@@ -24,13 +24,14 @@
 import {
   getIncomeSources, getExpenses, getCycles, getCreditAccount, getCreditExtraOverrides,
   getBudgetSpendEntries, getSavingsGoals, getAllSavingsContributions, getAllSavingsOverrides,
-  getAllExpenseOverrides,
+  getAllExpenseOverrides, getCreditCyclePayments,
 } from './repository'
 import { projectCycles } from '../engine/index'
 import type {
   CycleResult, IncomeSource, Expense, CreditAccount, CreditExtraOverride,
-  BudgetSpendEntry, ExpenseOverride, SavingsGoal,
+  BudgetSpendEntry, ExpenseOverride, SavingsGoal, CreditPayment,
 } from '../engine/types'
+import { carriedCardBalance, confirmedPaymentsFrom, cycleDaysOf } from './creditSchedule'
 import { formatDate, parseDate } from '../engine/dates'
 import { byNewest, latestVersion } from './versions'
 
@@ -89,8 +90,23 @@ export function toEngineExpenses(rows: any[]): Expense[] {
  * to be right either way — a missing paymentFrequency makes the whole object
  * fail to typecheck, which is how this was caught the first time.
  */
-export function toEngineCredit(card: any | null): CreditAccount | null {
+export function toEngineCredit(
+  card: any | null,
+  projectFrom?: any | null,
+  paymentRows: any[] = []
+): CreditAccount | null {
   if (!card) return null
+  // The engine runs whole cycles from the start of the first open one, so it
+  // needs the card balance AT that start — not the last figure typed in, which
+  // may be from an earlier cycle or from partway through this one. Same
+  // working as the Credit page, so the two show the same balance.
+  const startBalance = projectFrom?.start_date
+    ? carriedCardBalance(
+        card, projectFrom.start_date,
+        cycleDaysOf({ startDate: projectFrom.start_date, endDate: projectFrom.end_date ?? projectFrom.start_date }),
+        confirmedPaymentsFrom(paymentRows)
+      ).balanceCents
+    : (card.current_balance_cents ?? 0)
   return {
     id: card.id,
     name: card.name,
@@ -100,10 +116,17 @@ export function toEngineCredit(card: any | null): CreditAccount | null {
     assumedSpendCents: card.assumed_spend_cents,
     strategyExtraCents: card.strategy_extra_cents,
     strategyCommitted: card.strategy_committed,
-    currentBalanceCents: card.current_balance_cents ?? 0,
+    currentBalanceCents: startBalance,
     paymentFrequency: card.payment_frequency ?? 'per_cycle',
     paymentAnchorDate: card.payment_anchor_date ?? undefined,
   }
+}
+
+/** Payments confirmed WITH an amount. Older rows without one follow the plan. */
+export function toEngineCreditPayments(rows: any[]): CreditPayment[] {
+  return (rows ?? [])
+    .filter((r: any) => r.amount_cents != null)
+    .map((r: any) => ({ cycleStart: r.cycle_start, amountCents: r.amount_cents }))
 }
 
 export function toEngineCreditOverrides(rows: any[]): CreditExtraOverride[] {
@@ -181,6 +204,7 @@ export interface ForecastResult {
   storedCycles: any[]
   creditCard: any | null
   creditOverrideRows: any[]
+  creditPaymentRows: any[]
   budgetSpendRows: any[]
   expenseOverrideRows: any[]
   savingsGoalRows: any[]
@@ -230,17 +254,17 @@ export async function loadForecast(
     getAllExpenseOverrides(accountId),
   ])
 
-  // Overrides only exist once a card does, so this is a second round trip
-  // rather than part of the batch above.
-  const creditOverrideRows = creditCard
-    ? await getCreditExtraOverrides(creditCard.id)
-    : []
+  // Overrides and confirmed payments only exist once a card does, so this is
+  // a second round trip rather than part of the batch above.
+  const [creditOverrideRows, creditPaymentRows] = creditCard
+    ? await Promise.all([getCreditExtraOverrides(creditCard.id), getCreditCyclePayments(creditCard.id)])
+    : [[], []]
 
   const openCycles  = storedCycles.filter((c: any) => !c.is_closed)
   const projectFrom = openCycles[0] ?? storedCycles[storedCycles.length - 1] ?? null
 
   const rows = {
-    incomeRows, expenseRows, storedCycles, creditCard, creditOverrideRows,
+    incomeRows, expenseRows, storedCycles, creditCard, creditOverrideRows, creditPaymentRows,
     budgetSpendRows, expenseOverrideRows,
     savingsGoalRows, savingsContributionRows, savingsOverrideRows, projectFrom,
   }
@@ -253,6 +277,7 @@ export async function loadForecast(
     storedCycles,
     creditCard,
     creditOverrideRows,
+    creditPaymentRows,
     budgetSpendRows,
     expenseOverrideRows,
     savingsGoalRows,
@@ -280,8 +305,9 @@ export function projectFromRows(
     startDate: rows.projectFrom?.start_date ?? todayStr(),
     numCycles,
     safetyFloorCents,
-    creditAccount: toEngineCredit(rows.creditCard),
+    creditAccount: toEngineCredit(rows.creditCard, rows.projectFrom, rows.creditPaymentRows ?? []),
     creditOverrides: toEngineCreditOverrides(rows.creditOverrideRows),
+    creditPayments: toEngineCreditPayments(rows.creditPaymentRows ?? []),
     budgetSpend: toEngineBudgetSpend(rows.budgetSpendRows),
     expenseOverrides: toEngineExpenseOverrides(rows.expenseOverrideRows),
     savingsGoals: toEngineSavings(rows.savingsGoalRows, rows.savingsContributionRows, rows.savingsOverrideRows),

@@ -143,7 +143,7 @@ function savingsForCycle(
 export function projectCycles(input: CycleInput): CycleResult[] {
   const {
     incomeSources, expenses, openingBalanceCents, startDate, numCycles,
-    safetyFloorCents, creditAccount, creditOverrides, budgetSpend, expenseOverrides, savingsGoals,
+    safetyFloorCents, creditAccount, creditOverrides, creditPayments, budgetSpend, expenseOverrides, savingsGoals,
   } = input
   const results: CycleResult[] = []
 
@@ -246,7 +246,19 @@ export function projectCycles(input: CycleInput): CycleResult[] {
       const extraForCycle = getExtraForCycle(
         creditOverrides, cycleStart, creditAccount!.strategyExtraCents
       )
-      const line = stepCredit(cardBalance, creditAccount!, extraForCycle, days)
+      // A monthly card has one bill a month: the minimum falls due only in
+      // the cycle holding the due date. This used to charge the full monthly
+      // minimum in EVERY cycle — twice a month on a fortnightly pay cycle.
+      // Same rule as the Credit page (lib/creditSchedule buildMinimumDueSchedule).
+      const isMonthly = creditAccount!.paymentFrequency === 'monthly' && !!creditAccount!.paymentAnchorDate
+      const minimumIsDue = !isMonthly
+        || getOccurrencesInRange(creditAccount!.paymentAnchorDate!, 'monthly', cycleStart, cycleEnd).length > 0
+      // A payment confirmed with an amount is what actually went out.
+      const confirmed = creditPayments?.find(p => p.cycleStart === cycleStart)
+      const line = stepCredit(
+        cardBalance, creditAccount!, extraForCycle, days, minimumIsDue,
+        confirmed ? confirmed.amountCents : null
+      )
 
       creditOpeningBalanceCents = line.openingBalanceCents
       creditAssumedSpendCents   = line.assumedSpendCents

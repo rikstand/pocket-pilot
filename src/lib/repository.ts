@@ -745,15 +745,18 @@ export async function getCreditCyclePayments(creditAccountId: string) {
   return data
 }
 
+// amountCents is what actually left the account. Rows confirmed before it
+// was recorded have none, and are treated as the planned amount.
 export async function confirmCreditPayment(
   creditAccountId: string,
   accountId: string,
-  cycleStart: string
+  cycleStart: string,
+  amountCents: number
 ) {
   const { data, error } = await supabase
     .from('credit_cycle_payments')
     .upsert(
-      { credit_account_id: creditAccountId, account_id: accountId, cycle_start: cycleStart },
+      { credit_account_id: creditAccountId, account_id: accountId, cycle_start: cycleStart, amount_cents: amountCents },
       { onConflict: 'credit_account_id,cycle_start' }
     )
     .select()

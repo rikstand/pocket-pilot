@@ -113,7 +113,11 @@ export function stepCredit(
   account: CreditAccountModel,
   extraCents: number,
   days: number,
-  minimumIsDue = true
+  minimumIsDue = true,
+  // What actually went out, once a payment has been confirmed with an amount.
+  // Replaces minimum + extra for this cycle; the minimum is still reported so
+  // a short payment is visible.
+  fixedPaymentCents: number | null = null
 ): CreditCycleLine {
   const opening = Math.max(0, openingBalanceCents)
 
@@ -137,9 +141,16 @@ export function stepCredit(
   // On a monthly card, cycles without the due date carry no minimum — but any
   // extra you have chosen still goes out, because that is your own schedule.
   const minimum = minimumIsDue ? minimumDueCents(beforePayment, account, days) : 0
-  const headroom = Math.max(0, beforePayment - minimum)
-  const extra = Math.min(Math.max(0, extraCents), headroom)
-  const payment = minimum + extra
+  let extra: number
+  let payment: number
+  if (fixedPaymentCents != null) {
+    payment = Math.min(beforePayment, Math.max(0, fixedPaymentCents))
+    extra = Math.max(0, payment - minimum)
+  } else {
+    const headroom = Math.max(0, beforePayment - minimum)
+    extra = Math.min(Math.max(0, extraCents), headroom)
+    payment = minimum + extra
+  }
 
   return {
     openingBalanceCents: opening,
@@ -343,7 +354,9 @@ export function elapsedCyclesBetween(
   cycleDays: number
 ): number {
   if (cycleDays <= 0) return 0
-  const days = Math.floor((toMs - fromMs) / 86400000)
+  // Rounded, not floored: across a daylight-saving change a 14-day gap is
+  // 13.96 days of milliseconds in NZ, and flooring it lost a whole cycle.
+  const days = Math.round((toMs - fromMs) / 86400000)
   return Math.max(0, Math.floor(days / cycleDays))
 }
 

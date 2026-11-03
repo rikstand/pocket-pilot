@@ -132,6 +132,13 @@ export interface CreditExtraOverride {
   extraCents: number
 }
 
+// A card payment confirmed with the amount that actually went out. The
+// forecast uses this amount for that cycle instead of the plan.
+export interface CreditPayment {
+  cycleStart: string
+  amountCents: number
+}
+
 export interface CycleInput {
   incomeSources: IncomeSource[]
   expenses: Expense[]
@@ -141,6 +148,7 @@ export interface CycleInput {
   safetyFloorCents: number
   creditAccount?: CreditAccount | null
   creditOverrides?: CreditExtraOverride[]
+  creditPayments?: CreditPayment[]
   budgetSpend?: BudgetSpendEntry[]
   expenseOverrides?: ExpenseOverride[]
   savingsGoals?: SavingsGoal[]

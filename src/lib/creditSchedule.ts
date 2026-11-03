@@ -128,34 +128,111 @@ export function cycleDaysOf(cycle: { startDate: string; endDate: string } | unde
   ) + 1
 }
 
+/** A confirmed card payment, as stored. amountCents is null on old rows. */
+export interface ConfirmedPayment { cycleStart: string; amountCents: number | null }
+
+/** Shape credit_cycle_payments rows for the functions below. */
+export function confirmedPaymentsFrom(rows: any[] | null | undefined): ConfirmedPayment[] {
+  return (rows ?? []).map((r: any) => ({ cycleStart: r.cycle_start, amountCents: r.amount_cents ?? null }))
+}
+
+function wholeDaysBetween(from: string, to: string): number {
+  return Math.round((parseDate(to).getTime() - parseDate(from).getTime()) / 86400000)
+}
+function growth(model: CreditAccountModel, days: number): number {
+  return Math.pow(1 + model.aprBasisPoints / 10000 / 365, Math.max(0, days))
+}
+
 /**
- * The card's balance at the start of a cycle, carried forward from the last
- * figure you typed in.
+ * The card's balance at the START of a cycle, worked out from the last
+ * figure you typed in. Everything downstream — the forecast, the Credit page,
+ * the adjust sheet, the plan-fit check — runs whole cycles from this number.
  *
- * A measured balance is only true on the day it was taken. Work out how many
- * whole cycles have passed since, and run the card forward that many cycles.
- * Lives here, not on the Credit page, so the Credit page and the Cycle screen
- * start from the same number.
+ * Measured before this cycle began: carried forward, a whole cycle at a time.
+ *
+ * Measured during this cycle: worked BACK to the start. The figure you typed
+ * already contains the interest and assumed spend since the cycle started, and
+ * — if the due date had passed — this cycle's payment. Treating it as the
+ * start-of-cycle balance took that payment off a second time. So interest and
+ * spend come off, and a payment already made goes back on: the confirmed
+ * amount if there is one, otherwise the planned one.
+ *
+ * Known gap: a payment made EARLY (before its due date) and then a balance
+ * typed before the due date is counted twice. The "predicted vs real" note
+ * on the next update shows the difference.
  */
-export function carriedCardBalance(card: any, firstCycleStart: string, cycleDays: number) {
+export function carriedCardBalance(
+  card: any,
+  firstCycleStart: string,
+  cycleDays: number,
+  payments: ConfirmedPayment[] = []
+) {
   const model = creditModelFrom(card)
   const measuredCents = card.current_balance_cents ?? 0
-  const elapsedCycles = card.balance_as_of
-    ? elapsedCyclesBetween(
-        parseDate(card.balance_as_of).getTime(),
-        parseDate(firstCycleStart).getTime(),
-        cycleDays
-      )
+  const asOf: string | null = card.balance_as_of ?? null
+  const due = buildMinimumDueSchedule(card, firstCycleStart, cycleDays)
+  const extra = card.strategy_committed ? (card.strategy_extra_cents ?? 0) : 0
+
+  if (asOf && asOf > firstCycleStart) {
+    const days = Math.min(wholeDaysBetween(firstCycleStart, asOf), cycleDays)
+    const g = growth(model, days)
+    const spendSoFar = Math.round(model.assumedSpendCents * days / cycleDays)
+    const dueDate = dueDateInCycle(card, firstCycleStart, cycleDays)
+    let paidBefore = 0
+    if (dueDate && dueDate < asOf) {
+      const confirmed = payments.find(p => p.cycleStart === firstCycleStart)
+      if (confirmed && confirmed.amountCents != null) {
+        paidBefore = confirmed.amountCents
+      } else {
+        // The planned payment, sized from a first guess at the start balance.
+        const guess = Math.max(0, Math.round(measuredCents / g) - spendSoFar)
+        paidBefore = stepCredit(guess, model, extra, cycleDays, due(0)).paymentCents
+      }
+    }
+    const start = Math.max(0, Math.round((measuredCents + paidBefore) / g) - spendSoFar)
+    return {
+      balanceCents: start, interestCents: 0, paidCents: 0, spentCents: 0,
+      measuredCents, elapsedCycles: 0, measuredThisCycle: true,
+    }
+  }
+
+  const elapsedCycles = asOf
+    ? elapsedCyclesBetween(parseDate(asOf).getTime(), parseDate(firstCycleStart).getTime(), cycleDays)
     : 0
   // Catching up runs through PAST cycles, so step i is (elapsedCycles - i)
   // cycles before the current one — not cycle i ahead of it.
-  const due = buildMinimumDueSchedule(card, firstCycleStart, cycleDays)
   const drift = projectBalanceForward(
-    measuredCents, model,
-    card.strategy_committed ? card.strategy_extra_cents : 0,
-    cycleDays, elapsedCycles, (i: number) => due(i - elapsedCycles)
+    measuredCents, model, extra, cycleDays, elapsedCycles, (i: number) => due(i - elapsedCycles)
   )
-  return { ...drift, measuredCents, elapsedCycles }
+  return { ...drift, measuredCents, elapsedCycles, measuredThisCycle: false }
+}
+
+/**
+ * What the card should owe on a given day of a cycle: the start balance plus
+ * interest and assumed spend so far, less this cycle's payment if its due date
+ * has already passed. Saved with every balance you type, so "predicted vs
+ * real" compares like with like — the same day, not the start of the cycle.
+ * The exact inverse of the working-back in carriedCardBalance.
+ */
+export function predictedBalanceOn(
+  card: any,
+  startBalanceCents: number,
+  cycleStart: string,
+  cycleDays: number,
+  onDate: string,
+  plannedPaymentCents: number,
+  payments: ConfirmedPayment[] = []
+): number {
+  const model = creditModelFrom(card)
+  const days = Math.min(Math.max(0, wholeDaysBetween(cycleStart, onDate)), cycleDays)
+  const spendSoFar = Math.round(model.assumedSpendCents * days / cycleDays)
+  const dueDate = dueDateInCycle(card, cycleStart, cycleDays)
+  let paid = 0
+  if (dueDate && dueDate < onDate) {
+    const confirmed = payments.find(p => p.cycleStart === cycleStart)
+    paid = confirmed && confirmed.amountCents != null ? confirmed.amountCents : plannedPaymentCents
+  }
+  return Math.max(0, Math.round((startBalanceCents + spendSoFar) * growth(model, days)) - paid)
 }
 
 export interface PlanCheck {
@@ -180,13 +257,14 @@ export interface PlanCheck {
 export function committedPlanCheck(
   card: any,
   noCardCycles: { startDate: string; endDate: string; committedClosingBalanceCents: number }[],
-  floorCents: number
+  floorCents: number,
+  payments: ConfirmedPayment[] = []
 ): PlanCheck | null {
   if (!card || !card.strategy_committed || noCardCycles.length === 0) return null
   const first = noCardCycles[0]
   const days = cycleDaysOf(first)
   const model = creditModelFrom(card)
-  const balance = carriedCardBalance(card, first.startDate, days).balanceCents
+  const balance = carriedCardBalance(card, first.startDate, days, payments).balanceCents
   const due = buildMinimumDueSchedule(card, first.startDate, days)
   const surplus = noCardCycles.map(c => c.committedClosingBalanceCents)
 

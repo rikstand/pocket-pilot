@@ -13,8 +13,9 @@ import {
 import type { CreditProjection } from './engine/credit'
 import {
   creditModelFrom, buildMinimumDueSchedule, carriedCardBalance,
-  committedPlanCheck, cycleDaysOf,
+  committedPlanCheck, cycleDaysOf, confirmedPaymentsFrom, predictedBalanceOn,
 } from './lib/creditSchedule'
+import type { ConfirmedPayment } from './lib/creditSchedule'
 import { parseDate, formatDate, addDays } from './engine/dates'
 import { useViewport } from './lib/useViewport'
 
@@ -50,6 +51,7 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
   const [card,      setCard]      = useState<any>(null)
   const [snapshots, setSnapshots] = useState<any[]>([])
   const [cycles,    setCycles]    = useState<any[]>([])
+  const [payments,  setPayments]  = useState<ConfirmedPayment[]>([])
   const [loading,   setLoading]   = useState(true)
   const [error,     setError]     = useState('')
   const [reloadKey, setReloadKey] = useState(0)
@@ -87,6 +89,7 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
         const forecast = await loadForecast(accountId, floorCents, { numCycles: FORECAST_CYCLES })
         const creditCard = forecast.creditCard
         setCard(creditCard)
+        setPayments(confirmedPaymentsFrom(forecast.creditPaymentRows))
         if (creditCard) {
           setSnapshots(await getCreditSnapshots(creditCard.id))
           const committedExtra = creditCard.strategy_extra_cents ?? 0
@@ -211,10 +214,15 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
   // ── keeping the balance current ───────────────────────────────────
   // A measured balance is only true on the day it was taken, so it is carried
   // forward to the start of this cycle. Shared with the Cycle screen.
-  const drift = carriedCardBalance(card, firstCycleStart, cycleDays)
+  // Everything below runs whole cycles from the balance at the START of this
+  // cycle. A balance typed partway through the cycle is worked back to it.
+  const drift = carriedCardBalance(card, firstCycleStart, cycleDays, payments)
   const balanceCents  = drift.balanceCents
   const measuredCents = drift.measuredCents
   const elapsedCycles = drift.elapsedCycles
+  // The figure to show: what you typed if it is from this cycle, otherwise
+  // the last one carried forward to the start of this cycle.
+  const shownBalanceCents = drift.measuredThisCycle ? measuredCents : balanceCents
 
   const surplusSeries = cycles.map(c => c.committedClosingBalanceCents)
 
@@ -233,7 +241,7 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
   const committed = !!card.strategy_committed
   const committedExtra = card.strategy_extra_cents ?? 0
   const isCurrentPlan = committed && activeExtra === committedExtra
-  const planCheck = committedPlanCheck(card, cycles, floorCents)
+  const planCheck = committedPlanCheck(card, cycles, floorCents, payments)
   // The plan on screen, if it is not the committed one.
   const previewBreach = isCurrentPlan
     ? null
@@ -287,10 +295,9 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
     if (isNaN(cents) || cents < 0) return
     setSaving(true)
     try {
-      // Save what the app predicted for today — the last measurement carried
-      // forward, NOT the previous entry. Storing the previous entry is what made
-      // this comparison meaningless before.
-      await addCreditSnapshot(card.id, accountId, cents, todayStr(), 'manual', balanceCents)
+      // Save what the app predicted for TODAY — not for the start of the cycle,
+      // and not the previous entry — so "predicted vs real" compares the same day.
+      await addCreditSnapshot(card.id, accountId, cents, todayStr(), 'manual', predictedToday)
       setBalOpen(false); reload()
     } catch (e: any) { alert('Could not update balance: ' + e.message) }
     finally { setSaving(false) }
@@ -349,6 +356,13 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
     return pts.join(' ')
   }
   const chartMax = Math.max(balanceCents, 1)
+  // The committed plan's payment this cycle, for predicting today's balance.
+  const plannedThisCycle = projectCreditPayoff(
+    balanceCents, model, committed ? committedExtra : 0, cycleDays, 1, minimumDue
+  ).lines[0]?.paymentCents ?? 0
+  const predictedToday = predictedBalanceOn(
+    card, balanceCents, firstCycleStart, cycleDays, todayStr(), plannedThisCycle, payments
+  )
   const interestSaved = Math.max(minProj.totalInterestCents - active.totalInterestCents, 0)
   const thisCycle = active.lines[0]
 
@@ -359,9 +373,9 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
       <div className="credit-bal-hdr">
         <div className="credit-bal-title">{card.name} · balance</div>
         <button className="credit-act" type="button"
-          onClick={() => { setBalStr(String(balanceCents / 100)); setBalOpen(true) }}>update →</button>
+          onClick={() => { setBalStr(String(predictedToday / 100)); setBalOpen(true) }}>update →</button>
       </div>
-      <div className="credit-bal-amt">{fmt(balanceCents, false)}</div>
+      <div className="credit-bal-amt">{fmt(shownBalanceCents, false)}</div>
       <div className="credit-bal-sub">
         {lastSnap
           ? elapsedCycles > 0
@@ -689,9 +703,9 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
                   onChange={e => setBalStr(e.target.value)} placeholder="0" />
               </div>
               <div className="hint">
-                {elapsedCycles > 0
-                  ? <>Currently projecting {fmt(balanceCents, false)}, carried forward from the {fmt(measuredCents, false)} you measured on {fmtDate(lastSnap.as_of_date)}. Your real figure replaces the estimate.</>
-                  : <>Currently holding {fmt(balanceCents, false)}.</>}
+                The forecast expects <b>{fmt(predictedToday, false)}</b> today
+                {lastSnap && <>, worked from the {fmt(measuredCents, false)} you entered on {fmtDate(lastSnap.as_of_date)}</>}.
+                {' '}Your real figure replaces the estimate, and the plan re-runs from today.
               </div>
             </div>
             <div className="navrow">

@@ -21,11 +21,14 @@ import {
   createBnplPlan,
   addExpense, updateExpense, addExpenseAmount, deactivateExpense,
   addIncomeSource, updateIncomeSource, addIncomeAmount, deactivateIncomeSource,
-  closeCycle,
+  closeCycle, addCreditSnapshot,
 } from './lib/repository'
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
-import { creditModelFrom, buildMinimumDueSchedule, dueDateInCycle, runCardForward, committedPlanCheck } from './lib/creditSchedule'
+import {
+  creditModelFrom, buildMinimumDueSchedule, dueDateInCycle, runCardForward, committedPlanCheck,
+  confirmedPaymentsFrom, predictedBalanceOn,
+} from './lib/creditSchedule'
 import { loadForecast, projectFromRows, cycleTickLabel, cycleDateLabel, baseYearOf, baselineChecks, previewBudgetChange } from './lib/forecast'
 import type { ForecastResult } from './lib/forecast'
 import { getOccurrencesInRange } from './engine/recurrence'
@@ -237,6 +240,14 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const [adjExtra,  setAdjExtra]  = useState(0)
   const [adjScope,  setAdjScope]  = useState<'once' | 'always'>('once')
   const [adjSaving, setAdjSaving] = useState(false)
+
+  // confirming a card payment with what actually went out
+  const [payConfOpen, setPayConfOpen] = useState(false)
+  const [payConfStr,  setPayConfStr]  = useState('')
+  // updating the card balance from the cycle card
+  const [cardBalOpen, setCardBalOpen] = useState(false)
+  const [cardBalStr,  setCardBalStr]  = useState('')
+  const [cardSaving,  setCardSaving]  = useState(false)
 
   const [openSecs, setOpenSecs] = useState<Record<string, boolean>>({
     income: true, fixed: true, var: true, budget: true, savings: true, credit: true,
@@ -1118,7 +1129,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     ? committedPlanCheck(
         rawCredit,
         projectFromRows({ ...forecastRows, creditCard: null, creditOverrideRows: [] }, floorCents, 24),
-        floorCents
+        floorCents,
+        confirmedPaymentsFrom(forecastRows.creditPaymentRows)
       )
     : null
   // Progress is against the balance when the strategy was committed, not the
@@ -1299,12 +1311,51 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     } finally { setAdjSaving(false) }
   }
 
+  // Confirming asks what actually went out, prefilled with the plan. That
+  // amount is what the forecast uses for this cycle from then on.
+  function openConfirmPay() {
+    setPayConfStr(String(creditPaymentCents / 100))
+    setPayConfOpen(true)
+  }
   async function markCreditPaid() {
     if (!rawCredit) return
+    const cents = Math.round(parseFloat(payConfStr || '') * 100)
+    if (!Number.isFinite(cents) || cents < 0) return
+    setCardSaving(true)
     try {
-      await confirmCreditPayment(rawCredit.id, accountId, activeCycle.startDate)
+      await confirmCreditPayment(rawCredit.id, accountId, activeCycle.startDate, cents)
+      setPayConfOpen(false)
       reload()
     } catch (e: any) { alert('Could not confirm: ' + e.message) }
+    finally { setCardSaving(false) }
+  }
+
+  // What the card should owe today, by the forecast. Saved alongside the
+  // balance you type, so "predicted vs real" on the Credit page compares the
+  // same day rather than the start of the cycle.
+  function predictedCardToday(): number {
+    if (!rawCredit) return 0
+    return predictedBalanceOn(
+      rawCredit, activeCycle.creditOpeningBalanceCents ?? 0, activeCycle.startDate,
+      creditCycleDays, today(), creditPaymentCents,
+      confirmedPaymentsFrom(creditPaid)
+    )
+  }
+  function openCardBalance() {
+    setCardBalStr(String(predictedCardToday() / 100))
+    setCardBalOpen(true)
+  }
+  async function saveCardBalance() {
+    if (!rawCredit) return
+    const cents = Math.round(parseFloat(cardBalStr || '') * 100)
+    if (!Number.isFinite(cents) || cents < 0) return
+    setCardSaving(true)
+    try {
+      await addCreditSnapshot(rawCredit.id, accountId, cents, today(), 'manual', predictedCardToday())
+      setCardBalOpen(false)
+      reload()
+    } catch (e: any) { alert('Could not update balance: ' + e.message) }
+    finally { setCardSaving(false) }
   }
 
   async function undoCreditPaid() {
@@ -1796,10 +1847,13 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                     <button className="act" type="button" onClick={openCreditAdjust}>adjust →</button>
                   )}
                   {creditState === 'due' && (
-                    <button className="act" type="button" style={{ color: 'var(--floor)' }} onClick={markCreditPaid}>confirm →</button>
+                    <button className="act" type="button" style={{ color: 'var(--floor)' }} onClick={openConfirmPay}>confirm →</button>
                   )}
                   {creditState === 'paid' && (
                     <button className="act" type="button" style={{ color: 'var(--mut)' }} onClick={undoCreditPaid}>undo</button>
+                  )}
+                  {(status === 'now' || status === 'overdue') && (
+                    <button className="act" type="button" style={{ color: 'var(--mut)' }} onClick={openCardBalance}>update balance</button>
                   )}
                 </div>
               </div>
@@ -2616,6 +2670,89 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
           </div>
         </div>
       )}
+
+      {/* ── confirm what went out ── */}
+      {payConfOpen && rawCredit && (() => {
+        const cents = Math.round(parseFloat(payConfStr || '0') * 100)
+        const diff = cents - creditPaymentCents
+        return (
+          <div className="ov" onClick={e => { if (e.target === e.currentTarget) setPayConfOpen(false) }}>
+            <div className="sheet">
+              <button className="xbtn" onClick={() => setPayConfOpen(false)}>×</button>
+              <div className="grab" />
+              <h3>Did it go out?</h3>
+              <p className="sd">
+                Enter what actually left your account for {rawCredit.name}. The forecast uses this
+                amount for this cycle, and the card balance moves by it.
+              </p>
+              <div className="field">
+                <label>Amount paid</label>
+                <div className="inrow"><span className="pre">{sym}</span>
+                  <input type="number" inputMode="decimal" value={payConfStr} autoFocus
+                    onChange={e => setPayConfStr(e.target.value)} />
+                </div>
+                <p className="hint">
+                  {Math.abs(diff) < 100
+                    ? <>Matches the plan.</>
+                    : <>Planned {fmt(creditPaymentCents, false)} — you paid {fmt(Math.abs(diff), false)} {diff > 0 ? 'more' : 'less'}.</>}
+                  {creditMinimumCents > 0 && cents < creditMinimumCents && (
+                    <> <b style={{ color: 'var(--floor)' }}>That is under the {fmt(creditMinimumCents, false)} minimum.</b></>
+                  )}
+                </p>
+              </div>
+              <div className="navrow">
+                <button onClick={() => setPayConfOpen(false)}>Cancel</button>
+                <button className="pri" style={{ background: 'var(--credit)' }}
+                  onClick={markCreditPaid} disabled={cardSaving}>
+                  {cardSaving ? 'Saving…' : 'Confirm'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* ── update the card balance ── */}
+      {cardBalOpen && rawCredit && (() => {
+        const cents = Math.round(parseFloat(cardBalStr || '0') * 100)
+        const predicted = predictedCardToday()
+        const diff = cents - predicted
+        return (
+          <div className="ov" onClick={e => { if (e.target === e.currentTarget) setCardBalOpen(false) }}>
+            <div className="sheet">
+              <button className="xbtn" onClick={() => setCardBalOpen(false)}>×</button>
+              <div className="grab" />
+              <h3>Update card balance</h3>
+              <p className="sd">
+                Whatever your banking app shows for {rawCredit.name} right now. The plan re-runs from
+                today each time — update it as often as you like.
+              </p>
+              <div className="field">
+                <label>Balance today</label>
+                <div className="inrow"><span className="pre">{sym}</span>
+                  <input type="number" inputMode="decimal" value={cardBalStr} autoFocus
+                    onChange={e => setCardBalStr(e.target.value)} />
+                </div>
+                <p className="hint">
+                  The forecast expects <b>{fmt(predicted, false)}</b> today.{' '}
+                  {Math.abs(diff) < 100
+                    ? <>That matches.</>
+                    : diff > 0
+                      ? <>{fmt(diff, false)} more owing — likely card spending since your last update.</>
+                      : <>{fmt(-diff, false)} less owing than expected.</>}
+                </p>
+              </div>
+              <div className="navrow">
+                <button onClick={() => setCardBalOpen(false)}>Cancel</button>
+                <button className="pri" style={{ background: 'var(--credit)' }}
+                  onClick={saveCardBalance} disabled={cardSaving}>
+                  {cardSaving ? 'Saving…' : 'Save balance'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ── adjust the credit top-up ── */}
       {adjOpen && creditModel && (
