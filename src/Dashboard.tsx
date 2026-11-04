@@ -236,7 +236,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
   // this cycle's card payment: minimum, spare or the user's own amount
   const [adjOpen,     setAdjOpen]     = useState(false)
-  const [adjPick,     setAdjPick]     = useState<'minimum' | 'spare' | 'other'>('spare')
+  const [adjPick,     setAdjPick]     = useState<'plan' | 'minimum' | 'spare' | 'other'>('plan')
   const [adjOtherStr, setAdjOtherStr] = useState('')
   const [adjSaving,   setAdjSaving]   = useState(false)
 
@@ -1193,16 +1193,31 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // Planning less than the minimum is not offered: it is the card agreement.
   // What actually went out is recorded when the payment is confirmed.
   const adjOtherTooLow = adjPick === 'other' && adjOtherCents < creditMinimumCents
-  function adjRow(): any {
+  // The row a choice would save. "Plan" saves nothing: it clears this
+  // cycle's choice, so the plan decides again.
+  function adjRow(): any | null {
     const base = { cycle_start: activeCycle.startDate }
+    if (adjPick === 'plan')    return null
     if (adjPick === 'spare')   return { ...base, extra_cents: 0, choice: 'spare' }
     if (adjPick === 'minimum') return { ...base, extra_cents: 0, choice: 'extra' }
     return { ...base, extra_cents: Math.max(0, adjOtherCents - creditMinimumCents), choice: 'extra' }
   }
+  const planPreview   = adjOpen ? creditPreview(null) : []
+  const planHereCents = paymentHere(planPreview)
   const sparePreview  = adjOpen ? creditPreview({ cycle_start: activeCycle.startDate, extra_cents: 0, choice: 'spare' }) : []
   const spareHereCents = paymentHere(sparePreview)
-  const adjPreview    = !adjOpen ? [] : adjPick === 'spare' ? sparePreview : creditPreview(adjRow())
+  const adjPreview    = !adjOpen ? []
+    : adjPick === 'plan' ? planPreview
+    : adjPick === 'spare' ? sparePreview
+    : creditPreview(adjRow())
   const adjPaymentCents = paymentHere(adjPreview)
+  // What a confirmed payment recorded, for the paid state.
+  const creditPaidRow = creditPaid.find((p: any) => p.cycle_start === activeCycle.startDate)
+  const creditPaidCents = creditPaidRow?.amount_cents ?? creditPaymentCents
+  // The label for this cycle's choice, on the card and in the sheet.
+  const choiceLabel = !cycleOverride ? null
+    : cycleOverride.choice === 'spare' ? 'spare'
+    : (cycleOverride.extra_cents ?? 0) > 0 ? 'your amount' : 'minimum'
 
   // Your account, cycle by cycle, under the choice — from this cycle on.
   const CREDIT_BARS = 18
@@ -1310,13 +1325,12 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     finally { setSavBusy(false) }
   }
 
+  // One sheet for everything about this cycle's card payment. Opens on what
+  // the cycle is doing now.
   function openCreditAdjust() {
-    // Open on what this cycle is doing now.
-    if (cycleOverride?.choice === 'spare') setAdjPick('spare')
-    else if (cycleOverride) setAdjPick((cycleOverride.extra_cents ?? 0) > 0 ? 'other' : 'minimum')
-    else if (planMode === 'spare' && planExtraHere) setAdjPick('spare')
-    else if (creditExtraCents > 0) setAdjPick('other')
-    else setAdjPick('minimum')
+    if (!cycleOverride) setAdjPick('plan')
+    else if (cycleOverride.choice === 'spare') setAdjPick('spare')
+    else setAdjPick((cycleOverride.extra_cents ?? 0) > 0 ? 'other' : 'minimum')
     setAdjOtherStr(String(creditPaymentCents / 100))
     setAdjOpen(true)
   }
@@ -1324,17 +1338,18 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   async function saveCreditAdjust() {
     if (!rawCredit || adjOtherTooLow) return
     const row = adjRow()
-    // The same as the plan already does here? Then there is nothing to keep —
-    // drop any exception rather than storing a copy of the plan.
+    // "Plan", or a choice that is the same as what the plan already does
+    // here: nothing to keep, so drop any exception rather than storing a
+    // copy of the plan.
     const standing = rawCredit.strategy_extra_cents ?? 0
-    const sameAsPlan =
+    const sameAsPlan = !row ||
       (adjPick === 'spare' && planMode === 'spare' && planExtraHere) ||
       (adjPick === 'minimum' && (planMode === 'minimum' || !planExtraHere)) ||
       (adjPick === 'other' && planMode === 'extra' && planExtraHere && row.extra_cents === standing)
     setAdjSaving(true)
     try {
       if (sameAsPlan) {
-        await clearCreditExtraOverride(rawCredit.id, activeCycle.startDate)
+        if (cycleOverride) await clearCreditExtraOverride(rawCredit.id, activeCycle.startDate)
       } else {
         await setCreditExtraOverride(rawCredit.id, accountId, activeCycle.startDate, row.extra_cents, row.choice)
       }
@@ -1345,13 +1360,9 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     } finally { setAdjSaving(false) }
   }
 
-  async function backToPlan() {
-    if (!rawCredit) return
-    try {
-      await clearCreditExtraOverride(rawCredit.id, activeCycle.startDate)
-      reload()
-    } catch (e: any) { alert('Could not save: ' + e.message) }
-  }
+  // From the sheet to one of the two small sheets it links to.
+  function sheetToConfirm() { setAdjOpen(false); openConfirmPay() }
+  function sheetToBalance() { setAdjOpen(false); openCardBalance() }
 
   // Confirming asks what actually went out, prefilled with the plan. That
   // amount is what the forecast uses for this cycle from then on.
@@ -1861,7 +1872,12 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         </div>
         {openSecs.credit && (
           <div className="cards">
-            <div className="card">
+            {/* The card says what goes out and shows a button only when you
+                need to act. Everything else is one tap away, in one sheet. */}
+            <div className="card crd-tap" role="button" tabIndex={0}
+              aria-label={`${rawCredit?.name ?? 'Credit card'}: this cycle's payment`}
+              onClick={openCreditAdjust}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCreditAdjust() } }}>
               <div className="ic crd">▭</div>
               <div className="tx">
                 <div className="nm">
@@ -1870,9 +1886,9 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                     ? <span className="chip pd">paid ✓</span>
                     : creditState === 'due'
                       ? <span className="chip due">not confirmed</span>
-                      : cycleOverride
-                        ? <span className="chip crd">your choice</span>
-                        : <span className="chip drv">{planMode === 'spare' && planExtraHere ? 'spare' : 'planned'}</span>}
+                      : choiceLabel
+                        ? <span className="chip crd">this cycle: {choiceLabel}</span>
+                        : <span className="chip drv">{planMode === 'spare' && planExtraHere ? 'spare' : 'plan'}</span>}
                 </div>
                 <div className="dt">
                   {creditPaymentCents > 0
@@ -1887,39 +1903,27 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                         {extraOnDueOnly && <> · extra goes with the monthly payment</>}
                       </>}
                 </div>
-                {creditState !== 'paid' && (
-                  <div className="credit-spare">
-                    <span>Spare above your <b>{fmt(floorCents, false)}</b> floor</span>
-                    <span className="v">{fmt(creditSpareCents, false)}</span>
-                  </div>
-                )}
                 <div className="act-row">
                   <div className="exp-prog" style={{ flex: 1, marginTop: 0 }}>
                     <div className="fill" style={{ width: creditPct + '%', background: 'var(--credit)' }} />
                   </div>
-                  {creditState === 'before' && (
-                    <button className="act" type="button" onClick={openCreditAdjust}>change →</button>
-                  )}
-                  {creditState === 'before' && cycleOverride && (
-                    <button className="act" type="button" style={{ color: 'var(--mut)' }} onClick={backToPlan}>back to plan</button>
-                  )}
-                  {/* Paying early counts: confirm is offered as soon as the
-                      cycle is under way, not only after the due date. */}
-                  {creditState === 'before' && (status === 'now' || status === 'overdue') && (
-                    <button className="act" type="button" style={{ color: 'var(--mut)' }} onClick={openConfirmPay}>paid it</button>
-                  )}
                   {creditState === 'due' && (
-                    <button className="act" type="button" style={{ color: 'var(--floor)' }} onClick={openConfirmPay}>confirm →</button>
+                    <button className="act" type="button" style={{ color: 'var(--floor)' }}
+                      onClick={e => { e.stopPropagation(); openConfirmPay() }}>confirm →</button>
                   )}
                   {creditState === 'paid' && (
-                    <button className="act" type="button" style={{ color: 'var(--mut)' }} onClick={undoCreditPaid}>undo</button>
-                  )}
-                  {(status === 'now' || status === 'overdue') && (
-                    <button className="act" type="button" style={{ color: 'var(--mut)' }} onClick={openCardBalance}>update balance</button>
+                    <button className="act" type="button" style={{ color: 'var(--mut)' }}
+                      onClick={e => { e.stopPropagation(); undoCreditPaid() }}>undo</button>
                   )}
                 </div>
               </div>
-              <div className="vl">−{fmt(creditPaymentCents, false)}</div>
+              <div className="vl">
+                −{fmt(creditState === 'paid' ? creditPaidCents : creditPaymentCents, false)}
+                <small className={creditState === 'paid' ? '' : 'sp'}>
+                  {creditState === 'paid' ? 'paid' : `${fmt(creditSpareCents, false)} spare`}
+                </small>
+              </div>
+              <span className="crd-chev" aria-hidden="true">›</span>
             </div>
           </div>
         )}
@@ -2816,149 +2820,167 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         )
       })()}
 
-      {/* ── this cycle's card payment ── */}
+      {/* ── this cycle's card payment: one sheet for all of it ── */}
       {adjOpen && rawCredit && (
         <div className="ov" onClick={e => { if (e.target === e.currentTarget) setAdjOpen(false) }}>
           <div className="sheet">
             <button className="xbtn" onClick={() => setAdjOpen(false)}>×</button>
             <div className="grab" />
-            <h3>This cycle's payment</h3>
+            <h3>{rawCredit.name}</h3>
             <p className="sd">
-              Only this cycle. Later cycles keep following your plan ({planName}), which you
-              can change on the Credit page.
+              {status === 'now' ? 'This cycle' : 'Cycle'} · {fmtDate(activeCycle.startDate)} – {fmtDate(activeCycle.endDate)}
+              {creditDueDate && <> · due {fmtDate(creditDueDate)}</>}
             </p>
 
-            <div className="cr-locked">
-              <div className="cl-ic">🔒</div>
-              <div className="cl-tx">
-                <div className="cl-n">Minimum due</div>
-                <div className="cl-d">
-                  {creditMinimumCents > 0
-                    ? <>due {creditDueDate ? fmtDate(creditDueDate) : 'this cycle'} · set by your card agreement</>
-                    : <>none due this cycle</>}
-                </div>
-              </div>
-              <div className="cl-v">{fmt(creditMinimumCents, false)}</div>
-            </div>
-
-            <div className="cr-ctrl">
-              <div className="cr-dial-top">
-                <span className="l">Pays this cycle</span>
-                <span className="v">{fmt(adjOtherTooLow ? creditMinimumCents : adjPaymentCents, false)}</span>
-              </div>
-              <div className="cr-scope">
-                <button className={adjPick === 'minimum' ? 'on' : ''} onClick={() => setAdjPick('minimum')}>
-                  {fmt(creditMinimumCents, false)}<small>{creditMinimumCents > 0 ? 'minimum' : 'nothing due'}</small>
-                </button>
-                <button className={adjPick === 'spare' ? 'on' : ''} onClick={() => setAdjPick('spare')}>
-                  {fmt(spareHereCents, false)}<small>spare</small>
-                </button>
-                <button className={adjPick === 'other' ? 'on' : ''} onClick={() => setAdjPick('other')}>
-                  Other<small>type it</small>
-                </button>
-              </div>
-              {adjPick === 'spare' && (
-                <p className="hint" style={{ marginTop: 9 }}>
-                  Whatever this cycle has above your floor. It stays live: if a bill or budget in
-                  this cycle changes, the payment follows.
-                </p>
-              )}
-              {adjPick === 'other' && (
-                <div className="field" style={{ marginTop: 11, marginBottom: 0 }}>
-                  <label>Amount this cycle</label>
-                  <div className="inrow"><span className="pre">{sym}</span>
-                    <input type="number" inputMode="decimal" value={adjOtherStr} autoFocus
-                      onChange={e => setAdjOtherStr(e.target.value)} />
-                  </div>
-                  {adjOtherTooLow && (
-                    <p className="hint" style={{ color: 'var(--floor)' }}>
-                      The plan can't go below the {fmt(creditMinimumCents, false)} minimum. If less
-                      goes out, confirm the real amount once it has.
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* What the choice does to the card, over the same cycles as now. */}
-            <div className="cr-pair">
-              <div className="cr-po card-side">
-                <div className="k">Card cleared</div>
-                <div className="v">
-                  {adjCleared ? cycleDateLabel(adjCleared.endDate, creditBaseYear) : 'Not yet'}
-                </div>
-                <div className="d">
-                  {adjCleared ? <>in the cycle starting {cycleDateLabel(adjCleared.startDate, creditBaseYear)}</>
-                    : <>not within the {adjAhead.length} cycles forecast</>}
-                </div>
-              </div>
-              {(() => {
-                // Red only when the change costs you.
-                const tone = Math.abs(adjInterestDiff) < 100 ? '' : adjInterestDiff > 0 ? ' worse' : ' better'
-                return (
-                  <div className={`cr-po cost${tone}`}>
-                    <div className="k">Interest</div>
-                    <div className="v">
-                      {Math.abs(adjInterestDiff) < 100 ? 'Same' : (adjInterestDiff > 0 ? '+' : '−') + fmt(Math.abs(adjInterestDiff), false)}
-                    </div>
-                    <div className="d">vs now, over the forecast</div>
-                  </div>
-                )
-              })()}
-            </div>
-
-            {/* account balance, cycle by cycle */}
-            <div className="cr-chart-k" style={{ marginTop: 15 }}>
-              <span>Your account, each cycle</span>
-              <span>lowest {fmt(creditWorstBank, false)}</span>
-            </div>
-            <div className="cr-bars">
-              {(() => {
-                const top = Math.max(...creditBankSeries, floorCents * 1.4, 1)
-                return <>
-                  {creditBankSeries.map((v, i) => {
-                    const cls = v < 0 ? 'breach' : v < floorCents ? 'low' : ''
-                    // Every label would collide at this width, so date every third.
-                    const showLabel = i % 3 === 0 || i === creditBankSeries.length - 1
-                    return (
-                      <div key={i} className={`cr-bar ${cls}`}
-                        style={{ height: Math.max((Math.max(v, 0) / top) * 44, 3) + 'px' }}>
-                        {showLabel && (
-                          <span className="cr-bx">{cycleTickLabel(adjShown[i].startDate, creditBaseYear)}</span>
-                        )}
-                      </div>
-                    )
-                  })}
-                  {floorCents > 0 && (
-                    <div className="cr-floor" style={{ bottom: (16 + (floorCents / top) * 44) + 'px' }}>
-                      <span>floor {fmt(floorCents, false)}</span>
-                    </div>
-                  )}
-                </>
-              })()}
-            </div>
-            <div className="cr-beyond">showing {creditBankSeries.length} cycles from this one</div>
-
-            {creditWorstBank < floorCents ? (
-              <div className="cr-warn">
-                <b>The cycle starting {adjShown[creditWorstIdx] ? cycleDateLabel(adjShown[creditWorstIdx].startDate, creditBaseYear) : '—'} drops to {fmt(creditWorstBank, false)}</b>
-                {creditWorstBank < 0
-                  ? <> — that would overdraw the account.</>
-                  : <>, under your {fmt(floorCents, false)} floor.</>}
+            {creditState === 'paid' ? (
+              <div className="crs-pays">
+                <div className="k">Paid this cycle</div>
+                <div className="v">{fmt(creditPaidCents, false)}</div>
+                <div className="d">Confirmed. The forecast uses this amount, and the card balance moves by it.</div>
               </div>
             ) : (
-              <div className="cr-ok">
-                Every cycle stays at or above your floor — lowest is <b>{fmt(creditWorstBank, false)}</b>
-                {' '}in the cycle starting {adjShown[creditWorstIdx] ? cycleDateLabel(adjShown[creditWorstIdx].startDate, creditBaseYear) : '—'}.
+              <div className="crs-pays">
+                <div className="k">Pays this cycle</div>
+                <div className="v">{fmt(adjOtherTooLow ? creditMinimumCents : adjPaymentCents, false)}</div>
+                <div className="d">
+                  minimum <b>{fmt(creditMinimumCents, false)}</b>
+                  {!adjOtherTooLow && adjPaymentCents > creditMinimumCents && <> + extra <b>{fmt(adjPaymentCents - creditMinimumCents, false)}</b></>}
+                  {' · '}
+                  {adjPick === 'plan' ? `your plan (${planName})`
+                    : adjPick === 'spare' ? 'this cycle only · follows the cycle'
+                    : 'this cycle only'}
+                </div>
+                <div className="crs-choices">
+                  <button type="button" className={adjPick === 'plan' ? 'on' : ''} onClick={() => setAdjPick('plan')}>
+                    {fmt(planHereCents, false)}<small>plan</small>
+                  </button>
+                  <button type="button" className={adjPick === 'minimum' ? 'on' : ''} onClick={() => setAdjPick('minimum')}>
+                    {fmt(creditMinimumCents, false)}<small>{creditMinimumCents > 0 ? 'minimum' : 'none due'}</small>
+                  </button>
+                  <button type="button" className={adjPick === 'spare' ? 'on' : ''} onClick={() => setAdjPick('spare')}>
+                    {fmt(spareHereCents, false)}<small>spare</small>
+                  </button>
+                  <button type="button" className={adjPick === 'other' ? 'on' : ''} onClick={() => setAdjPick('other')}>
+                    Other<small>type it</small>
+                  </button>
+                </div>
+                {adjPick === 'other' && (
+                  <div className="field" style={{ marginTop: 10, marginBottom: 0 }}>
+                    <div className="inrow"><span className="pre">{sym}</span>
+                      <input type="number" inputMode="decimal" value={adjOtherStr} autoFocus
+                        aria-label="Amount this cycle"
+                        onChange={e => setAdjOtherStr(e.target.value)} />
+                    </div>
+                    {adjOtherTooLow && (
+                      <p className="hint" style={{ color: 'var(--floor)' }}>
+                        The plan can't go below the {fmt(creditMinimumCents, false)} minimum. If less
+                        goes out, confirm the real amount once it has.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {creditState !== 'paid' && <>
+              {/* account balance, cycle by cycle */}
+              <div className="cr-chart-k" style={{ marginTop: 14 }}>
+                <span>Your account, each cycle</span>
+                <span>lowest {fmt(creditWorstBank, false)}</span>
+              </div>
+              <div className="cr-bars">
+                {(() => {
+                  const top = Math.max(...creditBankSeries, floorCents * 1.4, 1)
+                  return <>
+                    {creditBankSeries.map((v, i) => {
+                      const cls = v < 0 ? 'breach' : v < floorCents ? 'low' : ''
+                      // Every label would collide at this width, so date every third.
+                      const showLabel = i % 3 === 0 || i === creditBankSeries.length - 1
+                      return (
+                        <div key={i} className={`cr-bar ${cls}`}
+                          style={{ height: Math.max((Math.max(v, 0) / top) * 44, 3) + 'px' }}>
+                          {showLabel && (
+                            <span className="cr-bx">{cycleTickLabel(adjShown[i].startDate, creditBaseYear)}</span>
+                          )}
+                        </div>
+                      )
+                    })}
+                    {floorCents > 0 && (
+                      <div className="cr-floor" style={{ bottom: (16 + (floorCents / top) * 44) + 'px' }}>
+                        <span>floor {fmt(floorCents, false)}</span>
+                      </div>
+                    )}
+                  </>
+                })()}
+              </div>
+
+              {creditWorstBank < floorCents ? (
+                <div className="cr-warn">
+                  <b>The cycle starting {adjShown[creditWorstIdx] ? cycleDateLabel(adjShown[creditWorstIdx].startDate, creditBaseYear) : '—'} drops to {fmt(creditWorstBank, false)}</b>
+                  {creditWorstBank < 0
+                    ? <> — that would overdraw the account.</>
+                    : <>, under your {fmt(floorCents, false)} floor.</>}
+                </div>
+              ) : (
+                <div className="cr-ok">
+                  Every cycle stays at or above your floor. Lowest is <b>{fmt(creditWorstBank, false)}</b>.
+                </div>
+              )}
+              {/* When the card clears and what the choice does to interest, in one line. */}
+              <div className="crs-foot">
+                {adjCleared
+                  ? <>Card cleared in the cycle starting <b>{cycleDateLabel(adjCleared.startDate, creditBaseYear)}</b></>
+                  : <>Card not cleared within the {adjAhead.length} cycles forecast</>}
+                {' · '}
+                {Math.abs(adjInterestDiff) < 100
+                  ? 'same interest as now'
+                  : <span className={adjInterestDiff > 0 ? 'worse' : 'better'}>
+                      {(adjInterestDiff > 0 ? '+' : '−') + fmt(Math.abs(adjInterestDiff), false)} interest vs now
+                    </span>}
+              </div>
+            </>}
+
+            {/* The two other things you do with the card this cycle. */}
+            {(status === 'now' || status === 'overdue' || creditState === 'paid') && (
+              <div className="crs-links">
+                <button type="button" className="crs-link" onClick={sheetToConfirm}>
+                  <span className="lt">
+                    <span className="n">
+                      {creditState === 'paid' ? 'Change the amount paid'
+                        : creditState === 'due' ? 'Confirm what went out' : "I've paid it"}
+                    </span>
+                    <span className="s">
+                      {creditState === 'paid' ? 'Correct it if the real amount was different. Undo is on the card.'
+                        : creditState === 'due' ? 'The due date has passed. Enter the real amount.'
+                        : 'Record what actually went out. Paying early counts.'}
+                    </span>
+                  </span>
+                  <span className="go">→</span>
+                </button>
+                {(status === 'now' || status === 'overdue') && (
+                  <button type="button" className="crs-link" onClick={sheetToBalance}>
+                    <span className="lt">
+                      <span className="n">Update card balance</span>
+                      <span className="s">
+                        {rawCredit.balance_as_of
+                          ? <>Last {fmt(rawCredit.current_balance_cents ?? 0, false)} on {fmtDate(rawCredit.balance_as_of)} · expected {fmt(predictedCardToday(), false)} today</>
+                          : <>Expected {fmt(predictedCardToday(), false)} today</>}
+                      </span>
+                    </span>
+                    <span className="go">→</span>
+                  </button>
+                )}
               </div>
             )}
 
             <div className="navrow">
-              <button onClick={() => setAdjOpen(false)}>Cancel</button>
-              <button className="pri" style={{ background: 'var(--credit)' }}
-                onClick={saveCreditAdjust} disabled={adjSaving || adjOtherTooLow}>
-                {adjSaving ? 'Saving…' : 'Use this'}
-              </button>
+              <button onClick={() => setAdjOpen(false)}>{creditState === 'paid' ? 'Close' : 'Cancel'}</button>
+              {creditState !== 'paid' && (
+                <button className="pri" style={{ background: 'var(--credit)' }}
+                  onClick={saveCreditAdjust} disabled={adjSaving || adjOtherTooLow}>
+                  {adjSaving ? 'Saving…' : 'Use this'}
+                </button>
+              )}
             </div>
           </div>
         </div>

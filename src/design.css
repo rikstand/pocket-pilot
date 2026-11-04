@@ -2145,17 +2145,59 @@ body.is-desktop .undo-toast { bottom: 24px; left: calc(50% + 119px); }
 .credit-fitnote { margin: 10px 16px 0; }
 
 /* ══════════════════════════════════════════════════════════════════
-   CYCLE CARD — spare above the floor (credit part 3)
-   What this cycle has above the floor before the card payment: the most a
-   "whatever's spare" payment could be.
+   CYCLE CARD — credit, tidied (option A)
+   The card shows what goes out, one status label and the spare as a small
+   figure. A button appears only when you need to act. Tapping the card opens
+   one sheet with everything else.
    ══════════════════════════════════════════════════════════════════ */
-.credit-spare {
-  display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
-  margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--line2);
-  font-size: 11.5px; color: var(--mut);
+.card.crd-tap { cursor: pointer; transition: border-color .15s ease; -webkit-tap-highlight-color: transparent; }
+.card.crd-tap:hover { border-color: var(--credit); }
+.card.crd-tap:focus-visible { outline: 2px solid var(--credit); outline-offset: 2px; }
+.card .vl small {
+  display: block; font-family: 'JetBrains Mono', monospace; font-size: 8.5px;
+  font-weight: 600; letter-spacing: .02em; color: var(--mut); margin-top: 2px;
 }
-.credit-spare b { color: var(--ink); font-weight: 600; }
-.credit-spare .v {
-  font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px;
-  color: var(--credit); white-space: nowrap;
+.card .vl small.sp { color: var(--credit); }
+.crd-chev { color: var(--faint); font-size: 17px; line-height: 1; margin-left: -3px; flex-shrink: 0; }
+
+/* the sheet */
+.crs-pays {
+  background: var(--bg2); border: 1px solid var(--line); border-radius: 14px;
+  padding: 12px 13px; text-align: left;
 }
+.crs-pays .k {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--mut);
+}
+.crs-pays .v {
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 28px;
+  letter-spacing: -.02em; line-height: 1.15; margin-top: 2px; font-variant-numeric: tabular-nums;
+}
+.crs-pays .d { font-size: 11.5px; color: var(--mut); line-height: 1.45; }
+.crs-pays .d b { color: var(--ink); font-weight: 600; }
+.crs-choices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 11px; }
+.crs-choices button {
+  border: 1px solid var(--line); background: var(--bg2); color: var(--ink); border-radius: 11px;
+  padding: 8px 4px; cursor: pointer; font-family: 'Space Grotesk', sans-serif; font-weight: 600;
+  font-size: 13px; line-height: 1.2; font-variant-numeric: tabular-nums; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.crs-choices button small {
+  display: block; font-family: 'JetBrains Mono', monospace; font-size: 8px; font-weight: 600;
+  color: var(--mut); margin-top: 3px; letter-spacing: .03em; text-transform: uppercase;
+}
+.crs-choices button.on { border-color: var(--credit); background: var(--credit-s); color: var(--credit); }
+.crs-choices button.on small { color: var(--credit); }
+.crs-foot { margin-top: 8px; font-size: 11.5px; color: var(--mut); text-align: left; line-height: 1.45; }
+.crs-foot b { color: var(--ink); font-weight: 600; }
+.crs-foot .worse { color: var(--floor); font-weight: 600; }
+.crs-foot .better { color: var(--pos); font-weight: 600; }
+.crs-links { margin-top: 14px; border-top: 1px solid var(--line2); }
+.crs-link {
+  display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: none;
+  border-bottom: 1px solid var(--line2); padding: 11px 2px; cursor: pointer; text-align: left; color: var(--ink);
+}
+.crs-link .lt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.crs-link .n { font-size: 13px; font-weight: 600; }
+.crs-link .s { font-size: 11px; color: var(--mut); }
+.crs-link .go { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; color: var(--credit); }
