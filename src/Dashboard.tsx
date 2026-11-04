@@ -1161,7 +1161,6 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // can be changed here to the minimum, whatever is spare, or your own
   // amount. A change here is for this cycle only.
   const planMode = rawCredit ? planModeOf(rawCredit) : 'minimum'
-  const creditSpareCents = activeCycle.creditSpareCents ?? 0
   const extraOnDueOnly = !!rawCredit && isMonthlyCard(rawCredit) && rawCredit.extra_timing === 'due_cycle'
   // Does the plan's extra go out in this cycle? Not in a cycle without the
   // due date when the user chose to pay extra once a month.
@@ -1169,6 +1168,23 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const cycleOverride = (forecastRows?.creditOverrideRows ?? [])
     .find((o: any) => o.cycle_start === activeCycle.startDate) ?? null
   const projectedCycles = cycles.filter((c: any) => !c.isHistorical)
+
+  // ── spare: the most this cycle can pay without breaking the floor later ──
+  // Not simply "what this cycle has above the floor". On a set-extra or
+  // minimum plan, later cycles still need the money that builds up above the
+  // floor — sweeping it all now overdrew the account a few cycles later. A
+  // payment made now lowers every later cycle by the same amount, so the
+  // most it can grow is the smallest headroom from here to the end of the
+  // forecast. On a spare plan that headroom is zero, so spare = the plan.
+  const creditFromIdx = projectedCycles.findIndex((c: any) => c.startDate === activeCycle.startDate)
+  const creditHeadroomCents = creditFromIdx >= 0
+    ? Math.min(...projectedCycles.slice(creditFromIdx).map((c: any) => c.committedClosingBalanceCents - floorCents))
+    : 0
+  const creditOwedBeforePayCents = creditLeftCents + creditPaymentCents
+  const creditSpareCents = Math.max(
+    creditMinimumCents,
+    Math.min(creditOwedBeforePayCents, creditPaymentCents + creditHeadroomCents)
+  )
   const planName = planMode === 'spare' ? "whatever's spare"
     : planMode === 'extra' ? `minimum + ${fmt(rawCredit?.strategy_extra_cents ?? 0, false)}`
     : 'minimum only'
@@ -1198,17 +1214,15 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   function adjRow(): any | null {
     const base = { cycle_start: activeCycle.startDate }
     if (adjPick === 'plan')    return null
-    if (adjPick === 'spare')   return { ...base, extra_cents: 0, choice: 'spare' }
+    // Saved as an amount, worked out when you choose it. See creditSpareCents.
+    if (adjPick === 'spare')   return { ...base, extra_cents: Math.max(0, creditSpareCents - creditMinimumCents), choice: 'extra' }
     if (adjPick === 'minimum') return { ...base, extra_cents: 0, choice: 'extra' }
     return { ...base, extra_cents: Math.max(0, adjOtherCents - creditMinimumCents), choice: 'extra' }
   }
   const planPreview   = adjOpen ? creditPreview(null) : []
   const planHereCents = paymentHere(planPreview)
-  const sparePreview  = adjOpen ? creditPreview({ cycle_start: activeCycle.startDate, extra_cents: 0, choice: 'spare' }) : []
-  const spareHereCents = paymentHere(sparePreview)
   const adjPreview    = !adjOpen ? []
     : adjPick === 'plan' ? planPreview
-    : adjPick === 'spare' ? sparePreview
     : creditPreview(adjRow())
   const adjPaymentCents = paymentHere(adjPreview)
   // What a confirmed payment recorded, for the paid state.
@@ -1236,11 +1250,18 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   function interestIn(list: any[]): number {
     return list.reduce((sum: number, c: any) => sum + (c.creditInterestCents ?? 0), 0)
   }
-  const nowFrom = projectedCycles.findIndex((c: any) => c.startDate === activeCycle.startDate)
-  const nowAhead: any[] = nowFrom >= 0 ? projectedCycles.slice(nowFrom) : []
+  // Compared with the PLAN (no choice for this cycle), not with whatever this
+  // cycle currently holds — "1 cycle later than your plan" says plainly that
+  // a one-cycle change only moves the payoff by a little.
+  const planFrom = planPreview.findIndex((c: any) => c.startDate === activeCycle.startDate)
+  const planAhead: any[] = planFrom >= 0 ? planPreview.slice(planFrom) : []
   const adjAhead: any[] = adjFrom >= 0 ? adjPreview.slice(adjFrom) : []
   const adjCleared = clearedIn(adjAhead)
-  const adjInterestDiff = interestIn(adjAhead) - interestIn(nowAhead)
+  const planCleared = clearedIn(planAhead)
+  const clearedShift = adjCleared && planCleared
+    ? adjAhead.indexOf(adjCleared) - planAhead.indexOf(planCleared)
+    : null
+  const adjInterestDiff = interestIn(adjAhead) - interestIn(planAhead)
 
   /* ── savings actions ──────────────────────────────────────────────
    * Unlike a credit payment there is no due date — you can move savings any
@@ -2847,7 +2868,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                   {!adjOtherTooLow && adjPaymentCents > creditMinimumCents && <> + extra <b>{fmt(adjPaymentCents - creditMinimumCents, false)}</b></>}
                   {' · '}
                   {adjPick === 'plan' ? `your plan (${planName})`
-                    : adjPick === 'spare' ? 'this cycle only · follows the cycle'
+                    : adjPick === 'spare' ? 'this cycle only · the most it can pay with every later cycle above your floor'
                     : 'this cycle only'}
                 </div>
                 <div className="crs-choices">
@@ -2858,7 +2879,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                     {fmt(creditMinimumCents, false)}<small>{creditMinimumCents > 0 ? 'minimum' : 'none due'}</small>
                   </button>
                   <button type="button" className={adjPick === 'spare' ? 'on' : ''} onClick={() => setAdjPick('spare')}>
-                    {fmt(spareHereCents, false)}<small>spare</small>
+                    {fmt(creditSpareCents, false)}<small>spare</small>
                   </button>
                   <button type="button" className={adjPick === 'other' ? 'on' : ''} onClick={() => setAdjPick('other')}>
                     Other<small>type it</small>
@@ -2931,12 +2952,19 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                 {adjCleared
                   ? <>Card cleared in the cycle starting <b>{cycleDateLabel(adjCleared.startDate, creditBaseYear)}</b></>
                   : <>Card not cleared within the {adjAhead.length} cycles forecast</>}
-                {' · '}
-                {Math.abs(adjInterestDiff) < 100
-                  ? 'same interest as now'
-                  : <span className={adjInterestDiff > 0 ? 'worse' : 'better'}>
-                      {(adjInterestDiff > 0 ? '+' : '−') + fmt(Math.abs(adjInterestDiff), false)} interest vs now
-                    </span>}
+                {adjPick !== 'plan' && clearedShift !== null && (
+                  <>{' · '}{clearedShift === 0 ? 'same as your plan'
+                    : <span className={clearedShift > 0 ? 'worse' : 'better'}>
+                        {Math.abs(clearedShift)} cycle{Math.abs(clearedShift) === 1 ? '' : 's'} {clearedShift > 0 ? 'later' : 'sooner'} than your plan
+                      </span>}</>
+                )}
+                {adjPick !== 'plan' && (
+                  <>{' · '}{Math.abs(adjInterestDiff) < 100
+                    ? 'same interest'
+                    : <span className={adjInterestDiff > 0 ? 'worse' : 'better'}>
+                        {(adjInterestDiff > 0 ? '+' : '−') + fmt(Math.abs(adjInterestDiff), false)} interest
+                      </span>}</>
+                )}
               </div>
             </>}
 
