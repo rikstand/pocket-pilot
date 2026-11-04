@@ -8,12 +8,13 @@ import {
 } from './lib/repository'
 import { loadForecast, projectFromRows } from './lib/forecast'
 import {
-  projectCreditPayoff, maxAffordableExtraCents, firstFloorBreach,
+  projectCreditPayoff, maxAffordableExtraCents, firstFloorBreach, projectSparePayoff,
 } from './engine/credit'
-import type { CreditProjection } from './engine/credit'
+import type { CreditProjection, SpareProjection } from './engine/credit'
 import {
-  creditModelFrom, buildMinimumDueSchedule, carriedCardBalance,
+  creditModelFrom, buildMinimumDueSchedule, buildExtraSchedule, carriedCardBalance,
   committedPlanCheck, cycleDaysOf, confirmedPaymentsFrom, predictedBalanceOn,
+  planModeOf, isMonthlyCard as isMonthly,
 } from './lib/creditSchedule'
 import type { ConfirmedPayment } from './lib/creditSchedule'
 import { parseDate, formatDate, addDays } from './engine/dates'
@@ -33,9 +34,16 @@ const CYCLES_AHEAD = 4
 // The chart always spans this many cycles, whichever strategy is picked, so
 // switching only redraws the line — the scale never moves under you.
 const CHART_CYCLES = 60
+// The plan-fit check and "max that fits" look this far ahead — the same as the
+// Cycle screen, so the two pages never disagree about whether a plan fits.
 const FORECAST_CYCLES = 24
+// "Whatever's spare" needs each cycle's real spare to say when the card
+// clears, so the forecast runs this far for it: five years of fortnights.
+// Past it, the page says "more than 5 years" rather than guessing.
+const SPARE_HORIZON = 130
+const SPARE_HORIZON_LABEL = '5 years'
 
-type StrategyKey = 'minimum' | 'extra' | 'max'
+type StrategyKey = 'minimum' | 'extra' | 'spare'
 
 export default function CreditPage({ accountId }: { userId: string; accountId: string }) {
   const { activeAccount } = useAccount()
@@ -68,6 +76,7 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
   const [fSpend, setFSpend] = useState('0')
   const [fFreq,  setFFreq]  = useState<'per_cycle' | 'monthly'>('monthly')
   const [fDueDay, setFDueDay] = useState('15')
+  const [fTiming, setFTiming] = useState<'every_cycle' | 'due_cycle'>('every_cycle')
   const [formError, setFormError] = useState('')
 
   // update-balance sheet
@@ -95,15 +104,16 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
           const committedExtra = creditCard.strategy_extra_cents ?? 0
           setExtraStr(String(committedExtra / 100))
           // Open on the plan you committed to, so the page starts by showing it.
-          setStrategy(creditCard.strategy_committed && committedExtra === 0 ? 'minimum' : 'extra')
+          setStrategy(creditCard.strategy_committed ? planModeOf(creditCard) : 'extra')
         }
 
         // Projected WITHOUT the card: what each cycle closes with before any
         // card payment. Feeding it a projection that already contains card
-        // payments would count them twice.
+        // payments would count them twice. Run far enough for a spare plan to
+        // find its payoff; the fit checks only look at the first stretch.
         setCycles(projectFromRows(
           { ...forecast, creditCard: null, creditOverrideRows: [] },
-          floorCents, FORECAST_CYCLES
+          floorCents, SPARE_HORIZON
         ))
       } catch (e: any) { setError(e.message) }
       finally { setLoading(false) }
@@ -206,10 +216,12 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
   const model = creditModelFrom(card)
   const cycleDays = cycleDaysOf(cycles[0])
   const firstCycleStart = cycles[0]?.startDate ?? todayStr()
-  const isMonthlyCard = (card.payment_frequency ?? 'per_cycle') === 'monthly'
-    && !!card.payment_anchor_date
+  const isMonthlyCard = isMonthly(card)
   // Which cycles carry a minimum, counted forward from the current one.
   const minimumDue = buildMinimumDueSchedule(card, firstCycleStart, cycleDays)
+  // Which cycles the extra goes out in — the user's choice in card settings.
+  const extraDue = buildExtraSchedule(card, firstCycleStart, cycleDays)
+  const extraOnDueOnly = isMonthlyCard && card.extra_timing === 'due_cycle'
 
   // ── keeping the balance current ───────────────────────────────────
   // A measured balance is only true on the day it was taken, so it is carried
@@ -224,43 +236,58 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
   // the last one carried forward to the start of this cycle.
   const shownBalanceCents = drift.measuredThisCycle ? measuredCents : balanceCents
 
+  // What each cycle closes with before the card. All of it for a spare plan's
+  // payoff; the first FORECAST_CYCLES for the fit checks.
   const surplusSeries = cycles.map(c => c.committedClosingBalanceCents)
+  const checkSurplus  = surplusSeries.slice(0, FORECAST_CYCLES)
+  const checkCycles   = cycles.slice(0, FORECAST_CYCLES)
 
   const extraCents = Math.max(0, Math.round(parseFloat(extraStr || '0') * 100))
-  const maxExtraCents = maxAffordableExtraCents(balanceCents, model, cycleDays, surplusSeries, floorCents, minimumDue)
+  const maxExtraCents = maxAffordableExtraCents(balanceCents, model, cycleDays, checkSurplus, floorCents, minimumDue, extraDue)
 
   const minProj: CreditProjection = projectCreditPayoff(balanceCents, model, 0, cycleDays, undefined, minimumDue)
-  const extProj: CreditProjection = projectCreditPayoff(balanceCents, model, extraCents, cycleDays, undefined, minimumDue)
-  const maxProj: CreditProjection = projectCreditPayoff(balanceCents, model, maxExtraCents, cycleDays, undefined, minimumDue)
-  const active = strategy === 'minimum' ? minProj : strategy === 'max' ? maxProj : extProj
-  const activeExtra = strategy === 'minimum' ? 0 : strategy === 'max' ? maxExtraCents : extraCents
+  const extProj: CreditProjection = projectCreditPayoff(balanceCents, model, extraCents, cycleDays, undefined, minimumDue, extraDue)
+  const spareProj: SpareProjection = projectSparePayoff(balanceCents, model, cycleDays, surplusSeries, floorCents, minimumDue, extraDue)
+  const active: CreditProjection = strategy === 'minimum' ? minProj : strategy === 'spare' ? spareProj : extProj
+  const activeExtra = strategy === 'extra' ? extraCents : 0
 
   // ── what is committed, and does it still fit? ─────────────────────
-  // Committing stores the extra as a number. The forecast keeps moving, so
-  // the committed plan is checked against it every time this page loads.
+  // A set extra is stored as a number, and the forecast keeps moving, so it
+  // is checked against the forecast every time this page loads. A spare plan
+  // is worked out from the forecast itself, so it cannot stop fitting.
   const committed = !!card.strategy_committed
+  const committedMode = planModeOf(card)
   const committedExtra = card.strategy_extra_cents ?? 0
-  const isCurrentPlan = committed && activeExtra === committedExtra
-  const planCheck = committedPlanCheck(card, cycles, floorCents, payments)
-  // The plan on screen, if it is not the committed one.
+  const isCurrentPlan = committed && strategy === committedMode
+    && (strategy !== 'extra' || extraCents === committedExtra)
+  const planCheck = committedPlanCheck(card, checkCycles, floorCents, payments)
+  // The plan on screen, if it is not the committed one. Minimum only and
+  // whatever's spare only break the floor where the minimum alone does.
   const previewBreach = isCurrentPlan
     ? null
-    : firstFloorBreach(balanceCents, model, activeExtra, cycleDays, surplusSeries, floorCents, minimumDue)
+    : firstFloorBreach(balanceCents, model, activeExtra, cycleDays, checkSurplus, floorCents, minimumDue, extraDue)
 
-  function planDesc(extra: number): string {
-    return extra > 0 ? `minimum + ${fmt(extra, false)} a cycle` : 'minimum only'
+  function planDesc(mode: StrategyKey, extra: number): string {
+    if (mode === 'spare') return "whatever's spare"
+    return mode === 'extra' && extra > 0 ? `minimum + ${fmt(extra, false)} a cycle` : 'minimum only'
+  }
+  function beyond(proj: CreditProjection): boolean {
+    return (proj as SpareProjection).beyondForecast === true
   }
   function payoffDateStr(proj: CreditProjection): string {
+    if (beyond(proj)) return `more than ${SPARE_HORIZON_LABEL}`
     if (proj.neverClears || proj.cyclesToPayoff === null) return 'never'
     const d = addDays(parseDate(firstCycleStart), cycleDays * proj.cyclesToPayoff)
     return fmtDateLong(formatDate(d))
   }
   function payoffMonth(proj: CreditProjection): string {
+    if (beyond(proj)) return `${SPARE_HORIZON_LABEL}+`
     if (proj.neverClears || proj.cyclesToPayoff === null) return 'never'
     const d = addDays(parseDate(firstCycleStart), cycleDays * proj.cyclesToPayoff)
     return d.toLocaleDateString('en-NZ', { month: 'short', year: 'numeric' })
   }
   function payoffLabel(proj: CreditProjection): string {
+    if (beyond(proj)) return `not cleared within ${SPARE_HORIZON_LABEL}`
     if (proj.neverClears || proj.cyclesToPayoff === null) return 'balance grows — never paid off'
     const years = proj.cyclesToPayoff * cycleDays / 365
     return `${proj.cyclesToPayoff} cycles · ${years < 1 ? Math.round(years * 12) + ' months' : years.toFixed(1) + ' years'}`
@@ -280,7 +307,7 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
 
   async function doCommit() {
     setSaving(true)
-    try { await commitCreditStrategy(card.id, activeExtra); reload() }
+    try { await commitCreditStrategy(card.id, strategy, activeExtra); reload() }
     catch (e: any) { alert('Could not commit: ' + e.message) }
     finally { setSaving(false) }
   }
@@ -309,6 +336,7 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
     setFSpend(String(card.assumed_spend_cents / 100))
     setFFreq(card.payment_frequency ?? 'per_cycle')
     setFDueDay(card.payment_anchor_date ? String(parseDate(card.payment_anchor_date).getDate()) : '15')
+    setFTiming(card.extra_timing === 'due_cycle' ? 'due_cycle' : 'every_cycle')
     setSettingsError('')
     setSettingsOpen(true)
   }
@@ -337,6 +365,8 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
         assumed_spend_cents: spendCents,
         payment_frequency: fFreq,
         payment_anchor_date: anchor,
+        // Only a monthly card has a cycle without the due date.
+        extra_timing: fFreq === 'monthly' ? fTiming : 'every_cycle',
       })
       setSettingsOpen(false); reload()
     } catch (e: any) { setSettingsError(e.message) }
@@ -357,9 +387,13 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
   }
   const chartMax = Math.max(balanceCents, 1)
   // The committed plan's payment this cycle, for predicting today's balance.
-  const plannedThisCycle = projectCreditPayoff(
-    balanceCents, model, committed ? committedExtra : 0, cycleDays, 1, minimumDue
-  ).lines[0]?.paymentCents ?? 0
+  const plannedThisCycle = !committed
+    ? (minProj.lines[0]?.paymentCents ?? 0)
+    : committedMode === 'spare'
+      ? (spareProj.lines[0]?.paymentCents ?? 0)
+      : projectCreditPayoff(
+          balanceCents, model, committedMode === 'extra' ? committedExtra : 0, cycleDays, 1, minimumDue, extraDue
+        ).lines[0]?.paymentCents ?? 0
   const predictedToday = predictedBalanceOn(
     card, balanceCents, firstCycleStart, cycleDays, todayStr(), plannedThisCycle, payments
   )
@@ -429,7 +463,8 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
           <div className="cm-v">
             {(card.apr_basis_points / 100).toFixed(2)}% p.a. · minimum {Number(card.min_payment_pct)}% monthly
             {isMonthlyCard
-              ? <> · due {parseDate(card.payment_anchor_date).getDate()}{'th'} of the month</>
+              ? <> · due {parseDate(card.payment_anchor_date).getDate()}{'th'} of the month
+                  · extra {extraOnDueOnly ? 'with the minimum' : 'every pay cycle'}</>
               : <> · paid every cycle</>}
           </div>
         </div>
@@ -455,7 +490,10 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
       <div className="credit-res">
         <div className="l">This cycle</div>
         <div className="v">{fmt(thisCycle?.paymentCents ?? 0, false)}</div>
-        <div className="d">{isCurrentPlan ? 'your plan' : committed ? 'if you recommit' : 'if you commit'}</div>
+        <div className="d">
+          {isCurrentPlan ? 'your plan' : committed ? 'if you recommit' : 'if you commit'}
+          {strategy === 'spare' && ' · changes each cycle'}
+        </div>
       </div>
     </div>
   )
@@ -464,7 +502,7 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
     <div className="credit-chart-wrap">
       <div className="credit-chart-k">
         <span>Balance to zero · {CHART_CYCLES} cycles</span>
-        <span>{active.neverClears ? 'balance grows' : payoffLabel(active)}</span>
+        <span>{active.neverClears && !beyond(active) ? 'balance grows' : payoffLabel(active)}</span>
       </div>
       <div className="credit-chart">
         <svg viewBox="0 0 320 74" preserveAspectRatio="none">
@@ -494,7 +532,7 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
       ) : strategy === 'extra' ? (
         <div className="credit-slider">
           <div className="credit-slider-top">
-            <span className="l">Extra per cycle</span>
+            <span className="l">Extra {extraOnDueOnly ? 'each month' : 'per cycle'}</span>
             <span className="v">{fmt(extraCents, false)}</span>
           </div>
           <input type="range" min={0} max={Math.max(maxExtraCents, 100)} step={500}
@@ -505,10 +543,11 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
             <span>{fmt(maxExtraCents, false)} · max that fits</span>
           </div>
         </div>
-      ) : strategy === 'max' ? (
-        <>The most you can pay <b>every</b> cycle without any cycle closing under
-          your {fmt(floorCents, false)} floor: {fmt(maxExtraCents, false)} on top of the minimum. Saved as
-          that amount when you commit — you'll be told if it stops fitting.</>
+      ) : strategy === 'spare' ? (
+        <>Each {extraOnDueOnly ? 'month' : 'cycle'} pays the minimum plus whatever is above your{' '}
+          <b>{fmt(floorCents, false)}</b> floor <b>in that cycle</b> — less when a big bill lands, more
+          after it. Worked out fresh every cycle, so it never needs recommitting.
+          {beyond(spareProj) && <> Not cleared within the {SPARE_HORIZON_LABEL} the forecast covers.</>}</>
       ) : (
         <>Only what the card agreement asks. Clears {payoffDateStr(minProj)} and costs
           {' '}<b>{fmt(minProj.totalInterestCents, false)}</b> in interest
@@ -526,12 +565,30 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
 
       {floorCents === 0 && (
         <div className="skipnote" style={{ margin:'8px 16px 0' }}>
-          Your safety floor is <b>$0</b>, so "max available" means draining every cycle to nothing.
-          Set a floor in Settings before treating that number as a plan.
+          Your safety floor is <b>$0</b>, so "whatever's spare" means paying every cycle down to nothing.
+          Set a floor in Settings before choosing it.
         </div>
       )}
 
       <div style={{ padding:'8px 16px 0' }}>
+        <div className={`modeopt${strategy === 'spare' ? ' sel' : ''}`} onClick={() => setStrategy('spare')}>
+          <div className="mi" style={{ background:'var(--pos-s)', color:'var(--pos)' }}>▲</div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div className="mt">Whatever's spare</div>
+            <div className="ms">{payoffLabel(spareProj)}{!beyond(spareProj) && <> · {fmt(spareProj.totalInterestCents, false)} interest</>}</div>
+          </div>
+          <div className="strat-amt">{fmt((spareProj.lines[0]?.paymentCents ?? 0), false)}<small>changes each cycle</small></div>
+        </div>
+
+        <div className={`modeopt${strategy === 'extra' ? ' sel' : ''}`} onClick={() => setStrategy('extra')}>
+          <div className="mi" style={{ background:'var(--credit-s)', color:'var(--credit)' }}>+</div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div className="mt">A set extra</div>
+            <div className="ms">{payoffLabel(extProj)} · {fmt(extProj.totalInterestCents, false)} interest</div>
+          </div>
+          <div className="strat-amt">{fmt((extProj.lines[0]?.paymentCents ?? 0), false)}<small>min + {fmt(extraCents, false)}</small></div>
+        </div>
+
         <div className={`modeopt${strategy === 'minimum' ? ' sel' : ''}`} onClick={() => setStrategy('minimum')}>
           <div className="mi" style={{ background:'var(--floor-s)', color:'var(--floor)' }}>!</div>
           <div style={{ flex:1, minWidth:0 }}>
@@ -539,24 +596,6 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
             <div className="ms">{payoffLabel(minProj)} · {fmt(minProj.totalInterestCents, false)} interest</div>
           </div>
           <div className="strat-amt">{fmt(minProj.lines[0]?.minimumCents ?? 0, false)}<small>falling</small></div>
-        </div>
-
-        <div className={`modeopt${strategy === 'extra' ? ' sel' : ''}`} onClick={() => setStrategy('extra')}>
-          <div className="mi" style={{ background:'var(--credit-s)', color:'var(--credit)' }}>+</div>
-          <div style={{ flex:1, minWidth:0 }}>
-            <div className="mt">Minimum + extra</div>
-            <div className="ms">{payoffLabel(extProj)} · {fmt(extProj.totalInterestCents, false)} interest</div>
-          </div>
-          <div className="strat-amt">{fmt((extProj.lines[0]?.paymentCents ?? 0), false)}<small>min + {fmt(extraCents, false)}</small></div>
-        </div>
-
-        <div className={`modeopt${strategy === 'max' ? ' sel' : ''}`} onClick={() => setStrategy('max')}>
-          <div className="mi" style={{ background:'var(--pos-s)', color:'var(--pos)' }}>▲</div>
-          <div style={{ flex:1, minWidth:0 }}>
-            <div className="mt">Max available</div>
-            <div className="ms">{payoffLabel(maxProj)} · {fmt(maxProj.totalInterestCents, false)} interest</div>
-          </div>
-          <div className="strat-amt">{fmt((maxProj.lines[0]?.paymentCents ?? 0), false)}<small>min + {fmt(maxExtraCents, false)}</small></div>
         </div>
       </div>
 
@@ -574,7 +613,7 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
           {planCheck.minimumAloneBreaks
             ? <>Even the minimum alone takes the cycle starting {fmtDate(planCheck.breach.startDate)} under
                 your {fmt(floorCents, false)} floor — your forecast is tight there before the card.</>
-            : <>Since you committed ({planDesc(committedExtra)}), your forecast has changed: the cycle
+            : <>Since you committed ({planDesc(committedMode, committedExtra)}), your forecast has changed: the cycle
                 starting {fmtDate(planCheck.breach.startDate)} would close at {fmt(planCheck.breach.closingCents, false)},
                 under your {fmt(floorCents, false)} floor. Up to {fmt(planCheck.maxExtraCents, false)} extra a cycle fits now.</>}
         </div>
@@ -588,15 +627,17 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
               onClick={doUncommit} disabled={saving}>uncommit</button>
           </div>
           <div className="credit-subact">
-            {planDesc(committedExtra)}
-            {!planCheck?.breach && planCheck && planCheck.maxExtraCents >= committedExtra + 5000
-              && <> · up to {fmt(planCheck.maxExtraCents, false)} extra would still fit</>}
+            {planDesc(committedMode, committedExtra)}
+            {committedMode === 'spare'
+              ? <> · works itself out every cycle, never needs recommitting</>
+              : committedMode === 'extra' && !planCheck?.breach && planCheck && planCheck.maxExtraCents >= committedExtra + 5000
+                && <> · up to {fmt(planCheck.maxExtraCents, false)} extra would still fit</>}
           </div>
         </>
       ) : (
         <>
           <button className="credit-btn" onClick={doCommit} disabled={saving}>
-            {saving ? 'Saving…' : `${committed ? 'Recommit' : 'Commit'}: ${planDesc(activeExtra)} →`}
+            {saving ? 'Saving…' : `${committed ? 'Recommit' : 'Commit'}: ${planDesc(strategy, activeExtra)} →`}
           </button>
           <div className="credit-subact">
             {previewBreach
@@ -605,9 +646,9 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
                   close at {fmt(previewBreach.closingCents, false)}, under your floor.
                 </span>
               : committed
-                ? <>currently committed: {planDesc(committedExtra)}</>
-                : active.neverClears
-                  ? 'adds a credit line to every cycle — balance still grows'
+                ? <>currently committed: {planDesc(committedMode, committedExtra)}</>
+                : active.neverClears || beyond(active)
+                  ? 'adds a credit line to every cycle until the card clears'
                   : `adds a credit line to the next ${active.cyclesToPayoff} cycles, ending ${payoffDateStr(active)}`}
           </div>
         </>
@@ -762,6 +803,24 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
                 <p className="hint">
                   Capped at 28 so it falls in every month. If your real due date is later,
                   use 28 — the difference is at most a few days.
+                </p>
+              </div>
+            )}
+
+            {fFreq === 'monthly' && (
+              <div className="field">
+                <label>Extra payments</label>
+                <div className="floor-presets">
+                  <button className={fTiming === 'every_cycle' ? 'on' : ''}
+                    onClick={() => setFTiming('every_cycle')}>Every pay cycle</button>
+                  <button className={fTiming === 'due_cycle' ? 'on' : ''}
+                    onClick={() => setFTiming('due_cycle')}>Once a month, with the minimum</button>
+                </div>
+                <p className="hint">
+                  {fTiming === 'every_cycle'
+                    ? 'Anything above the minimum goes out each pay cycle, including ones without the due date. Pays the card down a little faster.'
+                    : 'Anything above the minimum goes out with the monthly payment. A cycle without the due date keeps its money, and it is counted in the next payment.'}
+                  {' '}You can still change any single cycle from the Cycle screen.
                 </p>
               </div>
             )}

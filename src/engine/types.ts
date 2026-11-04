@@ -49,6 +49,21 @@ export interface CreditAccount {
   assumedSpendCents: number      // expected new spending per cycle
   strategyExtraCents: number     // committed extra above the minimum
   strategyCommitted: boolean     // nothing reaches the forecast until true
+
+  // How the committed plan pays, chosen by the user on the Credit page:
+  //   'minimum' — only what the card agreement asks
+  //   'extra'   — the minimum plus strategyExtraCents
+  //   'spare'   — the minimum plus whatever the cycle has above the floor,
+  //               worked out fresh in every cycle
+  // Optional so older callers still compile: missing means 'extra', which is
+  // exactly what the engine did before plans had a mode.
+  strategyMode?: 'minimum' | 'extra' | 'spare'
+
+  // On a card with a monthly due date: does the extra go out with every pay
+  // cycle, or only in the cycle that holds the due date? The user's choice,
+  // in card settings. Ignored on a card paid every cycle. Missing means
+  // 'every_cycle', the old behaviour.
+  extraTiming?: 'every_cycle' | 'due_cycle'
   currentBalanceCents: number    // from the latest balance snapshot
 
   // When the payment is actually due. 'per_cycle' shares the monthly minimum
@@ -125,11 +140,16 @@ export interface ExpenseOverride {
   amountCents: number
 }
 
-// Adjusts ONLY the extra portion, for one cycle. The minimum is contractual
-// and deliberately not overridable.
+// The user's choice for ONE cycle. The minimum is contractual and
+// deliberately not overridable.
+//   choice 'extra' — the minimum plus extraCents (0 = minimum only)
+//   choice 'spare' — the minimum plus whatever this cycle has above the
+//                    floor, kept live: if the cycle changes after the choice,
+//                    the payment follows
 export interface CreditExtraOverride {
   cycleStart: string
   extraCents: number
+  choice?: 'extra' | 'spare'   // missing means 'extra', as before
 }
 
 // A card payment confirmed with the amount that actually went out. The
@@ -146,6 +166,11 @@ export interface CycleInput {
   startDate: string
   numCycles: number
   safetyFloorCents: number
+  // The floor a "whatever's spare" payment keeps the account above. Always
+  // the account's real floor, even when a caller passes a different
+  // safetyFloorCents to recompute breaches (Settings passes 0). Defaults to
+  // safetyFloorCents.
+  spareFloorCents?: number
   creditAccount?: CreditAccount | null
   creditOverrides?: CreditExtraOverride[]
   creditPayments?: CreditPayment[]
@@ -181,6 +206,9 @@ export interface CycleResult {
   creditExtraCents: number      // discretionary, adjustable per cycle
   creditPaymentCents: number    // minimum + extra, deducted from balance
   creditClosingBalanceCents: number
+  // What this cycle has above the spare floor BEFORE the card payment — the
+  // most a "whatever's spare" payment could be. Zero when no committed card.
+  creditSpareCents: number
 
   committedClosingBalanceCents: number
   potentialClosingBalanceCents: number

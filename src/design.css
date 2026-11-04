@@ -2143,3 +2143,19 @@ body.is-desktop .undo-toast { bottom: 24px; left: calc(50% + 119px); }
   font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px;
 }
 .credit-fitnote { margin: 10px 16px 0; }
+
+/* ══════════════════════════════════════════════════════════════════
+   CYCLE CARD — spare above the floor (credit part 3)
+   What this cycle has above the floor before the card payment: the most a
+   "whatever's spare" payment could be.
+   ══════════════════════════════════════════════════════════════════ */
+.credit-spare {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+  margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--line2);
+  font-size: 11.5px; color: var(--mut);
+}
+.credit-spare b { color: var(--ink); font-weight: 600; }
+.credit-spare .v {
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px;
+  color: var(--credit); white-space: nowrap;
+}

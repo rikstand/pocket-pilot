@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
 import { getWishlistItems, updateAccount } from './lib/repository'
-import { loadForecast } from './lib/forecast'
+import { loadForecast, projectFromRows } from './lib/forecast'
+import type { ForecastResult } from './lib/forecast'
+import { planModeOf } from './lib/creditSchedule'
 
 const PROJECT_CYCLES = 6
 
@@ -13,7 +15,7 @@ export default function SettingsPage({ accountId }: { userId: string; accountId:
   const fmt = moneyFormatter(activeAccount?.currency_code)
   const sym = currencySymbol(activeAccount?.currency_code)
 
-  const [cycles,  setCycles]  = useState<any[]>([])
+  const [rows,    setRows]    = useState<ForecastResult | null>(null)
   const [wishlist, setWishlist] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState('')
@@ -33,13 +35,12 @@ export default function SettingsPage({ accountId }: { userId: string; accountId:
       try {
         const [wish, forecast] = await Promise.all([
           getWishlistItems(accountId),
-          // Floor of 0 so the impact panel can recompute breaches against a
-          // candidate floor without re-running the engine on every keystroke.
-          // Closing balances do not depend on the floor; only the flag does.
-          loadForecast(accountId, 0, { numCycles: PROJECT_CYCLES, safetyFloorCents: 0 }),
+          loadForecast(accountId, savedFloorCents, { numCycles: PROJECT_CYCLES }),
         ])
         setWishlist(wish.filter((w: any) => w.status === 'active'))
-        setCycles(forecast.cycles)
+        // Keep the rows, not just the cycles: the panel re-projects them
+        // against each candidate floor.
+        setRows(forecast)
       } catch (e: any) { setError(e.message) }
       finally { setLoading(false) }
     }
@@ -68,6 +69,14 @@ export default function SettingsPage({ accountId }: { userId: string; accountId:
   )
 
   /* ── impact of the candidate floor ───────────────────────────────── */
+  // Closing balances used to be independent of the floor, so this projected
+  // once at a floor of 0 and only re-checked the flags. A "whatever's spare"
+  // card plan breaks that: it pays everything above the floor, so the floor
+  // decides the card payments and every closing balance. So the forecast is
+  // re-projected against the candidate floor — six cycles, cheap enough to
+  // run on every keystroke, and identical to what saving would do.
+  const cycles = rows ? projectFromRows(rows, floorCents, PROJECT_CYCLES, floorCents) : []
+  const spareCard = !!rows?.creditCard?.strategy_committed && planModeOf(rows.creditCard) === 'spare'
   const closings = cycles.map(c => c.committedClosingBalanceCents)
   const breaches = closings.filter(v => v < floorCents).length
   const lowest   = closings.length ? Math.min(...closings) : 0
@@ -146,6 +155,13 @@ export default function SettingsPage({ accountId }: { userId: string; accountId:
           </div>
         )}
       </div>
+
+      {spareCard && (
+        <div className="skipnote" style={{ margin:'12px 16px 0' }}>
+          Your card plan pays <b>whatever is above this floor</b> each cycle, so a higher floor means
+          smaller card payments rather than flagged cycles, and a lower one pays the card off sooner.
+        </div>
+      )}
 
       {floorCents === 0 ? (
         <div className="skipnote" style={{ margin:'12px 16px 0', borderLeft:'2px solid var(--floor)', color:'var(--floor)' }}>

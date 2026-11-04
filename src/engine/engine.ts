@@ -59,17 +59,14 @@ function getAmountOn(
   return earliest?.amountCents ?? fallback
 }
 
-// Extra-payment override for a specific cycle, if one exists. Exact match on
-// cycle start — same lookup shape as amount versions, but not "latest wins",
-// because an override is a one-cycle exception rather than a new default.
-function getExtraForCycle(
+// The user's own choice for one cycle, if they made one. Exact match on cycle
+// start — an override is a one-cycle exception, not a new default.
+function overrideForCycle(
   overrides: CreditExtraOverride[] | undefined,
-  cycleStart: string,
-  fallbackExtraCents: number
-): number {
-  if (!overrides || overrides.length === 0) return fallbackExtraCents
-  const hit = overrides.find(o => o.cycleStart === cycleStart)
-  return hit ? hit.extraCents : fallbackExtraCents
+  cycleStart: string
+): CreditExtraOverride | null {
+  if (!overrides || overrides.length === 0) return null
+  return overrides.find(o => o.cycleStart === cycleStart) ?? null
 }
 
 /**
@@ -145,6 +142,7 @@ export function projectCycles(input: CycleInput): CycleResult[] {
     incomeSources, expenses, openingBalanceCents, startDate, numCycles,
     safetyFloorCents, creditAccount, creditOverrides, creditPayments, budgetSpend, expenseOverrides, savingsGoals,
   } = input
+  const spareFloorCents = input.spareFloorCents ?? safetyFloorCents
   const results: CycleResult[] = []
 
   // FIX: previously `incomeSources.find(s => !s.isPotential) ?? incomeSources[0]`,
@@ -240,23 +238,54 @@ export function projectCycles(input: CycleInput): CycleResult[] {
     let creditExtraCents          = 0
     let creditPaymentCents        = 0
     let creditClosingBalanceCents = 0
+    let creditSpareCents          = 0
 
     if (creditActive && (cardBalance > 0 || creditAccount!.assumedSpendCents > 0)) {
+      const card = creditAccount!
       const days = cycleDayCount(cycleStart, cycleEnd)
-      const extraForCycle = getExtraForCycle(
-        creditOverrides, cycleStart, creditAccount!.strategyExtraCents
-      )
+
       // A monthly card has one bill a month: the minimum falls due only in
       // the cycle holding the due date. This used to charge the full monthly
       // minimum in EVERY cycle — twice a month on a fortnightly pay cycle.
       // Same rule as the Credit page (lib/creditSchedule buildMinimumDueSchedule).
-      const isMonthly = creditAccount!.paymentFrequency === 'monthly' && !!creditAccount!.paymentAnchorDate
+      const isMonthly = card.paymentFrequency === 'monthly' && !!card.paymentAnchorDate
       const minimumIsDue = !isMonthly
-        || getOccurrencesInRange(creditAccount!.paymentAnchorDate!, 'monthly', cycleStart, cycleEnd).length > 0
+        || getOccurrencesInRange(card.paymentAnchorDate!, 'monthly', cycleStart, cycleEnd).length > 0
+
+      // What this cycle has above the floor before the card takes anything:
+      // income in, and every bill, budget, BNPL payment and savings goal out.
+      // Savings come first on purpose — a goal the user set is a decision too.
+      const beforeCardCents = committedBalance + committedIncomeCents
+        - fixedExpensesCents - variableExpensesCents - budgetExpensesCents
+        - savingsTotalCents
+      creditSpareCents = Math.max(0, beforeCardCents - spareFloorCents)
+
+      // The extra for this cycle. A choice made for this cycle wins; otherwise
+      // the plan decides, at the timing the user picked in card settings.
+      const ov = overrideForCycle(creditOverrides, cycleStart)
+      const planExtraApplies = !isMonthly || card.extraTiming !== 'due_cycle' || minimumIsDue
+      const useSpare = ov
+        ? ov.choice === 'spare'
+        : (card.strategyMode ?? 'extra') === 'spare' && planExtraApplies
+      let extraForCycle: number
+      if (useSpare) {
+        // Minimum first, then whatever is left above the floor. If the spare is
+        // less than the minimum, the minimum still goes out and this cycle
+        // closes under the floor — the card agreement is not optional.
+        const minOnly = stepCredit(cardBalance, card, 0, days, minimumIsDue)
+        extraForCycle = Math.max(0, creditSpareCents - minOnly.minimumCents)
+      } else if (ov) {
+        extraForCycle = ov.extraCents
+      } else if ((card.strategyMode ?? 'extra') === 'extra' && planExtraApplies) {
+        extraForCycle = card.strategyExtraCents
+      } else {
+        extraForCycle = 0
+      }
+
       // A payment confirmed with an amount is what actually went out.
       const confirmed = creditPayments?.find(p => p.cycleStart === cycleStart)
       const line = stepCredit(
-        cardBalance, creditAccount!, extraForCycle, days, minimumIsDue,
+        cardBalance, card, extraForCycle, days, minimumIsDue,
         confirmed ? confirmed.amountCents : null
       )
 
@@ -293,7 +322,7 @@ export function projectCycles(input: CycleInput): CycleResult[] {
       savingsTotalCents, savingsLines,
       creditOpeningBalanceCents, creditAssumedSpendCents, creditInterestCents,
       creditMinimumCents, creditExtraCents, creditPaymentCents,
-      creditClosingBalanceCents,
+      creditClosingBalanceCents, creditSpareCents,
       committedClosingBalanceCents, potentialClosingBalanceCents,
       safetyFloorCents,
       breachesFloor: committedClosingBalanceCents < safetyFloorCents,

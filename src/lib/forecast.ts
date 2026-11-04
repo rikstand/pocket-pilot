@@ -31,7 +31,7 @@ import type {
   CycleResult, IncomeSource, Expense, CreditAccount, CreditExtraOverride,
   BudgetSpendEntry, ExpenseOverride, SavingsGoal, CreditPayment,
 } from '../engine/types'
-import { carriedCardBalance, confirmedPaymentsFrom, cycleDaysOf } from './creditSchedule'
+import { carriedCardBalance, confirmedPaymentsFrom, cycleDaysOf, planModeOf } from './creditSchedule'
 import { formatDate, parseDate } from '../engine/dates'
 import { byNewest, latestVersion } from './versions'
 
@@ -114,8 +114,10 @@ export function toEngineCredit(
     minPaymentPct: Number(card.min_payment_pct),
     minPaymentFloorCents: card.min_payment_floor_cents,
     assumedSpendCents: card.assumed_spend_cents,
-    strategyExtraCents: card.strategy_extra_cents,
+    strategyExtraCents: card.strategy_extra_cents ?? 0,
     strategyCommitted: card.strategy_committed,
+    strategyMode: planModeOf(card),
+    extraTiming: card.extra_timing === 'due_cycle' ? ('due_cycle' as const) : ('every_cycle' as const),
     currentBalanceCents: startBalance,
     paymentFrequency: card.payment_frequency ?? 'per_cycle',
     paymentAnchorDate: card.payment_anchor_date ?? undefined,
@@ -129,10 +131,12 @@ export function toEngineCreditPayments(rows: any[]): CreditPayment[] {
     .map((r: any) => ({ cycleStart: r.cycle_start, amountCents: r.amount_cents }))
 }
 
+/** One-cycle choices. Rows from before the choice column read as a set extra. */
 export function toEngineCreditOverrides(rows: any[]): CreditExtraOverride[] {
   return (rows ?? []).map((o: any) => ({
     cycleStart: o.cycle_start,
-    extraCents: o.extra_cents,
+    extraCents: o.extra_cents ?? 0,
+    choice: o.choice === 'spare' ? ('spare' as const) : ('extra' as const),
   }))
 }
 
@@ -268,7 +272,9 @@ export async function loadForecast(
     budgetSpendRows, expenseOverrideRows,
     savingsGoalRows, savingsContributionRows, savingsOverrideRows, projectFrom,
   }
-  const cycles = projectFromRows(rows, options.safetyFloorCents ?? floorCents, numCycles)
+  // A spare plan always keeps the account above its REAL floor, even when
+  // the caller asks for breaches against a different one.
+  const cycles = projectFromRows(rows, options.safetyFloorCents ?? floorCents, numCycles, floorCents)
 
   return {
     cycles,
@@ -296,9 +302,14 @@ export async function loadForecast(
 export function projectFromRows(
   rows: Omit<ForecastResult, 'cycles'>,
   safetyFloorCents: number,
-  numCycles: number
+  numCycles: number,
+  // The floor a "whatever's spare" payment keeps the account above. Leave it
+  // out and it is safetyFloorCents, which is right for every caller that
+  // passes the account's own floor.
+  spareFloorCents?: number
 ): CycleResult[] {
   return projectCycles({
+    spareFloorCents: spareFloorCents ?? safetyFloorCents,
     incomeSources: toEngineIncome(rows.incomeRows),
     expenses: toEngineExpenses(rows.expenseRows),
     openingBalanceCents: rows.projectFrom?.opening_balance_cents ?? 0,

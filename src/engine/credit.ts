@@ -45,6 +45,14 @@ export interface CreditAccountModel {
  */
 export type MinimumDueSchedule = (cycleIndex: number) => boolean
 
+/**
+ * Tells the projection which cycles the chosen extra goes out in. On a monthly
+ * card the user can pay extra with every pay cycle, or only in the cycle that
+ * holds the due date — their choice, in card settings. Omit it and the extra
+ * goes out every cycle, which is the old behaviour.
+ */
+export type ExtraSchedule = (cycleIndex: number) => boolean
+
 export interface CreditCycleLine {
   openingBalanceCents: number
   assumedSpendCents: number
@@ -177,7 +185,8 @@ export function projectCreditPayoff(
   extraCents: number,
   cycleDays: number,
   maxCycles: number = MAX_PROJECTION_CYCLES,
-  minimumDue?: MinimumDueSchedule
+  minimumDue?: MinimumDueSchedule,
+  extraApplies?: ExtraSchedule
 ): CreditProjection {
   const lines: CreditCycleLine[] = []
   let balance = Math.max(0, startingBalanceCents)
@@ -196,7 +205,8 @@ export function projectCreditPayoff(
       }
     }
 
-    const line = stepCredit(balance, account, extraCents, cycleDays, minimumDue ? minimumDue(i) : true)
+    const extra = extraApplies && !extraApplies(i) ? 0 : extraCents
+    const line = stepCredit(balance, account, extra, cycleDays, minimumDue ? minimumDue(i) : true)
     lines.push(line)
     totalInterest += line.interestCents
     totalPaid += line.paymentCents
@@ -252,12 +262,13 @@ export function firstFloorBreach(
   cycleDays: number,
   cycleSurplusCents: number[],
   safetyFloorCents: number,
-  minimumDue?: MinimumDueSchedule
+  minimumDue?: MinimumDueSchedule,
+  extraApplies?: ExtraSchedule
 ): { index: number; closingCents: number } | null {
   if (cycleSurplusCents.length === 0) return null
   const proj = projectCreditPayoff(
     startingBalanceCents, account, extraCents, cycleDays,
-    Math.min(cycleSurplusCents.length, 400), minimumDue
+    Math.min(cycleSurplusCents.length, 400), minimumDue, extraApplies
   )
   let cumulativePaidCents = 0
   for (let i = 0; i < cycleSurplusCents.length; i++) {
@@ -281,12 +292,13 @@ export function maxAffordableExtraCents(
   cycleDays: number,
   cycleSurplusCents: number[],
   safetyFloorCents: number,
-  minimumDue?: MinimumDueSchedule
+  minimumDue?: MinimumDueSchedule,
+  extraApplies?: ExtraSchedule
 ): number {
   if (cycleSurplusCents.length === 0) return 0
   const fits = (extra: number): boolean =>
     firstFloorBreach(startingBalanceCents, account, extra, cycleDays,
-      cycleSurplusCents, safetyFloorCents, minimumDue) === null
+      cycleSurplusCents, safetyFloorCents, minimumDue, extraApplies) === null
 
   if (!fits(0)) return 0
 
@@ -298,6 +310,69 @@ export function maxAffordableExtraCents(
     else hi = mid
   }
   return Math.floor(lo / 100) * 100
+}
+
+/** A spare-plan run, plus whether it ran out of forecast before the card cleared. */
+export interface SpareProjection extends CreditProjection {
+  /** True when the forecast ended before the card cleared. */
+  beyondForecast: boolean
+}
+
+/**
+ * "Whatever's spare": each cycle pays the minimum plus whatever that cycle has
+ * above the floor, worked out cycle by cycle — less in a cycle with a big bill,
+ * more after it. Same rule as the engine, so the Credit page and the forecast
+ * agree.
+ *
+ * `cycleSurplusCents[i]` is what cycle i closes with BEFORE any card payment
+ * (the forecast with the card left out). Closing balances chain, so each
+ * cycle's spare is its surplus less every card payment made so far.
+ *
+ * The run stops where the forecast stops. Past that point there is no spare to
+ * work out, so the payoff is reported as beyond the forecast, not guessed.
+ */
+export function projectSparePayoff(
+  startingBalanceCents: number,
+  account: CreditAccountModel,
+  cycleDays: number,
+  cycleSurplusCents: number[],
+  safetyFloorCents: number,
+  minimumDue?: MinimumDueSchedule,
+  extraApplies?: ExtraSchedule
+): SpareProjection {
+  const lines: CreditCycleLine[] = []
+  let balance = Math.max(0, startingBalanceCents)
+  let totalInterest = 0
+  let totalPaid = 0
+
+  for (let i = 0; i < cycleSurplusCents.length; i++) {
+    if (balance <= 0) {
+      return { lines, totalInterestCents: totalInterest, cyclesToPayoff: lines.length,
+        neverClears: false, totalPaidCents: totalPaid, beyondForecast: false }
+    }
+    const due = minimumDue ? minimumDue(i) : true
+    const spare = Math.max(0, cycleSurplusCents[i] - totalPaid - safetyFloorCents)
+    let extra = 0
+    if (!extraApplies || extraApplies(i)) {
+      const minOnly = stepCredit(balance, account, 0, cycleDays, due)
+      extra = Math.max(0, spare - minOnly.minimumCents)
+    }
+    const line = stepCredit(balance, account, extra, cycleDays, due)
+    lines.push(line)
+    totalInterest += line.interestCents
+    totalPaid += line.paymentCents
+    balance = line.closingBalanceCents
+  }
+
+  const cleared = balance <= 0
+  return {
+    lines,
+    totalInterestCents: totalInterest,
+    cyclesToPayoff: cleared ? lines.length : null,
+    neverClears: false,
+    totalPaidCents: totalPaid,
+    beyondForecast: !cleared,
+  }
 }
 
 

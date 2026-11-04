@@ -526,6 +526,10 @@ export async function getCreditAccount(accountId: string) {
     ...card,
     current_balance_cents: snapshot?.balance_cents ?? 0,
     balance_as_of: snapshot?.as_of_date ?? null,
+    // When it was saved, to the second — compared with when a payment was
+    // confirmed, so a payment made before the balance was typed is not
+    // taken off a second time.
+    balance_recorded_at: snapshot?.created_at ?? null,
     balance_source: snapshot?.source ?? null,
   }
 }
@@ -575,6 +579,7 @@ export async function updateCreditAccount(
     assumed_spend_cents?: number
     payment_frequency?: 'per_cycle' | 'monthly'
     payment_anchor_date?: string | null
+    extra_timing?: 'every_cycle' | 'due_cycle'
   }
 ) {
   const { data, error } = await supabase
@@ -589,11 +594,18 @@ export async function updateCreditAccount(
 
 // Committing a strategy is what lets the credit line reach the forecast.
 // Until this runs, the Credit page is a simulator and projectCycles() ignores
-// the card entirely.
-export async function commitCreditStrategy(creditAccountId: string, extraCents: number) {
+// the card entirely. mode is the plan: minimum only, a set extra, or
+// whatever's spare. extraCents is kept for a spare plan too, so switching
+// back to a set extra starts from the last amount.
+export async function commitCreditStrategy(
+  creditAccountId: string,
+  mode: 'minimum' | 'extra' | 'spare',
+  extraCents: number
+) {
   const { data, error } = await supabase
     .from('credit_accounts')
     .update({
+      strategy_mode: mode,
       strategy_extra_cents: extraCents,
       strategy_committed: true,
       strategy_committed_at: new Date().toISOString(),
@@ -606,7 +618,9 @@ export async function commitCreditStrategy(creditAccountId: string, extraCents: 
 }
 
 // Change the standing extra without touching whether a strategy is committed.
-// Used when adjusting from the Cycle screen with "from now on".
+// The Cycle screen no longer calls this (its changes are for one cycle only;
+// the plan changes on the Credit page). Kept so nothing else that imports it
+// breaks.
 export async function updateCreditStrategyExtra(creditAccountId: string, extraCents: number) {
   const { data, error } = await supabase
     .from('credit_accounts')
@@ -687,9 +701,10 @@ export async function addCreditSnapshot(
 }
 
 // --- CREDIT EXTRA OVERRIDES ---
-// Adjusts only the discretionary extra, for one cycle. There is deliberately
-// no equivalent for the minimum: it is contractual, and the app should not
-// help normalise skipping it.
+// The user's choice for one cycle: a set extra on top of the minimum (0 =
+// minimum only), or 'spare' — whatever this cycle has above the floor, kept
+// live. There is deliberately no way to plan below the minimum: it is
+// contractual. What actually went out is recorded by confirming the payment.
 export async function getCreditExtraOverrides(creditAccountId: string) {
   const { data, error } = await supabase
     .from('credit_extra_overrides')
@@ -704,7 +719,8 @@ export async function setCreditExtraOverride(
   creditAccountId: string,
   accountId: string,
   cycleStart: string,
-  extraCents: number
+  extraCents: number,
+  choice: 'extra' | 'spare' = 'extra'
 ) {
   const { data, error } = await supabase
     .from('credit_extra_overrides')
@@ -714,6 +730,7 @@ export async function setCreditExtraOverride(
         account_id: accountId,
         cycle_start: cycleStart,
         extra_cents: extraCents,
+        choice,
       },
       { onConflict: 'credit_account_id,cycle_start' }
     )
@@ -746,7 +763,9 @@ export async function getCreditCyclePayments(creditAccountId: string) {
 }
 
 // amountCents is what actually left the account. Rows confirmed before it
-// was recorded have none, and are treated as the planned amount.
+// was recorded have none, and are treated as the planned amount. Can be
+// confirmed any time — paying early counts. confirmed_at is set on every
+// save, so re-confirming moves it and the balance working stays in order.
 export async function confirmCreditPayment(
   creditAccountId: string,
   accountId: string,
@@ -756,7 +775,10 @@ export async function confirmCreditPayment(
   const { data, error } = await supabase
     .from('credit_cycle_payments')
     .upsert(
-      { credit_account_id: creditAccountId, account_id: accountId, cycle_start: cycleStart, amount_cents: amountCents },
+      {
+        credit_account_id: creditAccountId, account_id: accountId, cycle_start: cycleStart,
+        amount_cents: amountCents, confirmed_at: new Date().toISOString(),
+      },
       { onConflict: 'credit_account_id,cycle_start' }
     )
     .select()
