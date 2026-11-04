@@ -236,8 +236,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
   // this cycle's card payment: minimum, spare or the user's own amount
   const [adjOpen,     setAdjOpen]     = useState(false)
-  const [adjPick,     setAdjPick]     = useState<'plan' | 'minimum' | 'spare' | 'other'>('plan')
-  const [adjOtherStr, setAdjOtherStr] = useState('')
+  // The amount typed or slid to, as text so typing "4" on the way to "45" works.
+  const [adjPayStr,   setAdjPayStr]   = useState('')
   const [adjSaving,   setAdjSaving]   = useState(false)
 
   // confirming a card payment with what actually went out
@@ -1161,7 +1161,6 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // can be changed here to the minimum, whatever is spare, or your own
   // amount. A change here is for this cycle only.
   const planMode = rawCredit ? planModeOf(rawCredit) : 'minimum'
-  const creditSpareCents = activeCycle.creditSpareCents ?? 0
   const extraOnDueOnly = !!rawCredit && isMonthlyCard(rawCredit) && rawCredit.extra_timing === 'due_cycle'
   // Does the plan's extra go out in this cycle? Not in a cycle without the
   // due date when the user chose to pay extra once a month.
@@ -1169,9 +1168,28 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const cycleOverride = (forecastRows?.creditOverrideRows ?? [])
     .find((o: any) => o.cycle_start === activeCycle.startDate) ?? null
   const projectedCycles = cycles.filter((c: any) => !c.isHistorical)
-  const planName = planMode === 'spare' ? "whatever's spare"
-    : planMode === 'extra' ? `minimum + ${fmt(rawCredit?.strategy_extra_cents ?? 0, false)}`
-    : 'minimum only'
+
+  // ── spare: the most this cycle can pay without breaking the floor later ──
+  // Not simply "what this cycle has above the floor". On a set-extra or
+  // minimum plan, later cycles still need the money that builds up above the
+  // floor — sweeping it all now overdrew the account a few cycles later. A
+  // payment made now lowers every later cycle by the same amount, so the
+  // most it can grow is the smallest headroom from here to the end of the
+  // forecast. On a spare plan that headroom is zero, so spare = the plan.
+  //
+  // Shown as "most that fits", the right end of the sheet's slider. Close to
+  // the Credit page's "max that fits", but NOT its "Whatever's spare" figure:
+  // that one is what this cycle would pay if EVERY cycle paid spare, where
+  // later cycles shrink to make room. This one keeps your plan for them.
+  const creditFromIdx = projectedCycles.findIndex((c: any) => c.startDate === activeCycle.startDate)
+  const creditHeadroomCents = creditFromIdx >= 0
+    ? Math.min(...projectedCycles.slice(creditFromIdx).map((c: any) => c.committedClosingBalanceCents - floorCents))
+    : 0
+  const creditOwedBeforePayCents = creditLeftCents + creditPaymentCents
+  const creditSpareCents = Math.max(
+    creditMinimumCents,
+    Math.min(creditOwedBeforePayCents, creditPaymentCents + creditHeadroomCents)
+  )
 
   // A preview is the real forecast with this cycle's choice swapped in — the
   // same trick as the budget preview — so it can never disagree with what
@@ -1189,35 +1207,32 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     return preview.find((c: any) => c.startDate === activeCycle.startDate)?.creditPaymentCents ?? 0
   }
 
-  const adjOtherCents = Math.max(0, Math.round((parseFloat(adjOtherStr) || 0) * 100))
-  // Planning less than the minimum is not offered: it is the card agreement.
-  // What actually went out is recorded when the payment is confirmed.
-  const adjOtherTooLow = adjPick === 'other' && adjOtherCents < creditMinimumCents
-  // The row a choice would save. "Plan" saves nothing: it clears this
-  // cycle's choice, so the plan decides again.
-  function adjRow(): any | null {
-    const base = { cycle_start: activeCycle.startDate }
-    if (adjPick === 'plan')    return null
-    if (adjPick === 'spare')   return { ...base, extra_cents: 0, choice: 'spare' }
-    if (adjPick === 'minimum') return { ...base, extra_cents: 0, choice: 'extra' }
-    return { ...base, extra_cents: Math.max(0, adjOtherCents - creditMinimumCents), choice: 'extra' }
-  }
+  // ── the amount for this cycle: one number, one slider ──
+  // Left end: the minimum. Right end: the most that fits (creditSpareCents).
+  // A tick marks the plan. Anything else is a one-cycle amount.
   const planPreview   = adjOpen ? creditPreview(null) : []
   const planHereCents = paymentHere(planPreview)
-  const sparePreview  = adjOpen ? creditPreview({ cycle_start: activeCycle.startDate, extra_cents: 0, choice: 'spare' }) : []
-  const spareHereCents = paymentHere(sparePreview)
-  const adjPreview    = !adjOpen ? []
-    : adjPick === 'plan' ? planPreview
-    : adjPick === 'spare' ? sparePreview
-    : creditPreview(adjRow())
-  const adjPaymentCents = paymentHere(adjPreview)
+  const adjPayCents   = Math.max(0, Math.round((parseFloat(adjPayStr) || 0) * 100))
+  // Within a dollar of the plan counts as the plan: the slider moves in
+  // whole dollars and the plan often has cents.
+  const adjIsPlan     = Math.abs(adjPayCents - planHereCents) < 100
+  // Planning less than the minimum is not offered: it is the card agreement.
+  // What actually went out is recorded when the payment is confirmed.
+  const adjTooLow     = !adjIsPlan && adjPayCents < creditMinimumCents
+  const adjOverMax    = !adjIsPlan && adjPayCents > creditSpareCents + 50
+  function adjRow(): any | null {
+    if (adjIsPlan) return null
+    return { cycle_start: activeCycle.startDate, extra_cents: Math.max(0, adjPayCents - creditMinimumCents), choice: 'extra' }
+  }
+  const adjPreview    = !adjOpen ? [] : adjIsPlan ? planPreview : creditPreview(adjRow())
+  // The slider's range and where the plan sits on it.
+  const sliderMin = creditMinimumCents
+  const sliderMax = Math.max(sliderMin + 100, creditSpareCents)
+  const sliderPct = (v: number) => Math.min(100, Math.max(0, (v - sliderMin) / (sliderMax - sliderMin) * 100))
+  const planPct   = sliderPct(planHereCents)
   // What a confirmed payment recorded, for the paid state.
   const creditPaidRow = creditPaid.find((p: any) => p.cycle_start === activeCycle.startDate)
   const creditPaidCents = creditPaidRow?.amount_cents ?? creditPaymentCents
-  // The label for this cycle's choice, on the card and in the sheet.
-  const choiceLabel = !cycleOverride ? null
-    : cycleOverride.choice === 'spare' ? 'spare'
-    : (cycleOverride.extra_cents ?? 0) > 0 ? 'your amount' : 'minimum'
 
   // Your account, cycle by cycle, under the choice — from this cycle on.
   const CREDIT_BARS = 18
@@ -1236,11 +1251,18 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   function interestIn(list: any[]): number {
     return list.reduce((sum: number, c: any) => sum + (c.creditInterestCents ?? 0), 0)
   }
-  const nowFrom = projectedCycles.findIndex((c: any) => c.startDate === activeCycle.startDate)
-  const nowAhead: any[] = nowFrom >= 0 ? projectedCycles.slice(nowFrom) : []
+  // Compared with the PLAN (no choice for this cycle), not with whatever this
+  // cycle currently holds — "1 cycle later than your plan" says plainly that
+  // a one-cycle change only moves the payoff by a little.
+  const planFrom = planPreview.findIndex((c: any) => c.startDate === activeCycle.startDate)
+  const planAhead: any[] = planFrom >= 0 ? planPreview.slice(planFrom) : []
   const adjAhead: any[] = adjFrom >= 0 ? adjPreview.slice(adjFrom) : []
   const adjCleared = clearedIn(adjAhead)
-  const adjInterestDiff = interestIn(adjAhead) - interestIn(nowAhead)
+  const planCleared = clearedIn(planAhead)
+  const clearedShift = adjCleared && planCleared
+    ? adjAhead.indexOf(adjCleared) - planAhead.indexOf(planCleared)
+    : null
+  const adjInterestDiff = interestIn(adjAhead) - interestIn(planAhead)
 
   /* ── savings actions ──────────────────────────────────────────────
    * Unlike a credit payment there is no due date — you can move savings any
@@ -1328,24 +1350,19 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // One sheet for everything about this cycle's card payment. Opens on what
   // the cycle is doing now.
   function openCreditAdjust() {
-    if (!cycleOverride) setAdjPick('plan')
-    else if (cycleOverride.choice === 'spare') setAdjPick('spare')
-    else setAdjPick((cycleOverride.extra_cents ?? 0) > 0 ? 'other' : 'minimum')
-    setAdjOtherStr(String(creditPaymentCents / 100))
+    setAdjPayStr(String(creditPaymentCents / 100))
     setAdjOpen(true)
   }
 
   async function saveCreditAdjust() {
-    if (!rawCredit || adjOtherTooLow) return
+    if (!rawCredit || adjTooLow) return
     const row = adjRow()
-    // "Plan", or a choice that is the same as what the plan already does
-    // here: nothing to keep, so drop any exception rather than storing a
-    // copy of the plan.
+    // The plan, or an amount the plan already pays here: nothing to keep,
+    // so drop any exception rather than storing a copy of the plan.
     const standing = rawCredit.strategy_extra_cents ?? 0
     const sameAsPlan = !row ||
-      (adjPick === 'spare' && planMode === 'spare' && planExtraHere) ||
-      (adjPick === 'minimum' && (planMode === 'minimum' || !planExtraHere)) ||
-      (adjPick === 'other' && planMode === 'extra' && planExtraHere && row.extra_cents === standing)
+      (row.extra_cents === 0 && (planMode === 'minimum' || !planExtraHere)) ||
+      (planMode === 'extra' && planExtraHere && row.extra_cents === standing)
     setAdjSaving(true)
     try {
       if (sameAsPlan) {
@@ -1886,8 +1903,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                     ? <span className="chip pd">paid ✓</span>
                     : creditState === 'due'
                       ? <span className="chip due">not confirmed</span>
-                      : choiceLabel
-                        ? <span className="chip crd">this cycle: {choiceLabel}</span>
+                      : cycleOverride
+                        ? <span className="chip crd">this cycle only</span>
                         : <span className="chip drv">{planMode === 'spare' && planExtraHere ? 'spare' : 'plan'}</span>}
                 </div>
                 <div className="dt">
@@ -1919,9 +1936,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               </div>
               <div className="vl">
                 −{fmt(creditState === 'paid' ? creditPaidCents : creditPaymentCents, false)}
-                <small className={creditState === 'paid' ? '' : 'sp'}>
-                  {creditState === 'paid' ? 'paid' : `${fmt(creditSpareCents, false)} spare`}
-                </small>
+                {creditState === 'paid' && <small>paid</small>}
               </div>
               <span className="crd-chev" aria-hidden="true">›</span>
             </div>
@@ -2840,45 +2855,46 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               </div>
             ) : (
               <div className="crs-pays">
-                <div className="k">Pays this cycle</div>
-                <div className="v">{fmt(adjOtherTooLow ? creditMinimumCents : adjPaymentCents, false)}</div>
-                <div className="d">
-                  minimum <b>{fmt(creditMinimumCents, false)}</b>
-                  {!adjOtherTooLow && adjPaymentCents > creditMinimumCents && <> + extra <b>{fmt(adjPaymentCents - creditMinimumCents, false)}</b></>}
-                  {' · '}
-                  {adjPick === 'plan' ? `your plan (${planName})`
-                    : adjPick === 'spare' ? 'this cycle only · follows the cycle'
-                    : 'this cycle only'}
+                <div className="k">Pay this cycle</div>
+                <label className="crs-amt">
+                  <span>{sym}</span>
+                  <input type="number" inputMode="decimal" value={adjPayStr}
+                    aria-label="Amount to pay this cycle"
+                    onChange={e => setAdjPayStr(e.target.value)} />
+                </label>
+                <div className="crs-tag">
+                  {adjIsPlan ? 'Your plan. Later cycles follow it too.'
+                    : adjTooLow ? <><span className="bad">Under the {fmt(creditMinimumCents, false)} minimum.</span> If less goes out, confirm the real amount once it has.</>
+                    : adjOverMax ? <><span className="bad">{fmt(adjPayCents - creditSpareCents, false)} more than fits.</span> See the red cycles below.</>
+                    : 'This cycle only, then back to your plan.'}
                 </div>
-                <div className="crs-choices">
-                  <button type="button" className={adjPick === 'plan' ? 'on' : ''} onClick={() => setAdjPick('plan')}>
-                    {fmt(planHereCents, false)}<small>plan</small>
+
+                {/* Minimum on the left, the most that fits on the right, the plan marked. */}
+                <div className="crs-track">
+                  <div className="rail" />
+                  <div className="fill" style={{ width: sliderPct(adjPayCents) + '%' }} />
+                  <div className="mark" style={{ left: planPct + '%' }} />
+                  <button type="button" className={`flag${adjIsPlan ? ' on' : ''}`}
+                    style={{ left: planPct + '%',
+                      transform: planPct > 75 ? 'translateX(calc(-100% + 8px))' : planPct < 25 ? 'translateX(-8px)' : 'translateX(-50%)' }}
+                    onClick={() => setAdjPayStr(String(planHereCents / 100))}>
+                    your plan {fmt(planHereCents, false)} ▾
                   </button>
-                  <button type="button" className={adjPick === 'minimum' ? 'on' : ''} onClick={() => setAdjPick('minimum')}>
-                    {fmt(creditMinimumCents, false)}<small>{creditMinimumCents > 0 ? 'minimum' : 'none due'}</small>
+                  <input type="range" min={sliderMin} max={sliderMax} step={100}
+                    aria-label="Amount to pay this cycle"
+                    value={Math.min(Math.max(adjPayCents, sliderMin), sliderMax)}
+                    onChange={e => setAdjPayStr(String(parseInt(e.target.value, 10) / 100))} />
+                </div>
+                <div className="crs-ends">
+                  <button type="button" className={adjPayCents === sliderMin && !adjIsPlan ? 'on' : ''}
+                    onClick={() => setAdjPayStr(String(sliderMin / 100))}>
+                    <b>{fmt(sliderMin, false)}</b>{sliderMin > 0 ? 'minimum' : 'none due'}
                   </button>
-                  <button type="button" className={adjPick === 'spare' ? 'on' : ''} onClick={() => setAdjPick('spare')}>
-                    {fmt(spareHereCents, false)}<small>spare</small>
-                  </button>
-                  <button type="button" className={adjPick === 'other' ? 'on' : ''} onClick={() => setAdjPick('other')}>
-                    Other<small>type it</small>
+                  <button type="button" className={`r${Math.abs(adjPayCents - creditSpareCents) < 100 ? ' on' : ''}`}
+                    onClick={() => setAdjPayStr(String(creditSpareCents / 100))}>
+                    <b>{fmt(creditSpareCents, false)}</b>most that fits
                   </button>
                 </div>
-                {adjPick === 'other' && (
-                  <div className="field" style={{ marginTop: 10, marginBottom: 0 }}>
-                    <div className="inrow"><span className="pre">{sym}</span>
-                      <input type="number" inputMode="decimal" value={adjOtherStr} autoFocus
-                        aria-label="Amount this cycle"
-                        onChange={e => setAdjOtherStr(e.target.value)} />
-                    </div>
-                    {adjOtherTooLow && (
-                      <p className="hint" style={{ color: 'var(--floor)' }}>
-                        The plan can't go below the {fmt(creditMinimumCents, false)} minimum. If less
-                        goes out, confirm the real amount once it has.
-                      </p>
-                    )}
-                  </div>
-                )}
               </div>
             )}
 
@@ -2914,16 +2930,13 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                 })()}
               </div>
 
-              {creditWorstBank < floorCents ? (
+              {/* The bars carry the good news; only a problem gets words. */}
+              {creditWorstBank < floorCents && (
                 <div className="cr-warn">
                   <b>The cycle starting {adjShown[creditWorstIdx] ? cycleDateLabel(adjShown[creditWorstIdx].startDate, creditBaseYear) : '—'} drops to {fmt(creditWorstBank, false)}</b>
                   {creditWorstBank < 0
                     ? <> — that would overdraw the account.</>
                     : <>, under your {fmt(floorCents, false)} floor.</>}
-                </div>
-              ) : (
-                <div className="cr-ok">
-                  Every cycle stays at or above your floor. Lowest is <b>{fmt(creditWorstBank, false)}</b>.
                 </div>
               )}
               {/* When the card clears and what the choice does to interest, in one line. */}
@@ -2931,12 +2944,19 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                 {adjCleared
                   ? <>Card cleared in the cycle starting <b>{cycleDateLabel(adjCleared.startDate, creditBaseYear)}</b></>
                   : <>Card not cleared within the {adjAhead.length} cycles forecast</>}
-                {' · '}
-                {Math.abs(adjInterestDiff) < 100
-                  ? 'same interest as now'
-                  : <span className={adjInterestDiff > 0 ? 'worse' : 'better'}>
-                      {(adjInterestDiff > 0 ? '+' : '−') + fmt(Math.abs(adjInterestDiff), false)} interest vs now
-                    </span>}
+                {!adjIsPlan && clearedShift !== null && (
+                  <>{' · '}{clearedShift === 0 ? 'same as your plan'
+                    : <span className={clearedShift > 0 ? 'worse' : 'better'}>
+                        {Math.abs(clearedShift)} cycle{Math.abs(clearedShift) === 1 ? '' : 's'} {clearedShift > 0 ? 'later' : 'sooner'} than your plan
+                      </span>}</>
+                )}
+                {!adjIsPlan && (
+                  <>{' · '}{Math.abs(adjInterestDiff) < 100
+                    ? 'same interest'
+                    : <span className={adjInterestDiff > 0 ? 'worse' : 'better'}>
+                        {(adjInterestDiff > 0 ? '+' : '−') + fmt(Math.abs(adjInterestDiff), false)} interest
+                      </span>}</>
+                )}
               </div>
             </>}
 
@@ -2977,8 +2997,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               <button onClick={() => setAdjOpen(false)}>{creditState === 'paid' ? 'Close' : 'Cancel'}</button>
               {creditState !== 'paid' && (
                 <button className="pri" style={{ background: 'var(--credit)' }}
-                  onClick={saveCreditAdjust} disabled={adjSaving || adjOtherTooLow}>
-                  {adjSaving ? 'Saving…' : 'Use this'}
+                  onClick={saveCreditAdjust} disabled={adjSaving || adjTooLow}>
+                  {adjSaving ? 'Saving…'
+                    : adjIsPlan ? (cycleOverride ? 'Back to my plan' : 'Keep my plan')
+                    : `Pay ${fmt(adjPayCents, false)} this cycle`}
                 </button>
               )}
             </div>

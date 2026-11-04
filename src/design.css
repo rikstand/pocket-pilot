@@ -2175,19 +2175,52 @@ body.is-desktop .undo-toast { bottom: 24px; left: calc(50% + 119px); }
 }
 .crs-pays .d { font-size: 11.5px; color: var(--mut); line-height: 1.45; }
 .crs-pays .d b { color: var(--ink); font-weight: 600; }
-.crs-choices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 11px; }
-.crs-choices button {
-  border: 1px solid var(--line); background: var(--bg2); color: var(--ink); border-radius: 11px;
-  padding: 8px 4px; cursor: pointer; font-family: 'Space Grotesk', sans-serif; font-weight: 600;
-  font-size: 13px; line-height: 1.2; font-variant-numeric: tabular-nums; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.crs-amt { display: flex; align-items: baseline; gap: 2px; margin-top: 2px; cursor: text; }
+.crs-amt span { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 28px; color: var(--faint); }
+.crs-amt input {
+  flex: 1; min-width: 0; border: none; background: transparent; outline: none; padding: 0;
+  color: var(--ink); font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 28px;
+  letter-spacing: -.02em; font-variant-numeric: tabular-nums;
 }
-.crs-choices button small {
-  display: block; font-family: 'JetBrains Mono', monospace; font-size: 8px; font-weight: 600;
-  color: var(--mut); margin-top: 3px; letter-spacing: .03em; text-transform: uppercase;
+.crs-tag { font-size: 11.5px; color: var(--mut); min-height: 18px; line-height: 1.45; }
+.crs-tag .bad { color: var(--floor); font-weight: 600; }
+
+/* minimum on the left, the most that fits on the right, the plan marked */
+.crs-track { position: relative; margin: 28px 4px 0; height: 30px; }
+.crs-track .rail { position: absolute; left: 0; right: 0; top: 13px; height: 4px; border-radius: 2px; background: var(--line); }
+.crs-track .fill { position: absolute; left: 0; top: 13px; height: 4px; border-radius: 2px; background: var(--credit); }
+.crs-track .mark {
+  position: absolute; top: 8px; width: 2px; height: 14px; background: var(--ink);
+  opacity: .35; transform: translateX(-1px); z-index: 1;
 }
-.crs-choices button.on { border-color: var(--credit); background: var(--credit-s); color: var(--credit); }
-.crs-choices button.on small { color: var(--credit); }
+.crs-track .flag {
+  position: absolute; top: -18px; white-space: nowrap; background: none; border: none; padding: 0;
+  cursor: pointer; font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 600; color: var(--mut);
+}
+.crs-track .flag.on { color: var(--credit); }
+.crs-track input[type=range] {
+  position: absolute; left: 0; right: 0; top: 6px; width: 100%; height: 18px; margin: 0;
+  -webkit-appearance: none; appearance: none; background: transparent; z-index: 2;
+}
+.crs-track input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; cursor: pointer;
+  background: var(--credit); border: 3px solid var(--bg2); box-shadow: 0 1px 4px rgba(0,0,0,.25);
+}
+.crs-track input[type=range]::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%; cursor: pointer;
+  background: var(--credit); border: 3px solid var(--bg2);
+}
+.crs-track input[type=range]:focus-visible { outline: 2px solid var(--credit); outline-offset: 4px; }
+.crs-ends { display: flex; justify-content: space-between; gap: 10px; margin: 0 4px; }
+.crs-ends button {
+  background: none; border: none; padding: 0; cursor: pointer; text-align: left;
+  font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--mut);
+}
+.crs-ends button.r { text-align: right; }
+.crs-ends button b {
+  display: block; font-family: 'Space Grotesk', sans-serif; font-size: 12.5px; font-weight: 600; color: var(--ink);
+}
+.crs-ends button.on b { color: var(--credit); }
 .crs-foot { margin-top: 8px; font-size: 11.5px; color: var(--mut); text-align: left; line-height: 1.45; }
 .crs-foot b { color: var(--ink); font-weight: 600; }
 .crs-foot .worse { color: var(--floor); font-weight: 600; }
