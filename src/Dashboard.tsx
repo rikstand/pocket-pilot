@@ -1229,6 +1229,11 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const sliderMin = creditMinimumCents
   const sliderMax = Math.max(sliderMin + 100, creditSpareCents)
   const sliderPct = (v: number) => Math.min(100, Math.max(0, (v - sliderMin) / (sliderMax - sliderMin) * 100))
+  // The slider moves in whole dollars from the dollar below the minimum, so
+  // dragging gives $418, not $418.10. It never goes under the minimum itself.
+  const sliderFloor = Math.floor(sliderMin / 100) * 100
+  // An amount as the field shows it: whole dollars as "418", cents as "498.72".
+  const payStr = (c: number) => (c % 100 === 0 ? String(c / 100) : (c / 100).toFixed(2))
   const planPct   = sliderPct(planHereCents)
   // What a confirmed payment recorded, for the paid state.
   const creditPaidRow = creditPaid.find((p: any) => p.cycle_start === activeCycle.startDate)
@@ -1350,7 +1355,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // One sheet for everything about this cycle's card payment. Opens on what
   // the cycle is doing now.
   function openCreditAdjust() {
-    setAdjPayStr(String(creditPaymentCents / 100))
+    setAdjPayStr(payStr(creditPaymentCents))
     setAdjOpen(true)
   }
 
@@ -2869,29 +2874,30 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                     : 'This cycle only, then back to your plan.'}
                 </div>
 
-                {/* Minimum on the left, the most that fits on the right, the plan marked. */}
+                {/* Minimum on the left, the most that fits on the right, the plan
+                    marked. The input is the track itself, filled up to the thumb, the
+                    same way as the Credit page's slider. */}
                 <div className="crs-track">
-                  <div className="rail" />
-                  <div className="fill" style={{ width: sliderPct(adjPayCents) + '%' }} />
-                  <div className="mark" style={{ left: planPct + '%' }} />
                   <button type="button" className={`flag${adjIsPlan ? ' on' : ''}`}
-                    style={{ left: planPct + '%',
+                    style={{ left: `calc(11px + (100% - 22px) * ${planPct / 100})`,
                       transform: planPct > 75 ? 'translateX(calc(-100% + 8px))' : planPct < 25 ? 'translateX(-8px)' : 'translateX(-50%)' }}
-                    onClick={() => setAdjPayStr(String(planHereCents / 100))}>
+                    onClick={() => setAdjPayStr(payStr(planHereCents))}>
                     your plan {fmt(planHereCents, false)} ▾
                   </button>
-                  <input type="range" min={sliderMin} max={sliderMax} step={100}
+                  <div className="mark" style={{ left: `calc(11px + (100% - 22px) * ${planPct / 100})` }} />
+                  <input type="range" min={sliderFloor} max={sliderMax} step={100}
                     aria-label="Amount to pay this cycle"
-                    value={Math.min(Math.max(adjPayCents, sliderMin), sliderMax)}
-                    onChange={e => setAdjPayStr(String(parseInt(e.target.value, 10) / 100))} />
+                    style={{ background: `linear-gradient(to right, var(--credit) ${sliderPct(adjPayCents)}%, var(--line) ${sliderPct(adjPayCents)}%)` }}
+                    value={Math.min(Math.max(adjPayCents, sliderFloor), sliderMax)}
+                    onChange={e => setAdjPayStr(payStr(Math.max(creditMinimumCents, parseInt(e.target.value, 10))))} />
                 </div>
                 <div className="crs-ends">
                   <button type="button" className={adjPayCents === sliderMin && !adjIsPlan ? 'on' : ''}
-                    onClick={() => setAdjPayStr(String(sliderMin / 100))}>
+                    onClick={() => setAdjPayStr(payStr(sliderMin))}>
                     <b>{fmt(sliderMin, false)}</b>{sliderMin > 0 ? 'minimum' : 'none due'}
                   </button>
                   <button type="button" className={`r${Math.abs(adjPayCents - creditSpareCents) < 100 ? ' on' : ''}`}
-                    onClick={() => setAdjPayStr(String(creditSpareCents / 100))}>
+                    onClick={() => setAdjPayStr(payStr(creditSpareCents))}>
                     <b>{fmt(creditSpareCents, false)}</b>most that fits
                   </button>
                 </div>
