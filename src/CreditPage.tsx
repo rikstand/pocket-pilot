@@ -307,7 +307,9 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
 
   async function doCommit() {
     setSaving(true)
-    try { await commitCreditStrategy(card.id, strategy, activeExtra); reload() }
+    // The slider's amount is kept whichever plan is committed, so coming back
+    // to "a set extra" starts where you left it instead of at $0.
+    try { await commitCreditStrategy(card.id, strategy, extraCents); reload() }
     catch (e: any) { alert('Could not commit: ' + e.message) }
     finally { setSaving(false) }
   }
@@ -524,12 +526,17 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
 
   // Always the same height whichever strategy is picked — the slider used to
   // appear and disappear here, which is what made the page jump.
+  //
+  // The slider stays for "a set extra" even when the amount on it never
+  // clears the card. That is exactly when you need it — hiding it there left
+  // no way to raise the amount.
+  const neverClearsNote = (
+    <>At {fmt(card.assumed_spend_cents, false)} of new spend a cycle, this payment never gets ahead
+      of interest — <b>the balance grows and the card never clears</b>.</>
+  )
   const optionBody = (
-    <div className={`credit-optbody${active.neverClears ? ' bad' : ''}`}>
-      {active.neverClears ? (
-        <>At {fmt(card.assumed_spend_cents, false)} of new spend a cycle, this payment never gets ahead
-          of interest — <b>the balance grows and the card never clears</b>.</>
-      ) : strategy === 'extra' ? (
+    <div className={`credit-optbody${active.neverClears && strategy !== 'extra' ? ' bad' : ''}`}>
+      {strategy === 'extra' ? (
         <div className="credit-slider">
           <div className="credit-slider-top">
             <span className="l">Extra {extraOnDueOnly ? 'each month' : 'per cycle'}</span>
@@ -542,7 +549,14 @@ export default function CreditPage({ accountId }: { userId: string; accountId: s
             <span>$0</span>
             <span>{fmt(maxExtraCents, false)} · max that fits</span>
           </div>
+          {active.neverClears && (
+            <div style={{ color:'var(--floor)', marginTop:4 }}>
+              <b style={{ color:'var(--floor)' }}>Never clears at this amount</b> — move it up.
+            </div>
+          )}
         </div>
+      ) : active.neverClears ? (
+        neverClearsNote
       ) : strategy === 'spare' ? (
         <>Each {extraOnDueOnly ? 'month' : 'cycle'} pays the minimum plus whatever is above your{' '}
           <b>{fmt(floorCents, false)}</b> floor <b>in that cycle</b> — less when a big bill lands, more
