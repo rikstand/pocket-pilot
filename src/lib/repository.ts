@@ -362,16 +362,34 @@ export async function createCycle(
 // close this cycle, save the confirmed actuals and open the next one — all of
 // it or none of it. Three separate writes once left a cycle closed with no
 // cycle after it (30 Sep 2026).
+//
+// projectedCents is what the app forecast this cycle would close at (before
+// pay), saved so closed cycles can later show "actual vs forecast". It is
+// written just before close_cycle runs, not inside it, so the close itself is
+// untouched. If this save fails, the close still goes ahead: a missing
+// forecast costs one comparison, a failed close costs the user their evening.
+// If the close fails after it, the next attempt simply writes it again.
 export async function closeCycle(
   accountId: string,
   close: {
     cycleId: string | null
     closingCents: number
+    projectedCents?: number | null
     nextStart: string
     nextEnd: string
     actuals: { expense_id: string; actual_amount_cents: number }[]
   }
 ) {
+  if (close.cycleId && close.projectedCents != null && Number.isFinite(close.projectedCents)) {
+    const { error: pErr } = await supabase
+      .from('cycles')
+      .update({ projected_close_cents: Math.round(close.projectedCents) })
+      .eq('id', close.cycleId)
+      .eq('account_id', accountId)
+      .eq('is_closed', false)
+    if (pErr) console.warn('Could not save the forecast close:', pErr.message)
+  }
+
   const { error } = await supabase.rpc('close_cycle', {
     p_account_id:    accountId,
     p_cycle_id:      close.cycleId,

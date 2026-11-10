@@ -909,8 +909,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       // The balance passed is the one with next cycle's pay taken out. It is
       // both this cycle's closing balance and the next one's opening balance.
       await closeCycle(accountId, {
-        cycleId:      activeCycle.id ?? null,
-        closingCents: adjustedRealCents,
+        cycleId:        activeCycle.id ?? null,
+        closingCents:   adjustedRealCents,
+        // The same figure the close sheet shows as "We projected … before pay".
+        projectedCents: activeCycle.committedClosingBalanceCents ?? null,
         nextStart,
         nextEnd,
         actuals,
