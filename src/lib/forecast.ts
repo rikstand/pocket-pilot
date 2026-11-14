@@ -26,7 +26,8 @@ import {
   getBudgetSpendEntries, getSavingsGoals, getAllSavingsContributions, getAllSavingsOverrides,
   getAllExpenseOverrides, getCreditCyclePayments,
 } from './repository'
-import { projectCycles } from '../engine/index'
+import { projectCycles, budgetAmountForCycle } from '../engine/index'
+import type { CycleRule } from '../engine/index'
 import type {
   CycleResult, IncomeSource, Expense, CreditAccount, CreditExtraOverride,
   BudgetSpendEntry, ExpenseOverride, SavingsGoal, CreditPayment,
@@ -52,6 +53,7 @@ export function toEngineIncome(rows: any[]): IncomeSource[] {
       id: src.id,
       name: src.name,
       frequency: src.frequency,
+      everyN: src.every_n ?? 1,
       anchorDate: src.anchor_date,
       amountCents: latest?.amount_cents ?? 0,
       isPotential: src.is_potential ?? false,
@@ -74,6 +76,7 @@ export function toEngineExpenses(rows: any[]): Expense[] {
       id: exp.id,
       name: exp.name,
       frequency: exp.frequency,
+      everyN: exp.every_n ?? 1,
       anchorDate: exp.anchor_date,
       amountCents: latest?.amountCents ?? 0,
       amountVersions: versions,
@@ -418,7 +421,11 @@ const MIN_GAP = 0.2
 export function baselineChecks(
   expenseRows: any[],
   budgetSpendRows: any[],
-  storedCycles: any[]
+  storedCycles: any[],
+  // How pay repeats. Optional: without it a budget is counted purely as a
+  // daily rate, which differs from the forecast only for a budget that repeats
+  // exactly like the pay (a monthly budget on monthly pay) — by a few dollars.
+  cycleRule?: CycleRule
 ): BaselineCheck[] {
   const closed = (storedCycles ?? []).filter((c: any) => c.is_closed)
   if (closed.length < MIN_CYCLES_FOR_ADVICE) return []
@@ -429,14 +436,28 @@ export function baselineChecks(
     if ((exp.mode ?? 'fixed') !== 'budget') continue
 
     const latest = latestVersion(exp.expense_amount_versions)
-    const baseline = latest?.amount_cents ?? 0
-    if (baseline <= 0) continue
+    const amountNow = latest?.amount_cents ?? 0
+    if (amountNow <= 0) continue
+
+    // The budget as it is set NOW, run over every closed cycle as if it had
+    // always been there — the question is whether today's setting fits how you
+    // actually spend. Per cycle, using the same daily-rate rule as the
+    // forecast, so a monthly budget on fortnightly pay compares like for like.
+    const asSetNow = {
+      ...toEngineExpenses([exp])[0],
+      amountVersions: [],
+      amountCents: amountNow,
+      anchorDate: '1900-01-01',
+      endDate: undefined,
+    }
 
     // Only count cycles that have actually closed — a part-finished cycle
     // would drag the average down and make every budget look generous.
     let total = 0
+    let baselineTotal = 0
     let counted = 0
     for (const cyc of closed) {
+      baselineTotal += budgetAmountForCycle(asSetNow, cyc.start_date, cyc.end_date, cycleRule)
       const spent = (budgetSpendRows ?? [])
         .filter((e: any) =>
           e.expense_id === exp.id &&
@@ -450,6 +471,8 @@ export function baselineChecks(
     if (counted < MIN_CYCLES_FOR_ADVICE) continue
 
     const average = Math.round(total / counted)
+    const baseline = Math.round(baselineTotal / counted)
+    if (baseline <= 0) continue
     const gap = (baseline - average) / baseline
     if (gap < MIN_GAP) continue
 

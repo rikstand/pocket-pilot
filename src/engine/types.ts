@@ -1,7 +1,11 @@
+// everyN (on IncomeSource and Expense) multiplies the step: weekly × 3 = every
+// 3 weeks, monthly × 3 = quarterly. Missing means 1, so every existing row and
+// caller behaves exactly as before.
+export type Frequency = 'once' | 'daily' | 'weekly' | 'fortnightly' | 'monthly' | 'annually'
+
 // AmountVersion — a dated amount record. The engine picks the latest
 // version whose effectiveFrom <= the cycle start date, so you can have
 // per-cycle overrides and permanent changes on the same expense.
-export type Frequency = 'once' | 'weekly' | 'fortnightly' | 'monthly' | 'annually'
 export interface AmountVersion {
   amountCents: number
   effectiveFrom: string
@@ -10,6 +14,7 @@ export interface IncomeSource {
   id: string
   name: string
   frequency: Frequency
+  everyN?: number       // every N of the frequency; missing = 1
   anchorDate: string
   amountCents: number   // fallback if no versions supplied
   isPotential: boolean
@@ -22,6 +27,7 @@ export interface Expense {
   id: string
   name: string
   frequency: Frequency
+  everyN?: number              // every N of the frequency; missing = 1
   anchorDate: string
   amountCents: number          // fallback if amountVersions is empty
   amountVersions: AmountVersion[]

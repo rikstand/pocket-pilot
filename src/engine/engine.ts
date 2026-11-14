@@ -1,35 +1,101 @@
 import type {
   CycleInput, CycleResult, AmountVersion, CreditExtraOverride, BudgetSpendEntry,
-  ExpenseOverride, SavingsGoal, SavingsCycleLine,
+  ExpenseOverride, SavingsGoal, SavingsCycleLine, Expense, Frequency,
 } from './types'
-import { parseDate, formatDate, addDays, addMonths, addYears } from './dates'
-import { getOccurrencesInRange } from './recurrence'
+import { parseDate, formatDate, addDays, daysBetween } from './dates'
+import { getOccurrencesInRange, nthOccurrence, stepOf } from './recurrence'
 import { stepCredit } from './credit'
 
-function getCycleEnd(startDate: string, frequency: string): string {
-  const d = parseDate(startDate)
-  if (frequency === 'weekly')      return formatDate(addDays(d, 6))
-  if (frequency === 'fortnightly') return formatDate(addDays(d, 13))
-  if (frequency === 'monthly')     return formatDate(addDays(addMonths(d, 1), -1))
-  if (frequency === 'annually')    return formatDate(addDays(addYears(d, 1), -1))
-  return formatDate(addDays(d, 13))
+/** How the pay cycle repeats: the primary income's frequency and every-N. */
+export interface CycleRule {
+  frequency: Frequency
+  everyN?: number
 }
 
-function nextCycleStart(startDate: string, frequency: string): string {
-  const d = parseDate(startDate)
-  if (frequency === 'weekly')      return formatDate(addDays(d, 7))
-  if (frequency === 'fortnightly') return formatDate(addDays(d, 14))
-  if (frequency === 'monthly')     return formatDate(addMonths(d, 1))
-  if (frequency === 'annually')    return formatDate(addYears(d, 1))
-  return formatDate(addDays(d, 14))
+// A pay that only comes once can't set a rhythm, so cycles fall back to a
+// fortnight — the same fallback as before.
+function cycleRuleOf(rule: CycleRule): { frequency: Frequency; everyN: number } {
+  return rule.frequency === 'once'
+    ? { frequency: 'fortnightly', everyN: 1 }
+    : { frequency: rule.frequency, everyN: Math.max(1, Math.floor(rule.everyN ?? 1)) }
+}
+
+/**
+ * The start of the i-th cycle counted from firstStart (i = 0 is firstStart).
+ * Worked out from firstStart every time, so monthly cycles that start on the
+ * 31st come back to the 31st after a short month instead of drifting.
+ */
+export function cycleStartAt(firstStart: string, rule: CycleRule, i: number): string {
+  const r = cycleRuleOf(rule)
+  return formatDate(nthOccurrence(parseDate(firstStart), r.frequency, r.everyN, i))
+}
+
+/** The last day of the i-th cycle: the day before the next one starts. */
+export function cycleEndAt(firstStart: string, rule: CycleRule, i: number): string {
+  return formatDate(addDays(parseDate(cycleStartAt(firstStart, rule, i + 1)), -1))
 }
 
 // Inclusive day count for a cycle. Both dates come from parseDate(), which
 // returns local midnight, so a plain millisecond difference is safe here —
 // this is not a toISOString() round-trip.
 function cycleDayCount(startDate: string, endDate: string): number {
-  const ms = parseDate(endDate).getTime() - parseDate(startDate).getTime()
-  return Math.round(ms / 86400000) + 1
+  return daysBetween(parseDate(startDate), parseDate(endDate)) + 1
+}
+
+// ── budgets as a daily rate ─────────────────────────────────────────
+// A budget is a rate, not a bill: "$320 a fortnight" means about $22.86 a day
+// for as long as it runs. Counting it as payments on dates made a monthly
+// budget land whole in some fortnights and not at all in others, and made
+// every budget depend on which day it happened to be anchored on.
+//
+// A year has 365.25 days, so a month is 30.4375 of them.
+const DAYS_PER_MONTH = 365.25 / 12
+
+/** How many days one period of a schedule covers, on average. Null for 'once'. */
+export function periodDays(frequency: Frequency, everyN = 1): number | null {
+  const step = stepOf(frequency, everyN)
+  if (!step) return null
+  return 'days' in step ? step.days : step.months * DAYS_PER_MONTH
+}
+
+function sameStep(a: CycleRule, b: CycleRule): boolean {
+  const x = stepOf(a.frequency, a.everyN ?? 1)
+  const y = stepOf(b.frequency, b.everyN ?? 1)
+  if (!x || !y) return false
+  if ('days' in x && 'days' in y) return x.days === y.days
+  if ('months' in x && 'months' in y) return x.months === y.months
+  return false
+}
+
+/**
+ * What a budget takes from one cycle: its amount for the days it runs in that
+ * cycle. Starts on its anchor date and stops on its end date, so a budget added
+ * with a week of the cycle left takes half a fortnight's worth.
+ *
+ * When the budget repeats exactly like the cycle (a monthly budget on monthly
+ * pay), a full cycle is the full amount — otherwise a $600 monthly budget would
+ * read $552 in February and $611 in March. A one-off budget ('once') is the
+ * whole amount on its date.
+ */
+export function budgetAmountForCycle(
+  exp: Expense,
+  cycleStart: string,
+  cycleEnd: string,
+  cycleRule?: CycleRule
+): number {
+  if (exp.frequency === 'once') {
+    return getOccurrencesInRange(exp.anchorDate, 'once', cycleStart, cycleEnd, exp.endDate)
+      .reduce((sum, d) => sum + getAmountOn(exp.amountVersions, exp.amountCents, d), 0)
+  }
+  const from = exp.anchorDate > cycleStart ? exp.anchorDate : cycleStart
+  const to   = exp.endDate && exp.endDate < cycleEnd ? exp.endDate : cycleEnd
+  if (to < from) return 0
+  const activeDays = cycleDayCount(from, to)
+  const amount = getAmountOn(exp.amountVersions, exp.amountCents, from)
+  if (cycleRule && sameStep(exp, cycleRule)) {
+    return Math.round(amount * activeDays / cycleDayCount(cycleStart, cycleEnd))
+  }
+  return Math.round(amount * activeDays / (periodDays(exp.frequency, exp.everyN) ?? activeDays))
 }
 
 // The amount in force on one payment's date: the latest version whose
@@ -155,7 +221,7 @@ export function projectCycles(input: CycleInput): CycleResult[] {
   const primary = incomeSources.find(s => s.isPrimary && !s.isPotential)
     ?? incomeSources.find(s => !s.isPotential)
     ?? incomeSources[0]
-  const cycleFrequency = primary?.frequency ?? 'fortnightly'
+  const cycleRule: CycleRule = { frequency: primary?.frequency ?? 'fortnightly', everyN: primary?.everyN ?? 1 }
 
   // A card only reaches the forecast once its strategy is committed. Before
   // that the Credit page is a simulator and nothing here changes.
@@ -175,13 +241,13 @@ export function projectCycles(input: CycleInput): CycleResult[] {
   const plannedByGoal: Record<string, number> = {}
 
   for (let i = 0; i < numCycles; i++) {
-    const cycleEnd = getCycleEnd(cycleStart, cycleFrequency)
+    const cycleEnd = cycleEndAt(startDate, cycleRule, i)
 
     // ── income ──────────────────────────────────────────────────────
     let committedIncomeCents = 0
     let potentialIncomeCents = 0
     for (const src of incomeSources) {
-      const occs  = getOccurrencesInRange(src.anchorDate, src.frequency, cycleStart, cycleEnd)
+      const occs  = getOccurrencesInRange(src.anchorDate, src.frequency, cycleStart, cycleEnd, undefined, src.everyN ?? 1)
       const total = occs.length * src.amountCents
       if (src.isPotential) potentialIncomeCents += total
       else committedIncomeCents += total
@@ -194,13 +260,26 @@ export function projectCycles(input: CycleInput): CycleResult[] {
     let budgetBaselineCents   = 0
     let budgetActualCents     = 0
     for (const exp of expenses) {
-      const occs       = getOccurrencesInRange(exp.anchorDate, exp.frequency, cycleStart, cycleEnd, exp.endDate)
-      // Each payment at the amount in force on its own date.
-      const usual      = occs.reduce((sum, d) => sum + getAmountOn(exp.amountVersions, exp.amountCents, d), 0)
+      let usual: number
+      let fallsInCycle: boolean
+      if (exp.mode === 'budget') {
+        // A budget is a daily rate over the days it runs in this cycle.
+        usual        = budgetAmountForCycle(exp, cycleStart, cycleEnd, cycleRule)
+        const from   = exp.anchorDate > cycleStart ? exp.anchorDate : cycleStart
+        const to     = exp.endDate && exp.endDate < cycleEnd ? exp.endDate : cycleEnd
+        fallsInCycle = exp.frequency === 'once'
+          ? getOccurrencesInRange(exp.anchorDate, 'once', cycleStart, cycleEnd, exp.endDate).length > 0
+          : from <= to
+      } else {
+        const occs   = getOccurrencesInRange(exp.anchorDate, exp.frequency, cycleStart, cycleEnd, exp.endDate, exp.everyN ?? 1)
+        // Each payment at the amount in force on its own date.
+        usual        = occs.reduce((sum, d) => sum + getAmountOn(exp.amountVersions, exp.amountCents, d), 0)
+        fallsInCycle = occs.length > 0
+      }
       // A one-cycle amount replaces the usual one for this cycle only, for any
       // kind of expense. It only applies where the expense actually falls in
       // the cycle.
-      const override   = occs.length > 0 ? expenseOverrideFor(expenseOverrides, exp.id, cycleStart) : null
+      const override   = fallsInCycle ? expenseOverrideFor(expenseOverrides, exp.id, cycleStart) : null
       const total      = override ?? usual
       if      (exp.mode === 'fixed')    fixedExpensesCents    += total
       else if (exp.mode === 'variable') variableExpensesCents += total
@@ -329,7 +408,7 @@ export function projectCycles(input: CycleInput): CycleResult[] {
     })
 
     committedBalance = committedClosingBalanceCents
-    cycleStart = nextCycleStart(cycleStart, cycleFrequency)
+    cycleStart = cycleStartAt(startDate, cycleRule, i + 1)
   }
 
   return results

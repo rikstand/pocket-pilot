@@ -1,4 +1,6 @@
-export { projectCycles } from './engine'
+export { projectCycles, cycleStartAt, cycleEndAt, budgetAmountForCycle, periodDays } from './engine'
+export type { CycleRule } from './engine'
+export { getOccurrencesInRange, nthOccurrence, stepOf } from './recurrence'
 export {
   cycleInterestCents,
   minimumDueCents,
