@@ -24,13 +24,13 @@
 import {
   getIncomeSources, getExpenses, getCycles, getCreditAccount, getCreditExtraOverrides,
   getBudgetSpendEntries, getSavingsGoals, getAllSavingsContributions, getAllSavingsOverrides,
-  getAllExpenseOverrides, getCreditCyclePayments,
+  getAllExpenseOverrides, getCreditCyclePayments, getAllIncomeOverrides,
 } from './repository'
 import { projectCycles, budgetAmountForCycle } from '../engine/index'
 import type { CycleRule } from '../engine/index'
 import type {
   CycleResult, IncomeSource, Expense, CreditAccount, CreditExtraOverride,
-  BudgetSpendEntry, ExpenseOverride, SavingsGoal, CreditPayment,
+  BudgetSpendEntry, ExpenseOverride, SavingsGoal, CreditPayment, IncomeOverride,
 } from '../engine/types'
 import { carriedCardBalance, confirmedPaymentsFrom, cycleDaysOf, planModeOf } from './creditSchedule'
 import { formatDate, parseDate } from '../engine/dates'
@@ -49,6 +49,13 @@ function todayStr() { return formatDate(new Date()) }
 export function toEngineIncome(rows: any[]): IncomeSource[] {
   return rows.map((src: any) => {
     const latest = latestVersion(src.income_amount_versions)
+    // All the dated amounts, newest first, so each pay uses the one in force
+    // on its own date — the same as expenses. Before, only the newest was
+    // used, for every pay: a raise dated next month applied today, and a
+    // "just this cycle" change never showed at all.
+    const versions = [...(src.income_amount_versions ?? [])]
+      .sort(byNewest)
+      .map((v: any) => ({ amountCents: v.amount_cents, effectiveFrom: v.effective_from }))
     return {
       id: src.id,
       name: src.name,
@@ -56,10 +63,20 @@ export function toEngineIncome(rows: any[]): IncomeSource[] {
       everyN: src.every_n ?? 1,
       anchorDate: src.anchor_date,
       amountCents: latest?.amount_cents ?? 0,
+      amountVersions: versions,
       isPotential: src.is_potential ?? false,
       isPrimary: src.is_primary ?? false,
     }
   })
+}
+
+/** One-cycle amounts of pay → what the engine expects. */
+export function toEngineIncomeOverrides(rows: any[]): IncomeOverride[] {
+  return (rows ?? []).map((o: any) => ({
+    incomeId: o.income_source_id,
+    cycleStart: o.cycle_start,
+    amountCents: o.amount_cents,
+  }))
 }
 
 /** Expense rows → what the engine expects, versions and all. */
@@ -214,6 +231,8 @@ export interface ForecastResult {
   creditPaymentRows: any[]
   budgetSpendRows: any[]
   expenseOverrideRows: any[]
+  /** Optional so callers that build rows by hand still compile. */
+  incomeOverrideRows?: any[]
   savingsGoalRows: any[]
   savingsContributionRows: any[]
   savingsOverrideRows: any[]
@@ -249,6 +268,7 @@ export async function loadForecast(
   const [
     incomeRows, expenseRows, storedCycles, creditCard, budgetSpendRows,
     savingsGoalRows, savingsContributionRows, savingsOverrideRows, expenseOverrideRows,
+    incomeOverrideRows,
   ] = await Promise.all([
     getIncomeSources(accountId),
     getExpenses(accountId),
@@ -259,6 +279,7 @@ export async function loadForecast(
     getAllSavingsContributions(accountId),
     getAllSavingsOverrides(accountId),
     getAllExpenseOverrides(accountId),
+    getAllIncomeOverrides(accountId),
   ])
 
   // Overrides and confirmed payments only exist once a card does, so this is
@@ -272,7 +293,7 @@ export async function loadForecast(
 
   const rows = {
     incomeRows, expenseRows, storedCycles, creditCard, creditOverrideRows, creditPaymentRows,
-    budgetSpendRows, expenseOverrideRows,
+    budgetSpendRows, expenseOverrideRows, incomeOverrideRows,
     savingsGoalRows, savingsContributionRows, savingsOverrideRows, projectFrom,
   }
   // A spare plan always keeps the account above its REAL floor, even when
@@ -289,6 +310,7 @@ export async function loadForecast(
     creditPaymentRows,
     budgetSpendRows,
     expenseOverrideRows,
+    incomeOverrideRows,
     savingsGoalRows,
     savingsContributionRows,
     savingsOverrideRows,
@@ -324,7 +346,10 @@ export function projectFromRows(
     creditPayments: toEngineCreditPayments(rows.creditPaymentRows ?? []),
     budgetSpend: toEngineBudgetSpend(rows.budgetSpendRows),
     expenseOverrides: toEngineExpenseOverrides(rows.expenseOverrideRows),
+    incomeOverrides: toEngineIncomeOverrides(rows.incomeOverrideRows ?? []),
     savingsGoals: toEngineSavings(rows.savingsGoalRows, rows.savingsContributionRows, rows.savingsOverrideRows),
+    // The account's first cycle: monthly cycles are counted from it.
+    cycleAnchorDate: rows.storedCycles?.[0]?.start_date ?? undefined,
   })
 }
 

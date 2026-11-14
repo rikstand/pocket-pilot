@@ -1,6 +1,6 @@
 import type {
   CycleInput, CycleResult, AmountVersion, CreditExtraOverride, BudgetSpendEntry,
-  ExpenseOverride, SavingsGoal, SavingsCycleLine, Expense, Frequency,
+  ExpenseOverride, SavingsGoal, SavingsCycleLine, Expense, Frequency, IncomeOverride,
 } from './types'
 import { parseDate, formatDate, addDays, daysBetween } from './dates'
 import { getOccurrencesInRange, nthOccurrence, stepOf } from './recurrence'
@@ -33,6 +33,42 @@ export function cycleStartAt(firstStart: string, rule: CycleRule, i: number): st
 /** The last day of the i-th cycle: the day before the next one starts. */
 export function cycleEndAt(firstStart: string, rule: CycleRule, i: number): string {
   return formatDate(addDays(parseDate(cycleStartAt(firstStart, rule, i + 1)), -1))
+}
+
+/**
+ * Where `start` sits on the chain of cycles beginning at `anchor`, or null if
+ * it isn't on it (the pay frequency changed since the chain began).
+ */
+export function cycleIndexOf(anchor: string, rule: CycleRule, start: string): number | null {
+  if (start < anchor) return null
+  const r = cycleRuleOf(rule)
+  const step = stepOf(r.frequency, r.everyN)!
+  const a = parseDate(anchor), s = parseDate(start)
+  let k = 'days' in step
+    ? Math.floor(daysBetween(a, s) / step.days)
+    : Math.max(0, Math.floor(((s.getFullYear() - a.getFullYear()) * 12 + s.getMonth() - a.getMonth()) / step.months) - 1)
+  for (let tries = 0; tries < 3; tries++, k++) {
+    const at = cycleStartAt(anchor, rule, k)
+    if (at === start) return k
+    if (at > start) return null
+  }
+  return null
+}
+
+/**
+ * The cycle after the one starting `currentStart`: its start and its last day.
+ * Counted along the chain from `anchor` when currentStart is on it, so a cycle
+ * that started on 28 Feb is followed by one starting on the 31st again.
+ * Closing a cycle and setting up an account both use this, so the dates they
+ * save always match the forecast's.
+ */
+export function nextCycleDates(
+  currentStart: string, rule: CycleRule, anchor?: string
+): { start: string; end: string } {
+  const k = anchor ? cycleIndexOf(anchor, rule, currentStart) : null
+  return k != null
+    ? { start: cycleStartAt(anchor!, rule, k + 1), end: cycleEndAt(anchor!, rule, k + 1) }
+    : { start: cycleStartAt(currentStart, rule, 1), end: cycleEndAt(currentStart, rule, 1) }
 }
 
 // Inclusive day count for a cycle. Both dates come from parseDate(), which
@@ -159,6 +195,17 @@ function budgetSpentInCycle(
   return total
 }
 
+/** A one-cycle amount of pay, if one was set for this income in this cycle. */
+function incomeOverrideFor(
+  overrides: IncomeOverride[] | undefined,
+  incomeId: string,
+  cycleStart: string
+): number | null {
+  if (!overrides || overrides.length === 0) return null
+  const hit = overrides.find(o => o.incomeId === incomeId && o.cycleStart === cycleStart)
+  return hit ? hit.amountCents : null
+}
+
 /** A one-cycle amount, if one was set for this expense in this cycle. */
 function expenseOverrideFor(
   overrides: ExpenseOverride[] | undefined,
@@ -207,6 +254,7 @@ export function projectCycles(input: CycleInput): CycleResult[] {
   const {
     incomeSources, expenses, openingBalanceCents, startDate, numCycles,
     safetyFloorCents, creditAccount, creditOverrides, creditPayments, budgetSpend, expenseOverrides, savingsGoals,
+    incomeOverrides,
   } = input
   const spareFloorCents = input.spareFloorCents ?? safetyFloorCents
   const results: CycleResult[] = []
@@ -222,6 +270,13 @@ export function projectCycles(input: CycleInput): CycleResult[] {
     ?? incomeSources.find(s => !s.isPotential)
     ?? incomeSources[0]
   const cycleRule: CycleRule = { frequency: primary?.frequency ?? 'fortnightly', everyN: primary?.everyN ?? 1 }
+
+  // Count cycles along the account's own chain when this projection starts on
+  // it, so monthly cycles keep their day of the month. Otherwise start fresh
+  // from startDate, exactly as before.
+  const onChain = input.cycleAnchorDate ? cycleIndexOf(input.cycleAnchorDate, cycleRule, startDate) : null
+  const chainAnchor = onChain != null ? input.cycleAnchorDate! : startDate
+  const chainOffset = onChain ?? 0
 
   // A card only reaches the forecast once its strategy is committed. Before
   // that the Credit page is a simulator and nothing here changes.
@@ -241,14 +296,18 @@ export function projectCycles(input: CycleInput): CycleResult[] {
   const plannedByGoal: Record<string, number> = {}
 
   for (let i = 0; i < numCycles; i++) {
-    const cycleEnd = cycleEndAt(startDate, cycleRule, i)
+    const cycleEnd = cycleEndAt(chainAnchor, cycleRule, chainOffset + i)
 
     // ── income ──────────────────────────────────────────────────────
     let committedIncomeCents = 0
     let potentialIncomeCents = 0
     for (const src of incomeSources) {
       const occs  = getOccurrencesInRange(src.anchorDate, src.frequency, cycleStart, cycleEnd, undefined, src.everyN ?? 1)
-      const total = occs.length * src.amountCents
+      // Each pay at the amount in force on its own date; a one-cycle amount
+      // replaces the lot, but only in a cycle the pay actually falls in.
+      const usual = occs.reduce((sum, d) => sum + getAmountOn(src.amountVersions ?? [], src.amountCents, d), 0)
+      const ov    = occs.length > 0 ? incomeOverrideFor(incomeOverrides, src.id, cycleStart) : null
+      const total = ov ?? usual
       if (src.isPotential) potentialIncomeCents += total
       else committedIncomeCents += total
     }
@@ -408,7 +467,7 @@ export function projectCycles(input: CycleInput): CycleResult[] {
     })
 
     committedBalance = committedClosingBalanceCents
-    cycleStart = cycleStartAt(startDate, cycleRule, i + 1)
+    cycleStart = cycleStartAt(chainAnchor, cycleRule, chainOffset + i + 1)
   }
 
   return results

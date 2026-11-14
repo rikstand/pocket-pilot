@@ -129,6 +129,70 @@ export async function addIncomeAmount(incomeId: string, amountCents: number, eff
   if (error) throw error
 }
 
+// "From now on": a new amount from a cycle. Inserted first and the older
+// same-day rows removed second, so if the clean-up fails the new amount still
+// wins — the newest row on a date always does. Same as setExpenseAmountFrom.
+export async function setIncomeAmountFrom(incomeId: string, effectiveFrom: string, amountCents: number) {
+  const { data, error } = await supabase
+    .from('income_amount_versions')
+    .insert({ income_source_id: incomeId, amount_cents: amountCents, effective_from: effectiveFrom })
+    .select()
+    .single()
+  if (error) throw error
+
+  const { error: e2 } = await supabase
+    .from('income_amount_versions')
+    .delete()
+    .eq('income_source_id', incomeId)
+    .eq('effective_from', effectiveFrom)
+    .neq('id', data.id)
+  if (e2) console.warn('older same-day amount not removed:', e2.message)
+
+  return data
+}
+
+// --- INCOME OVERRIDES ---
+// A different amount of pay for one cycle: a short week, overtime, unpaid
+// leave. An exception for that cycle only, like expense_overrides — never a
+// dated amount with the old one "put back" afterwards. amountCents is the
+// whole cycle's pay.
+export async function getAllIncomeOverrides(accountId: string) {
+  const { data, error } = await supabase
+    .from('income_overrides')
+    .select('*')
+    .eq('account_id', accountId)
+    .order('cycle_start')
+  if (error) throw error
+  return data
+}
+
+export async function setIncomeOverride(
+  incomeId: string,
+  accountId: string,
+  cycleStart: string,
+  amountCents: number
+) {
+  const { data, error } = await supabase
+    .from('income_overrides')
+    .upsert(
+      { income_source_id: incomeId, account_id: accountId, cycle_start: cycleStart, amount_cents: amountCents },
+      { onConflict: 'income_source_id,cycle_start' }
+    )
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function clearIncomeOverride(incomeId: string, cycleStart: string) {
+  const { error } = await supabase
+    .from('income_overrides')
+    .delete()
+    .eq('income_source_id', incomeId)
+    .eq('cycle_start', cycleStart)
+  if (error) throw error
+}
+
 // Switched off, not deleted: the row stays for history.
 export async function deactivateIncomeSource(incomeId: string) {
   const { error } = await supabase.from('income_sources').update({ is_active: false }).eq('id', incomeId)

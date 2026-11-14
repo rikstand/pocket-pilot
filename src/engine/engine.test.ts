@@ -241,3 +241,80 @@ describe('projectCycles', () => {
     expect(out[0].breachesFloor).toBe(true)
   })
 })
+
+// ── pay: dated amounts and one-cycle amounts ────────────────────────
+import { nextCycleDates, cycleIndexOf } from './engine'
+
+describe('pay amounts', () => {
+  it('each pay uses the amount in force on its own date (a raise dated later starts later)', () => {
+    const p = pay({ amountVersions: [
+      { amountCents: 250000, effectiveFrom: '2026-12-03' },
+      { amountCents: 230000, effectiveFrom: '2026-01-01' },
+    ] })
+    expect(run({ incomeSources: [p] }).map(c => c.committedIncomeCents)).toEqual([230000, 230000, 250000])
+  })
+
+  it('an old "put back" pair now works as it was meant to: new amount that cycle only', () => {
+    const p = pay({ amountVersions: [
+      { amountCents: 230000, effectiveFrom: '2026-11-19' },   // the old amount put back
+      { amountCents: 180000, effectiveFrom: '2026-11-05' },   // "just this cycle"
+      { amountCents: 230000, effectiveFrom: '2026-01-01' },
+    ] })
+    expect(run({ incomeSources: [p] }).map(c => c.committedIncomeCents)).toEqual([180000, 230000, 230000])
+  })
+
+  it('a one-cycle amount replaces that cycle only', () => {
+    const out = run({ incomeOverrides: [{ incomeId: 'pay', cycleStart: '2026-11-19', amountCents: 150000 }] })
+    expect(out.map(c => c.committedIncomeCents)).toEqual([230000, 150000, 230000])
+  })
+
+  it('a one-cycle amount set where the pay does not fall is ignored', () => {
+    const p = pay({ frequency: 'monthly', anchorDate: '2026-11-20', isPrimary: false })
+    const main = pay({ id: 'main', amountCents: 0 })
+    const out = run({ incomeSources: [main, p], incomeOverrides: [{ incomeId: 'pay', cycleStart: '2026-11-05', amountCents: 99900 }] })
+    expect(out.map(c => c.committedIncomeCents)).toEqual([0, 230000, 0])
+  })
+
+  it('a one-cycle amount on uncertain pay stays out of the committed balance', () => {
+    const extra = pay({ id: 'x', isPotential: true, isPrimary: false, frequency: 'once', anchorDate: '2026-11-10', amountCents: 50000 })
+    const out = run({ incomeSources: [pay(), extra], numCycles: 1 })
+    expect(out[0].potentialIncomeCents).toBe(50000)
+    expect(out[0].committedIncomeCents).toBe(230000)
+  })
+})
+
+// ── the chain of cycles ─────────────────────────────────────────────
+describe('cycles counted from the first one', () => {
+  const monthly = { frequency: 'monthly' as const }
+
+  it('the cycle after one that started on 28 Feb starts on the 31st again', () => {
+    expect(nextCycleDates('2027-02-28', monthly, '2027-01-31')).toEqual({ start: '2027-03-31', end: '2027-04-29' })
+  })
+
+  it('without the first cycle it counts from this one, as before', () => {
+    expect(nextCycleDates('2027-02-28', monthly)).toEqual({ start: '2027-03-28', end: '2027-04-27' })
+  })
+
+  it('fortnightly: the next cycle is simply 14 days on', () => {
+    expect(nextCycleDates('2026-11-05', { frequency: 'fortnightly' }, '2026-06-25')).toEqual({ start: '2026-11-19', end: '2026-12-02' })
+  })
+
+  it('a start that is not on the chain (pay frequency changed) falls back to counting from itself', () => {
+    expect(cycleIndexOf('2026-06-25', { frequency: 'fortnightly' }, '2026-11-06')).toBeNull()
+    expect(nextCycleDates('2026-11-06', { frequency: 'fortnightly' }, '2026-06-25')).toEqual({ start: '2026-11-20', end: '2026-12-03' })
+  })
+
+  it('the projection keeps the day of the month when given the first cycle', () => {
+    const p = pay({ frequency: 'monthly', anchorDate: '2027-01-31' })
+    const out = run({ incomeSources: [p], startDate: '2027-02-28', cycleAnchorDate: '2027-01-31', numCycles: 3 })
+    expect(out.map(c => [c.startDate, c.endDate])).toEqual([
+      ['2027-02-28', '2027-03-30'], ['2027-03-31', '2027-04-29'], ['2027-04-30', '2027-05-30'],
+    ])
+  })
+
+  it('fortnightly projections are unchanged by the anchor', () => {
+    const a = run({ numCycles: 5 })
+    const b = run({ numCycles: 5, cycleAnchorDate: '2026-06-25' })
+    expect(b).toEqual(a)
+  })
+})

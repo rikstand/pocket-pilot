@@ -20,6 +20,7 @@ import {
   createBnplPlan,
   addExpense, updateExpense, addExpenseAmount, deactivateExpense,
   addIncomeSource, updateIncomeSource, addIncomeAmount, deactivateIncomeSource,
+  setIncomeOverride, clearIncomeOverride, setIncomeAmountFrom,
   closeCycle, addCreditSnapshot,
 } from './lib/repository'
 import { useAccount } from './lib/AccountContext'
@@ -28,11 +29,14 @@ import {
   dueDateInCycle, committedPlanCheck, confirmedPaymentsFrom, predictedBalanceOn,
   planModeOf, isMonthlyCard,
 } from './lib/creditSchedule'
-import { loadForecast, projectFromRows, cycleTickLabel, cycleDateLabel, baseYearOf, baselineChecks, previewBudgetChange } from './lib/forecast'
+import { loadForecast, projectFromRows, cycleTickLabel, cycleDateLabel, baseYearOf, baselineChecks, previewBudgetChange, toEngineExpenses } from './lib/forecast'
 import type { ForecastResult } from './lib/forecast'
-import { getOccurrencesInRange } from './engine/recurrence'
-import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
-import { byOldest, latestVersion, versionForDate } from './lib/versions'
+import { getOccurrencesInRange, nthOccurrence } from './engine/recurrence'
+import { budgetAmountForCycle, cycleEndAt, nextCycleDates } from './engine/engine'
+import type { CycleRule } from './engine/engine'
+import type { Frequency } from './engine/types'
+import { parseDate, formatDate, addDays } from './engine/dates'
+import { byOldest, versionForDate } from './lib/versions'
 import { ExpenseIcon, guessIcon } from './lib/icons'
 import { useViewport } from './lib/useViewport'
 
@@ -69,22 +73,24 @@ function chipStyle(cls: string): { color: string, borderColor: string, backgroun
   if (cls === 'evt') return { color: 'var(--event)', borderColor: 'var(--event)', background: 'var(--event-s)' }
   return undefined
 }
+// Every payment worked out from the first one, the way the engine does it, so
+// a monthly plan starting on the 31st pays on the 28th in February and the
+// 31st again in March — and the payment dates always match the forecast.
 function computeLaybySchedule(
   firstDate: string,
   frequency: 'weekly' | 'fortnightly' | 'monthly' | 'annually',
   count: number
 ): string[] {
   if (!firstDate || count <= 0) return []
-  const dates: string[] = []
-  let d = parseDate(firstDate)
-  for (let i = 0; i < count; i++) {
-    dates.push(formatDate(d))
-    if (frequency === 'weekly') d = addDays(d, 7)
-    else if (frequency === 'fortnightly') d = addDays(d, 14)
-    else if (frequency === 'monthly') d = addMonths(d, 1)
-    else d = addYears(d, 1)
-  }
-  return dates
+  const first = parseDate(firstDate)
+  return Array.from({ length: count }, (_, i) => formatDate(nthOccurrence(first, frequency, 1, i)))
+}
+// What a budget is called per period, for its card.
+const PERIOD_SHORT: Record<string, string> = {
+  daily: 'day', weekly: 'wk', fortnightly: 'fn', monthly: 'mo', annually: 'yr', once: 'one-off',
+}
+const PERIOD_WORD: Record<string, string> = {
+  daily: 'day', weekly: 'week', fortnightly: 'fortnight', monthly: 'month', annually: 'year',
 }
 
 export default function Dashboard({ userId, accountId, variant }: { userId: string, accountId: string, variant: 'cycle' | 'forecast' }) {
@@ -379,6 +385,15 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
 
   const primaryIncome = rawIncome.find((s: any) => s.is_primary && !s.is_potential)
+  // How cycles repeat — the same pick the engine makes: the flagged pay, else
+  // the first certain one.
+  const cycleIncome = primaryIncome ?? rawIncome.find((s: any) => !s.is_potential)
+  const cycleRule: CycleRule = { frequency: (cycleIncome?.frequency ?? 'fortnightly') as Frequency, everyN: cycleIncome?.every_n ?? 1 }
+  // This cycle's own amount of pay, if one was set. One row per income per cycle.
+  function incomeOverrideFor(incomeId: string, cycleStart: string) {
+    return (forecastRows?.incomeOverrideRows ?? []).find((o: any) =>
+      o.income_source_id === incomeId && o.cycle_start === cycleStart) ?? null
+  }
 
   const closeVals    = cycles.map(c => c.committedClosingBalanceCents / 100)
   const floorDollars = floorCents / 100
@@ -427,19 +442,28 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     const cycle = activeCycle
 
     for (const src of rawIncome) {
-      const occs = getOccurrencesInRange(src.anchor_date, src.frequency, cycle.startDate, cycle.endDate)
+      const occs = getOccurrencesInRange(src.anchor_date, src.frequency, cycle.startDate, cycle.endDate, undefined, src.every_n ?? 1)
       if (!occs.length) continue
-      const v = latestVersion(src.income_amount_versions)
-      const unitCents = v?.amount_cents ?? 0
+      // Each pay at the amount in force on its own date, as the engine does.
+      // Before, the newest amount was used for every pay — so a "just this
+      // cycle" change never showed, here or in the forecast.
+      const amounts   = amountsOn(src.income_amount_versions, occs)
+      const unitCents = amounts.unit
+      const incOv     = src.frequency === 'once' ? null : incomeOverrideFor(src.id, cycle.startDate)
+      const total     = incOv ? incOv.amount_cents : amounts.total
       const isOneOffIncome = src.frequency === 'once'
+      const baseChips = src.is_potential ? [['pt','potential']] : [['lock','fixed']]
       cards.push({
         name: src.name, icon: '↓',
         iconClass: src.is_potential ? 'pot' : 'inc',
-        chips: src.is_potential ? [['pt','potential']] : [['lock','fixed']],
+        chips: incOv ? [...baseChips, ['drv','this cycle only']] : baseChips,
         detail: occs.length === 1 ? `${fmtDate(occs[0])} · ${src.frequency}` : occs.map((o: string) => fmtDate(o)).join(', '),
-        value: fmt(unitCents * occs.length, false),
+        value: fmt(total, false),
         valueClass: src.is_potential ? 'pot' : 'pos',
-        totalCents: unitCents * occs.length,
+        totalCents: total,
+        baseTotalCents: amounts.total,
+        occCount: occs.length,
+        isOverride: !!incOv,
         ghost: src.is_potential, dashed: false, act: null,
         oneOff: isOneOffIncome, oneOffKind: 'income', incomeId: src.id,
         isPotential: src.is_potential ?? false,
@@ -454,12 +478,27 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     }
 
     for (const exp of rawExpenses) {
-      const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, cycle.startDate, cycle.endDate, exp.end_date ?? undefined)
-      if (!occs.length) continue
+      const mode = exp.mode ?? 'fixed'
+      const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, cycle.startDate, cycle.endDate, exp.end_date ?? undefined, exp.every_n ?? 1)
 
-      const amounts   = amountsOn(exp.expense_amount_versions, occs)
+      // A budget is a daily rate over the days it runs in the cycle — the
+      // engine's own figure (budgetAmountForCycle), so the card, the section
+      // total and the closing balance all agree. Anything else is its
+      // payments, each at the amount in force on its date.
+      let amounts: { unit: number; total: number }
+      if (mode === 'budget' && exp.frequency !== 'once') {
+        const from = exp.anchor_date > cycle.startDate ? exp.anchor_date : cycle.startDate
+        const to   = exp.end_date && exp.end_date < cycle.endDate ? exp.end_date : cycle.endDate
+        if (to < from) continue
+        amounts = {
+          unit:  versionForDate(exp.expense_amount_versions, from)?.amount_cents ?? 0,
+          total: budgetAmountForCycle(toEngineExpenses([exp])[0], cycle.startDate, cycle.endDate, cycleRule),
+        }
+      } else {
+        if (!occs.length) continue
+        amounts = amountsOn(exp.expense_amount_versions, occs)
+      }
       const unitCents = amounts.unit
-      const mode      = exp.mode ?? 'fixed'
       // Any expense can have a different amount for this one cycle — a
       // Christmas budget, a confirmed power bill. The card shows it, the
       // section total adds it up, and the engine projects with it.
@@ -490,7 +529,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       if (mode === 'variable') {
         detail = '~ typical ' + exp.frequency.replace('ly','')
       } else if (mode === 'budget') {
-        detail = `${fmt(unitCents,false)}/${exp.frequency==='weekly'?'wk':exp.frequency==='fortnightly'?'fn':'mo'}` + (occs.length > 1 ? ` × ${occs.length}` : '')
+        detail = `${fmt(unitCents,false)}/${PERIOD_SHORT[exp.frequency] ?? exp.frequency}`
       } else {
         detail = occs.length === 1 ? `${fmtDate(occs[0])} · ${exp.frequency}` : occs.map((o: string) => fmtDate(o)).join(', ')
         if (exp.category) detail += ' · ' + exp.category
@@ -536,12 +575,18 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         value: '−' + fmt(total, false), valueClass: '', totalCents: total,
         ghost: false, dashed: mode === 'variable' && !override, act,
         expenseId: exp.id,
+        frequency: exp.frequency,
         oneOff: isOneOffExp, oneOffKind: 'expense',
         oneOffDateStr: fmtDate(occs[0]),
         oneOffDate: occs[0],
         laybyPct,
         unitCents,
-        occCount: occs.length,
+        // For a budget, how many periods' worth this cycle holds (2 for a
+        // weekly budget on fortnightly pay, about 0.46 for a monthly one), so
+        // a "from now on" edit saves the amount per period.
+        occCount: mode === 'budget' && exp.frequency !== 'once'
+          ? (unitCents > 0 ? amounts.total / unitCents : 1)
+          : occs.length,
         baseTotalCents: baseTotal,
         isOverride: !!override,
         originalUnitCents: unitCents,
@@ -565,7 +610,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
     for (const exp of rawExpenses) {
       if ((exp.mode ?? 'fixed') !== 'fixed') continue
-      const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, activeCycle.startDate, activeCycle.endDate, exp.end_date ?? undefined)
+      const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, activeCycle.startDate, activeCycle.endDate, exp.end_date ?? undefined, exp.every_n ?? 1)
       if (!occs.length) continue
       const isLayby = !!exp.lay_by_id
       const sortedVersions = [...(exp.expense_amount_versions ?? [])].sort(byOldest)
@@ -614,7 +659,9 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   const varExpensesInCycle = rawExpenses
     .filter(e => e.mode === 'variable')
     .map(exp => {
-      const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, activeCycle.startDate, activeCycle.endDate)
+      // End date included, as everywhere else: an estimate that has stopped
+      // isn't asked about at close.
+      const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, activeCycle.startDate, activeCycle.endDate, exp.end_date ?? undefined, exp.every_n ?? 1)
       if (!occs.length) return null
       // A figure confirmed during the cycle beats the estimate.
       const override = overrideFor(exp.id, activeCycle.startDate)
@@ -636,8 +683,10 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // already sitting in the balance being entered, hold it back so the next
   // cycle opens pre-pay — the engine then counts it as income on payday.
   const nextCycleStartDate = addOneDay(activeCycle.endDate)
+  // A one-cycle amount set for next cycle's pay wins over the usual amount.
+  const nextPayOverride    = primaryIncome ? incomeOverrideFor(primaryIncome.id, nextCycleStartDate) : null
   const scheduledPayCents  = primaryIncome
-    ? (versionForDate(primaryIncome.income_amount_versions, nextCycleStartDate)?.amount_cents ?? 0)
+    ? (nextPayOverride?.amount_cents ?? versionForDate(primaryIncome.income_amount_versions, nextCycleStartDate)?.amount_cents ?? 0)
     : 0
   const payDueLabel       = parseDate(nextCycleStartDate).toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' })
   // What "Yes" would do, shown on the option before it is chosen.
@@ -706,42 +755,52 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     if (!src) return
     setIncomeEditItem({ ...cd, src })
     setIncomeEditScope(null); setIncomeEditStep(0)
-    setIncomeEditAmount(cd.unitCents ? String(cd.unitCents / 100) : '')
+    // Start from what this cycle actually has, per pay.
+    const nowPer = cd.occCount > 0 ? Math.round(cd.totalCents / cd.occCount) : cd.unitCents
+    setIncomeEditAmount(nowPer ? String(nowPer / 100) : '')
     setIncomeEditFrequency(src.frequency)
     setIncomeEditAnchor(src.anchor_date)
     setIncomeEditError('')
   }
 
-  // NEW — save Salary edits. Amount follows the same "just this cycle" vs
-  // "from this date onward" versioning as fixed-expense edits. Frequency and
-  // payday aren't versioned (income_sources has no history table for those
-  // fields), so they apply immediately — acceptable for now since the common
-  // case (a real job change) happens at a cycle boundary anyway.
+  // Save pay edits — the same two choices as an expense, stored the same way.
+  // "Just this cycle" is this cycle's own amount (income_overrides).
+  // "From this date onward" is a new dated amount from this cycle.
+  // Nothing writes the old amount back at the next cycle's start any more:
+  // the engine only ever read the newest amount, so that put-back row made a
+  // one-cycle change vanish from the forecast — and it could overwrite a
+  // change already made to the next cycle.
+  //
+  // Frequency and payday aren't versioned (income_sources has no history for
+  // them), so they still apply straight away. "Schedule change from a date"
+  // is its own branch.
   async function applyIncomeEdit() {
     if (!incomeEditItem) return
+    const it = incomeEditItem
     const amountCents = Math.round(parseFloat(incomeEditAmount || '0') * 100)
-    const amountChanged = amountCents > 0 && amountCents !== incomeEditItem.unitCents
+    const occCount    = Math.max(1, it.occCount ?? 1)
+    const shownPer    = Math.round((it.totalCents ?? it.unitCents) / occCount)
+    const amountChanged = amountCents > 0 && amountCents !== shownPer
     if (amountChanged && !incomeEditScope) {
       setIncomeEditError('Choose when the new amount applies.'); return
     }
     setIncomeEditSaving(true); setIncomeEditError('')
     try {
-      if (amountChanged) {
-        const { error: e1 } = await supabase.from('income_amount_versions').insert({
-          income_source_id: incomeEditItem.incomeId,
-          amount_cents: amountCents,
-          effective_from: activeCycle.startDate,
-        })
-        if (e1) throw e1
-        if (incomeEditScope === 'occurrence') {
-          const nextStart = cycles[activeIdx + 1]?.startDate ?? addOneDay(activeCycle.endDate)
-          const { error: e2 } = await supabase.from('income_amount_versions').insert({
-            income_source_id: incomeEditItem.incomeId,
-            amount_cents: incomeEditItem.unitCents,
-            effective_from: nextStart,
-          })
-          if (e2) throw e2
+      const start = activeCycle.startDate
+      if (amountCents > 0 && incomeEditScope === 'occurrence') {
+        const cycleTotal = amountCents * occCount
+        // Back to the usual amount removes the exception rather than storing
+        // one that happens to match.
+        if (cycleTotal === it.baseTotalCents) {
+          if (it.isOverride) await clearIncomeOverride(it.incomeId, start)
+        } else if (amountChanged) {
+          await setIncomeOverride(it.incomeId, accountId, start, cycleTotal)
         }
+      } else if (amountCents > 0 && incomeEditScope === 'forward') {
+        if (amountCents !== it.unitCents) await setIncomeAmountFrom(it.incomeId, start, amountCents)
+        // This cycle now follows the new amount. Later one-cycle amounts are
+        // kept — they were set on purpose.
+        if (it.isOverride) await clearIncomeOverride(it.incomeId, start)
       }
 
       const freqChanged   = incomeEditFrequency !== incomeEditItem.src.frequency
@@ -895,14 +954,14 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         .map(e => ({ expense_id: e.id, actual_amount_cents: Math.round(parseFloat(closeVarActuals[e.id] || '') * 100) }))
         .filter(a => Number.isFinite(a.actual_amount_cents))
 
+      // The next cycle's dates come from the engine, counted along the
+      // account's own chain of cycles from its first one — so they always
+      // match the forecast, and monthly cycles keep their day of the month
+      // instead of drifting after February. It still starts the day after
+      // this one ends, so the chain never has a gap.
       const nextStart = addOneDay(activeCycle.endDate)
-      const freq      = primaryIncome?.frequency ?? 'fortnightly'
-      const nsDate    = parseDate(nextStart)
-      let nextEnd: string
-      if      (freq === 'weekly')      nextEnd = formatDate(addDays(nsDate, 6))
-      else if (freq === 'fortnightly') nextEnd = formatDate(addDays(nsDate, 13))
-      else if (freq === 'monthly')     nextEnd = formatDate(addDays(addMonths(nsDate, 1), -1))
-      else                             nextEnd = formatDate(addDays(addYears(nsDate, 1), -1))
+      const chained   = nextCycleDates(activeCycle.startDate, cycleRule, rawStoredCycles[0]?.start_date)
+      const nextEnd   = chained.start === nextStart ? chained.end : cycleEndAt(nextStart, cycleRule, 0)
 
       // One call, one transaction — see closeCycle in repository.ts.
       //
@@ -1537,8 +1596,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
             From now on<small>changes the baseline</small>
           </button>
         </div>
-        {budEdit.scope === 'always' && cd.occCount > 1 && (
-          <p className="hint" style={{ marginTop: 6 }}>Saved as {fmt(perCents, false)} each time — it falls {cd.occCount} times this cycle.</p>
+        {budEdit.scope === 'always' && Math.abs(cd.occCount - 1) > 0.01 && (
+          <p className="hint" style={{ marginTop: 6 }}>Saved as {fmt(perCents, false)} a {PERIOD_WORD[cd.frequency] ?? 'period'}, the way this budget is set.</p>
         )}
         {cd.isOverride && budEdit.scope === 'once' && valCents !== cd.baseTotalCents && (
           <button className="budg-reset" onClick={() => setBudEdit({ ...budEdit, val: String(cd.baseTotalCents / 100) })}>
@@ -2359,12 +2418,12 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
               <h3>Change {incomeEditItem.name.toLowerCase()}</h3>
               <p className="sd">Only matters if you're changing the amount — skip this if you're just updating frequency or payday.</p>
               <div className={`opt${incomeEditScope==='occurrence'?' sel':''}`} onClick={() => setIncomeEditScope('occurrence')}>
-                <div className="ot">Just this occurrence</div>
-                <div className="os">A one-off override for this cycle only. Reverts next cycle.</div>
+                <div className="ot">Just this cycle</div>
+                <div className="os">Only this cycle changes. Every other cycle keeps its amount.</div>
               </div>
               <div className={`opt${incomeEditScope==='forward'?' sel':''}`} onClick={() => setIncomeEditScope('forward')}>
                 <div className="ot">From this date onward</div>
-                <div className="os">Permanent — matches a raise or new job.</div>
+                <div className="os">The new usual amount, from this cycle on — a raise or a new job. Cycles you've changed on their own keep their change.</div>
               </div>
               <div className="navrow">
                 <button className="pri" onClick={() => setIncomeEditStep(1)}>Next →</button>
@@ -2373,11 +2432,14 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
             {incomeEditStep === 1 && <>
               <h3>Amount, frequency &amp; payday</h3>
               <p className="sd">
-                {incomeEditScope === 'occurrence' ? 'Amount is one-off — reverts next cycle.' : 'Amount change is permanent.'}
+                {incomeEditScope === 'occurrence' ? 'This cycle only.' : incomeEditScope === 'forward' ? `The usual amount from ${fmtDate(activeCycle.startDate)} onward.` : 'Amount unchanged.'}
                 {' '}Frequency and payday always apply from your next cycle onward.
               </p>
               <div className="field">
-                <label>Amount — currently {fmt(incomeEditItem.unitCents, false)}</label>
+                <label>
+                  Amount{incomeEditItem.occCount > 1 ? ', each pay' : ''} — usually {fmt(incomeEditItem.unitCents, false)}
+                  {incomeEditItem.isOverride && ` · this cycle ${fmt(Math.round(incomeEditItem.totalCents / Math.max(1, incomeEditItem.occCount)), false)}`}
+                </label>
                 <div className="inrow"><span className="pre">{sym}</span>
                   <input type="number" inputMode="decimal" value={incomeEditAmount} onChange={e => setIncomeEditAmount(e.target.value)} />
                 </div>

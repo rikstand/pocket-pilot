@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { upsertProfile, createAccount, addIncomeSource, addExpense, createCycle } from './lib/repository'
 import { CURRENCIES, formatMoney } from './lib/money'
-import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
+import { cycleEndAt } from './engine/engine'
 
 const FREQUENCIES = ['weekly', 'fortnightly', 'monthly', 'annually', 'once'] as const
 type Frequency = typeof FREQUENCIES[number]
@@ -172,22 +172,14 @@ export default function SetupPage({
       // forever. All arithmetic goes through dates.ts: `new Date('YYYY-MM-DD')`
       // parses as UTC midnight, and toISOString() converts back to UTC, so the
       // old local-setter round-trip could land a day off at month/DST boundaries.
-      const cycleAnchor = skipIncome ? cycleStartDate : incomeAnchor
-      const startDate   = parseDate(cycleAnchor)
-      let endDate: Date
-      if (skipIncome) {
-        endDate = addDays(startDate, 13)
-      } else if (incomeFrequency === 'weekly') {
-        endDate = addDays(startDate, 6)
-      } else if (incomeFrequency === 'fortnightly') {
-        endDate = addDays(startDate, 13)
-      } else if (incomeFrequency === 'monthly') {
-        endDate = addDays(addMonths(startDate, 1), -1)
-      } else {
-        endDate = addDays(addYears(startDate, 1), -1)
-      }
+      //
+      // The end date comes from the engine (cycleEndAt), the same function the
+      // forecast and the close use, so the first cycle can never disagree with
+      // the ones after it. No regular pay means fortnightly cycles, as before.
+      const startDate = skipIncome ? cycleStartDate : incomeAnchor
+      const endDate   = cycleEndAt(startDate, { frequency: skipIncome || incomeFrequency === 'once' ? 'fortnightly' : incomeFrequency }, 0)
 
-      await createCycle(accountId, userId, formatDate(startDate), formatDate(endDate), openingCents)
+      await createCycle(accountId, userId, startDate, endDate, openingCents)
 
       onComplete()
     } catch (e: any) { setError(e.message) }

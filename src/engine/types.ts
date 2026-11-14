@@ -17,6 +17,10 @@ export interface IncomeSource {
   everyN?: number       // every N of the frequency; missing = 1
   anchorDate: string
   amountCents: number   // fallback if no versions supplied
+  // Dated amounts, like an expense's: each pay uses the amount in force on its
+  // own date. Optional so older callers still compile; missing means
+  // amountCents for every pay, which is what the engine did before.
+  amountVersions?: AmountVersion[]
   isPotential: boolean
   isPrimary: boolean    // identifies which income source drives cycle length —
                          // without this, projectCycles() falls back to array
@@ -146,6 +150,18 @@ export interface ExpenseOverride {
   amountCents: number
 }
 
+// A different amount of pay for ONE cycle — the income twin of
+// ExpenseOverride, and for the same reason. "Just this cycle" used to be saved
+// as two dated amounts: the new one from this cycle and the old one put back
+// from the next. The engine read only the newest of those, so the change never
+// reached the forecast at all, and the put-back row could overwrite a change
+// already made to the next cycle. amountCents is the whole cycle's pay.
+export interface IncomeOverride {
+  incomeId: string
+  cycleStart: string
+  amountCents: number
+}
+
 // The user's choice for ONE cycle. The minimum is contractual and
 // deliberately not overridable.
 //   choice 'extra' — the minimum plus extraCents (0 = minimum only)
@@ -182,7 +198,13 @@ export interface CycleInput {
   creditPayments?: CreditPayment[]
   budgetSpend?: BudgetSpendEntry[]
   expenseOverrides?: ExpenseOverride[]
+  incomeOverrides?: IncomeOverride[]
   savingsGoals?: SavingsGoal[]
+  // Where the chain of cycles started (the account's first cycle). Monthly
+  // cycles are counted from here, so pay on the 31st comes back to the 31st
+  // after February. Missing, or not on the chain any more (the pay frequency
+  // changed), means counting from startDate, as before.
+  cycleAnchorDate?: string
 }
 
 export interface CycleResult {
