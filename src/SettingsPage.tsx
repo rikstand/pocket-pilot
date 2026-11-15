@@ -5,11 +5,21 @@ import { getWishlistItems, updateAccount } from './lib/repository'
 import { loadForecast, projectFromRows } from './lib/forecast'
 import type { ForecastResult } from './lib/forecast'
 import { planModeOf } from './lib/creditSchedule'
+import { useNewLook } from './lib/look'
+import { useToast } from './runway/toastContext'
 
 const PROJECT_CYCLES = 6
 
 export default function SettingsPage({ accountId }: { userId: string; accountId: string }) {
   const { activeAccount, reloadAccounts } = useAccount()
+  const [newLook, setNewLook] = useNewLook()
+  const toast = useToast()
+
+  function toggleLook() {
+    const was = newLook
+    setNewLook(!was)
+    toast(was ? 'New look off on this device' : 'New look on for this device', { undo: () => setNewLook(was) })
+  }
 
   // Amounts follow the account's currency — see lib/money.ts
   const fmt = moneyFormatter(activeAccount?.currency_code)
@@ -202,6 +212,23 @@ export default function SettingsPage({ accountId }: { userId: string; accountId:
             Set when the account was created. Changing it would reinterpret every stored amount,
             so it's fixed.
           </p>
+        </div>
+      </div>
+
+      {/* The refresh switch. Kept on this device only; the launch branch removes it. */}
+      <div className="section-hdr sh-fix">
+        <span className="sh-label">Look</span>
+      </div>
+      <div className="rw" style={{ padding:'8px 16px 0' }}>
+        <div className="field" style={{ display:'flex', alignItems:'center', gap:12 }}>
+          <div style={{ flex:1 }}>
+            <label>New look</label>
+            <p className="hint" style={{ marginTop:2 }}>
+              The refreshed screens, as they're built. On this device only. Screens not rebuilt yet stay as they are.
+            </p>
+          </div>
+          <button type="button" role="switch" aria-checked={newLook} aria-label="New look"
+            className={`rw-switch${newLook ? ' on' : ''}`} onClick={toggleLook}><i /></button>
         </div>
       </div>
 

@@ -79,7 +79,12 @@ function isLaybyFinished(exp: any): boolean {
   return versions.every((v: any) => v.effective_from < t)
 }
 
-export default function ExpensesPage({ userId, accountId }: { userId: string; accountId: string; onBack?: () => void }) {
+export default function ExpensesPage({ userId, accountId, addSignal = 0 }: {
+  userId: string; accountId: string; onBack?: () => void
+  // The new shell's + opens the add sheet here until Journey 9 replaces it.
+  // Each press raises the number, so it works when this page is already open.
+  addSignal?: number
+}) {
   const { activeAccount } = useAccount()
   // Amounts follow the account's currency — see lib/money.ts
   const currencyCode = activeAccount?.currency_code
@@ -107,6 +112,8 @@ export default function ExpensesPage({ userId, accountId }: { userId: string; ac
   const [galOpen,    setGalOpen]    = useState(false)
 
   useEffect(() => { load() }, [accountId])
+
+  useEffect(() => { if (addSignal > 0) openAdd() }, [addSignal])
 
   useEffect(() => {
     if (sheet === 'add' && !iconManual && name.trim()) {

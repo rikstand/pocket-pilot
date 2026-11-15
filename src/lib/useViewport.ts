@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 
 /**
  * Which layout to render. Width alone decides it — 1024px and up is desktop,
@@ -15,7 +15,15 @@ function current(): Viewport {
   return window.matchMedia(DESKTOP_QUERY).matches ? 'desktop' : 'mobile'
 }
 
+/**
+ * The new look shows the phone layout on every screen size (the Planner will
+ * be the one desktop page). Its shell sets this so pages that switch markup
+ * on width keep their phone layout inside it.
+ */
+export const PhoneLayout = createContext(false)
+
 export function useViewport(): Viewport {
+  const phoneOnly = useContext(PhoneLayout)
   const [vp, setVp] = useState<Viewport>(current)
 
   useEffect(() => {
@@ -31,5 +39,5 @@ export function useViewport(): Viewport {
     }
   }, [])
 
-  return vp
+  return phoneOnly ? 'mobile' : vp
 }

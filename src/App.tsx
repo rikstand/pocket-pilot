@@ -10,6 +10,9 @@ import AppShell, { type Page } from './AppShell'
 import WishlistPage from './WishlistPage'
 import CreditPage from './CreditPage'
 import SettingsPage from './SettingsPage'
+import RunwayShell from './runway/RunwayShell'
+import { ToastProvider } from './runway/Toast'
+import { useNewLook } from './lib/look'
 
 function AuthedApp({ userId }: { userId: string }) {
   const { activeAccount, loading: accountLoading, reloadAccounts } = useAccount()
@@ -19,6 +22,24 @@ function AuthedApp({ userId }: { userId: string }) {
     document.documentElement.getAttribute('data-theme') === 'dark'
   )
   const [addingAccount, setAddingAccount] = useState(false)
+  const [newLook] = useNewLook()
+  const [addSignal, setAddSignal] = useState(0)
+
+  // Plan and More only exist in the new shell. Turning the new look off
+  // while on one of them shows Cycle.
+  const shown: Page = !newLook && (page === 'plan' || page === 'more') ? 'cycle' : page
+
+  function navigate(to: Page) {
+    setPage(to)
+    // Off the page, so coming back to Expenses later doesn't reopen the add sheet.
+    if (to !== 'expenses') setAddSignal(0)
+  }
+
+  // The new shell's +: today's add-expense sheet until Journey 9 replaces it.
+  function addFromShell() {
+    setPage('expenses')
+    setAddSignal(n => n + 1)
+  }
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light')
@@ -49,32 +70,51 @@ function AuthedApp({ userId }: { userId: string }) {
 
   if (!activeAccount) return <p style={{ fontFamily: 'sans-serif', padding: 24 }}>No account found.</p>
 
-  return (
-    <AppShell
-      active={page}
-      onNavigate={setPage}
+  const pages = (
+    <>
+      {shown === 'cycle' && (
+        <Dashboard key={'cycle-' + dataVersion} userId={userId} accountId={activeAccount.id} variant="cycle" />
+      )}
+      {shown === 'forecast' && (
+        <Dashboard key={'forecast-' + dataVersion} userId={userId} accountId={activeAccount.id} variant="forecast" />
+      )}
+      {shown === 'expenses' && (
+        <ExpensesPage userId={userId} accountId={activeAccount.id} onBack={goCycleAndReload} addSignal={addSignal} />
+      )}
+      {shown === 'wishlist' && (
+        <WishlistPage userId={userId} accountId={activeAccount.id} />
+      )}
+      {shown === 'credit' && (
+        <CreditPage key={'credit-' + dataVersion} userId={userId} accountId={activeAccount.id} />
+      )}
+      {shown === 'settings' && (
+        <SettingsPage key={'settings-' + dataVersion} userId={userId} accountId={activeAccount.id} />
+      )}
+    </>
+  )
+
+  if (newLook) return (
+    <RunwayShell
+      active={shown}
+      onNavigate={navigate}
+      onAdd={addFromShell}
       darkMode={darkMode}
       onToggleDark={() => setDarkMode(d => !d)}
       onAddAccount={() => setAddingAccount(true)}
     >
-      {page === 'cycle' && (
-        <Dashboard key={'cycle-' + dataVersion} userId={userId} accountId={activeAccount.id} variant="cycle" />
-      )}
-      {page === 'forecast' && (
-        <Dashboard key={'forecast-' + dataVersion} userId={userId} accountId={activeAccount.id} variant="forecast" />
-      )}
-      {page === 'expenses' && (
-        <ExpensesPage userId={userId} accountId={activeAccount.id} onBack={goCycleAndReload} />
-      )}
-      {page === 'wishlist' && (
-        <WishlistPage userId={userId} accountId={activeAccount.id} />
-      )}
-      {page === 'credit' && (
-        <CreditPage key={'credit-' + dataVersion} userId={userId} accountId={activeAccount.id} />
-      )}
-      {page === 'settings' && (
-        <SettingsPage key={'settings-' + dataVersion} userId={userId} accountId={activeAccount.id} />
-      )}
+      {pages}
+    </RunwayShell>
+  )
+
+  return (
+    <AppShell
+      active={shown}
+      onNavigate={navigate}
+      darkMode={darkMode}
+      onToggleDark={() => setDarkMode(d => !d)}
+      onAddAccount={() => setAddingAccount(true)}
+    >
+      {pages}
     </AppShell>
   )
 }
@@ -120,7 +160,9 @@ export default function App() {
 
   return (
     <AccountProvider userId={userId}>
-      <AuthedApp userId={userId} />
+      <ToastProvider>
+        <AuthedApp userId={userId} />
+      </ToastProvider>
     </AccountProvider>
   )
 }

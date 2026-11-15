@@ -1,0 +1,200 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Runway — the new look (Ink & Mint, design system chosen 10 Nov 2026).
+
+   Everything here sits under .rw and uses --rw-* names, so it can live next
+   to design.css without touching the old screens: design.css owns --bg,
+   --ink, --acc and the rest, and every old page still reads those. When the
+   launch branch makes this the only look, design.css goes and these names
+   can lose their prefix.
+
+   Token values are copied from the design system's tokens.css. If they ever
+   disagree, the design system is right.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.rw {
+  --rw-bg: #f6f6f3;
+  --rw-surface: #ffffff;
+  --rw-surface-2: #efefeb;
+  --rw-ink: #0e1116;
+  --rw-muted: #62666d;
+  --rw-hairline: #e6e6e1;
+  --rw-faint: #c9cbcf;          /* non-text only */
+  --rw-action: #0e1116;
+  --rw-action-ink: #ffffff;
+  --rw-line: #12a06a;           /* graphics only, never small text */
+  --rw-good: #0b7a50;
+  --rw-near-floor: #d98a1c;
+  --rw-near-floor-text: #9a5e0a;
+  --rw-under-floor: #d0402f;
+  --rw-credit: #0d7d8c;
+  --rw-bnpl: #7c4ddb;
+
+  --rw-space-1: 4px;
+  --rw-space-2: 8px;
+  --rw-space-3: 12px;
+  --rw-space-4: 16px;
+  --rw-space-6: 24px;
+  --rw-radius-sm: 9px;
+  --rw-radius-md: 13px;
+  --rw-radius-lg: 16px;
+  --rw-radius-xl: 24px;
+  --rw-radius-pill: 999px;
+
+  --rw-font: Inter, system-ui, sans-serif;
+  --rw-text-hero: 650 34px/36px var(--rw-font);
+  --rw-text-amount: 650 32px/36px var(--rw-font);
+  --rw-text-tile: 650 15px/20px var(--rw-font);
+  --rw-text-page-title: 700 22px/28px var(--rw-font);
+  --rw-text-sheet-title: 650 16px/22px var(--rw-font);
+  --rw-text-body: 400 13px/19px var(--rw-font);
+  --rw-text-row-name: 600 13px/18px var(--rw-font);
+  --rw-text-sub: 500 11px/15px var(--rw-font);
+  --rw-text-label: 700 10px/14px var(--rw-font);
+
+}
+
+/* Text defaults go on the new parts only, never on .rw itself: the shell is
+   .rw too, and an old screen inside it must keep inheriting what it always
+   has. */
+.rw-page, .rw-top, .rw-tabs, .rw-toast {
+  font: var(--rw-text-body);
+  font-feature-settings: 'tnum' 1;
+  color: var(--rw-ink);
+  text-align: left;              /* index.css centres #root */
+  -webkit-font-smoothing: antialiased;
+}
+
+[data-theme="dark"] .rw,
+.rw[data-theme="dark"] {
+  --rw-bg: #0b0d10;
+  --rw-surface: #15181d;
+  --rw-surface-2: #1c2026;
+  --rw-ink: #f2f3f5;
+  --rw-muted: #9a9fa7;
+  --rw-hairline: #23272e;
+  --rw-faint: #3a3f47;
+  --rw-action: #f2f3f5;
+  --rw-action-ink: #0b0d10;
+  --rw-line: #3ddc97;
+  --rw-good: #3ddc97;
+  --rw-near-floor: #f2b44b;
+  --rw-near-floor-text: #f2b44b;
+  --rw-under-floor: #ff6b5b;
+  --rw-credit: #4cc3d0;
+  --rw-bnpl: #a98bff;
+}
+
+/* :where keeps this at the lowest weight, so each control's own colour wins. */
+.rw :where(button) { font-family: inherit; color: inherit; }
+
+/* On a computer the new look is the phone column, centred. Drop the frame
+   index.css draws round #root at full width. */
+body.is-runway #root { border-inline: none; }
+
+/* ── type styles ──────────────────────────────────────────────────────── */
+.rw .rw-hero        { font: var(--rw-text-hero); }
+.rw .rw-amount      { font: var(--rw-text-amount); }
+.rw .rw-tile        { font: var(--rw-text-tile); }
+.rw .rw-page-title  { font: var(--rw-text-page-title); }
+.rw .rw-sheet-title { font: var(--rw-text-sheet-title); }
+.rw .rw-body        { font: var(--rw-text-body); }
+.rw .rw-row-name    { font: var(--rw-text-row-name); }
+.rw .rw-sub         { font: var(--rw-text-sub); color: var(--rw-muted); }
+.rw .rw-label       { font: var(--rw-text-label); color: var(--rw-muted); }
+
+/* ── shell ────────────────────────────────────────────────────────────── */
+/* .app (design.css) still gives the old pages the column they expect. */
+.app.rw-app { background: var(--rw-bg); position: relative; }
+
+.rw-top {
+  flex: 0 0 auto; display: flex; align-items: center; gap: var(--rw-space-2);
+  padding: var(--rw-space-3) var(--rw-space-3) 0;
+}
+.rw-back {
+  border: none; background: none; padding: 6px 4px; cursor: pointer;
+  font: var(--rw-text-row-name); color: var(--rw-muted);
+}
+
+.rw-tabs {
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: space-around;
+  padding: 6px 8px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--rw-hairline); background: var(--rw-bg);
+}
+.rw-tab {
+  width: 56px; border: none; background: none; cursor: pointer; padding: 4px 0;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  font: var(--rw-text-label); font-weight: 600; color: var(--rw-muted);
+}
+.rw-tab svg { width: 20px; height: 20px; }
+.rw-tab.on { color: var(--rw-ink); }
+.rw-fab {
+  width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
+  background: var(--rw-action); color: var(--rw-action-ink);
+  display: grid; place-items: center; margin-top: -14px;
+}
+.rw-fab svg { width: 22px; height: 22px; }
+
+/* ── a page in the new look ───────────────────────────────────────────── */
+.rw-page { flex: 1 1 auto; overflow-y: auto; padding-bottom: var(--rw-space-4); scrollbar-width: none; }
+.rw-page::-webkit-scrollbar { width: 0; }
+.rw-page-head { padding: var(--rw-space-3) var(--rw-space-4) 0; }
+.rw-section {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: var(--rw-space-4) 18px 5px;
+  font: var(--rw-text-sub); font-weight: 650; color: var(--rw-muted);
+}
+
+/* Rows in a group: surface card, hairline between rows inset by space-3. */
+.rw-group { margin: 0 var(--rw-space-3); background: var(--rw-surface); border-radius: var(--rw-radius-lg); overflow: hidden; }
+.rw-row {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 11px var(--rw-space-3); position: relative;
+  border: none; background: none; text-align: left; cursor: pointer;
+}
+.rw-row + .rw-row::before {
+  content: ''; position: absolute; top: 0; left: var(--rw-space-3); right: var(--rw-space-3);
+  height: 1px; background: var(--rw-hairline);
+}
+.rw-row .rw-tx { flex: 1; min-width: 0; }
+.rw-row .rw-chev { color: var(--rw-muted); font-size: 15px; }
+.rw-row.static { cursor: default; }
+
+.rw-dot {
+  width: 28px; height: 28px; border-radius: 50%; flex: 0 0 28px;
+  display: grid; place-items: center; font: var(--rw-text-row-name);
+  background: var(--rw-surface-2); color: var(--rw-ink);
+}
+.rw-dot.add { background: none; border: 1.5px dashed var(--rw-hairline); color: var(--rw-muted); }
+.rw-check { font: var(--rw-text-row-name); color: var(--rw-good); }
+
+/* ── switch: on / off settings only ───────────────────────────────────── */
+.rw-switch {
+  width: 40px; height: 24px; flex: 0 0 40px; border-radius: var(--rw-radius-pill);
+  border: none; padding: 2px; cursor: pointer; background: var(--rw-surface-2);
+  display: flex; transition: background .2s;
+}
+.rw-switch i {
+  width: 20px; height: 20px; border-radius: 50%; background: var(--rw-surface);
+  box-shadow: 0 1px 3px rgba(0,0,0,.18); transition: transform .2s;
+}
+.rw-switch.on { background: var(--rw-action); }
+.rw-switch.on i { transform: translateX(16px); background: var(--rw-action-ink); }
+
+/* ── toast with Undo ──────────────────────────────────────────────────── */
+.rw-toast {
+  position: fixed; z-index: 90; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom));
+  transform: translateX(-50%); width: min(456px, calc(100% - 24px));
+  display: flex; align-items: center; gap: var(--rw-space-2);
+  background: var(--rw-ink); color: var(--rw-bg);
+  border-radius: var(--rw-radius-md); padding: 10px var(--rw-space-3);
+  font: var(--rw-text-body); transition: opacity .3s;
+}
+.rw-toast .rw-toast-msg { flex: 1; min-width: 0; }
+.rw-toast button {
+  border: none; background: none; cursor: pointer; padding: 2px 4px;
+  font: var(--rw-text-row-name); font-weight: 700; color: var(--rw-bg);
+  text-decoration: underline; text-underline-offset: 3px;
+}
+/* The J8 mock coloured Undo mint, but mint is for graphics, never small text
+   (design system), and fails on the light toast in dark mode. */
+.rw-toast.hide { opacity: 0; pointer-events: none; }
