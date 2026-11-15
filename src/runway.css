@@ -306,7 +306,7 @@ body.is-runway #root { border-inline: none; }
   display: flex; align-items: flex-end; justify-content: center;
 }
 .rw-sheet {
-  width: 100%; max-width: 480px; max-height: 94vh; overflow-y: auto;
+  width: 100%; max-width: 480px; max-height: 94vh; overflow-y: auto; overflow-x: hidden;
   background: var(--rw-bg); border-radius: var(--rw-radius-xl) var(--rw-radius-xl) 0 0;
   padding: 9px 14px calc(18px + env(safe-area-inset-bottom));
   font: var(--rw-text-body); font-feature-settings: 'tnum' 1; color: var(--rw-ink); text-align: left;
@@ -405,3 +405,68 @@ body.is-runway #root { border-inline: none; }
   font: var(--rw-text-row-name); font-size: 12px;
 }
 .rw .rw-addo { color: var(--rw-muted); }
+
+/* ═══ Budgets: nudge, change and the universal preview ═══════════════ */
+.rw-seg.flush { margin: 10px 0 0; }
+.rw-flagban {
+  display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 10px;
+  border-radius: var(--rw-radius-md); padding: 9px 11px; cursor: pointer; font: var(--rw-text-body); text-align: left;
+}
+.rw-flagban b { font: var(--rw-text-row-name); }
+.rw-flagban .go { font: var(--rw-text-row-name); font-size: 12px; }
+.rw .rw-flagban.under { background: color-mix(in srgb, var(--rw-good) 12%, var(--rw-surface)); border: 1px solid color-mix(in srgb, var(--rw-good) 30%, transparent); color: var(--rw-good); }
+.rw .rw-flagban.over { background: color-mix(in srgb, var(--rw-near-floor) 13%, var(--rw-surface)); border: 1px solid color-mix(in srgb, var(--rw-near-floor) 35%, transparent); color: var(--rw-near-floor-text); }
+
+.rw-verdict { display: flex; align-items: center; gap: 10px; margin-top: 10px; border-radius: 14px; padding: 10px 12px; }
+.rw-verdict.under { background: color-mix(in srgb, var(--rw-good) 12%, var(--rw-surface)); border: 1px solid color-mix(in srgb, var(--rw-good) 30%, transparent); }
+.rw-verdict.over { background: color-mix(in srgb, var(--rw-near-floor) 13%, var(--rw-surface)); border: 1px solid color-mix(in srgb, var(--rw-near-floor) 35%, transparent); }
+.rw-verdict .big { font: 750 22px/1 var(--rw-font); letter-spacing: -.02em; white-space: nowrap; }
+.rw-verdict.under .big { color: var(--rw-good); }
+.rw-verdict.over .big { color: var(--rw-near-floor-text); }
+.rw-verdict .t { font: var(--rw-text-sub); font-size: 12px; color: var(--rw-ink); }
+.rw-verdict .t b { display: block; font: var(--rw-text-row-name); }
+
+.rw-amtrow { display: flex; align-items: center; gap: 6px; margin-top: 6px; background: var(--rw-surface);
+  border: 1.5px solid var(--rw-hairline); border-radius: 14px; padding: 2px 12px; }
+.rw-amtrow:focus-within { border-color: var(--rw-ink); }
+.rw-amtrow span { font: var(--rw-text-amount); font-size: 22px; color: var(--rw-muted); }
+.rw-amtrow input { flex: 1; min-width: 0; border: none; background: transparent; outline: none; color: var(--rw-ink);
+  font: var(--rw-text-amount); font-size: 28px; letter-spacing: -.03em; padding: 5px 0; font-feature-settings: 'tnum' 1; }
+.rw-amtrow input::-webkit-inner-spin-button { -webkit-appearance: none; }
+.rw-amtrow em { font-style: normal; font: var(--rw-text-sub); font-size: 12px; color: var(--rw-muted); }
+.rw .rw-chips button.avg.under { border-color: color-mix(in srgb, var(--rw-good) 45%, transparent); color: var(--rw-good); }
+.rw .rw-chips button.avg.over { border-color: color-mix(in srgb, var(--rw-near-floor) 55%, transparent); color: var(--rw-near-floor-text); }
+.rw .rw-chips button.avg.on { background: var(--rw-ink); color: var(--rw-bg); border-color: var(--rw-ink); }
+.rw-empty { margin-top: 10px; background: var(--rw-surface); border-radius: var(--rw-radius-lg); padding: 16px; text-align: center;
+  font: var(--rw-text-sub); font-size: 12px; color: var(--rw-muted); }
+
+/* The universal preview. */
+.rw-pv { padding: 10px var(--rw-space-3); }
+.rw-pv svg { display: block; width: 100%; height: auto; margin-top: 4px; }
+.rw-pv-k { display: flex; justify-content: space-between; align-items: center; font: var(--rw-text-sub); font-size: 10.5px; font-weight: 650; color: var(--rw-muted); }
+.rw-pv-lg { display: flex; align-items: center; gap: 4px; font-weight: 600; }
+.rw-pv-lg i { display: inline-block; width: 12px; margin-left: 6px; border-top: 2.4px solid var(--rw-line); }
+.rw-pv-lg i.gh { border-top-color: var(--rw-ink); opacity: .3; margin-left: 0; }
+.rw-pv-lg i.fl { border-top: 1.6px dashed var(--rw-under-floor); }
+.rw-pv-lg i.un { border-top-color: var(--rw-good); margin-left: 0; }
+.rw-pv-lg i.ov { border-top-color: var(--rw-near-floor); }
+.rw-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+.rw-tile { background: var(--rw-surface); border-radius: var(--rw-radius-md); padding: 8px 9px; border: 1.5px solid transparent; }
+.rw-tile.out { border-color: var(--rw-under-floor); }
+.rw-tile .k { font: var(--rw-text-label); font-size: 9.5px; font-weight: 650; color: var(--rw-muted); }
+.rw-tile .v { font: var(--rw-text-tile); margin-top: 2px; }
+.rw-tile .v.near { color: var(--rw-near-floor-text); }
+.rw-tile .v.under { color: var(--rw-under-floor); }
+.rw-tile .d { font: var(--rw-text-label); font-size: 9.5px; font-weight: 600; color: var(--rw-muted); }
+.rw-warn-ban { display: flex; align-items: center; gap: 9px; margin-top: 8px; border-radius: var(--rw-radius-md); padding: 9px 11px; font: var(--rw-text-body); font-size: 12px; }
+.rw-warn-ban.near { background: color-mix(in srgb, var(--rw-near-floor) 12%, var(--rw-surface)); border: 1px solid color-mix(in srgb, var(--rw-near-floor) 30%, transparent); }
+.rw-warn-ban.near b { color: var(--rw-near-floor-text); }
+.rw-warn-ban.under { background: var(--rw-under-floor); color: #fff; }
+.rw-warn-ban .i { width: 20px; height: 20px; flex: 0 0 20px; border-radius: 50%; display: grid; place-items: center;
+  background: #fff; color: var(--rw-under-floor); font-weight: 800; font-size: 12px; }
+
+/* Arrow badge by a budget's name when it's usually off. */
+.rw-bdg { display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; margin-left: 6px;
+  font: 800 10.5px/1 var(--rw-font); vertical-align: 1px; }
+.rw-bdg.under { background: color-mix(in srgb, var(--rw-good) 16%, transparent); color: var(--rw-good); }
+.rw-bdg.over { background: color-mix(in srgb, var(--rw-near-floor) 22%, transparent); color: var(--rw-near-floor-text); }

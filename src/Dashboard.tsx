@@ -44,6 +44,7 @@ import { useDataChanged } from './lib/dataEvents'
 import { useLog } from './runway/logContext'
 import CycleView, { type DayItem, type BudgetRow } from './runway/CycleView'
 import { buildRunway, type RunwayEvent } from './runway/runwaySeries'
+import { budgetHistory, budgetFlag } from './runway/budgetHistory'
 
 function fmtDate(d: string) {
   return parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
@@ -2141,7 +2142,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
             <span className={`chv${openSecs.budget ? ' up' : ''}`}>▾</span>
           </span>
         </div>
-        {openSecs.budget && baselineAdvice.length > 0 && (
+        {openSecs.budget && !newLook && baselineAdvice.length > 0 && (
           <div className="cards" style={{ paddingBottom: 0 }}>
             {baselineAdvice.map(b => (
               <div key={'bl' + b.expenseId} className="baseline-tip">
@@ -2418,9 +2419,14 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
 
     items.sort((a, b) => a.date.localeCompare(b.date))
 
+    const closedCycles = rawStoredCycles.filter((x: any) => x.is_closed)
     const budgets: BudgetRow[] = budgetCards.map(cd => {
       const entries = entriesForExpenseInCycle(cd.expenseId)
+      const row = rawExpenses.find((x: any) => x.id === cd.expenseId)
+      const flag = row ? budgetFlag(budgetHistory(toEngineExpenses([row])[0], closedCycles, rawBudgetEntries,
+        forecastRows?.expenseOverrideRows ?? [], ruleAt), cd.baseTotalCents) : null
       return {
+        flag: flag?.dir ?? null,
         id: cd.expenseId, name: cd.name,
         spentCents: entries.reduce((sum: number, e: any) => sum + e.amount_cents, 0),
         plannedCents: cd.totalCents,

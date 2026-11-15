@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
-import { loadForecast, budgetsInCycle } from '../lib/forecast'
+import { loadForecast, budgetsInCycle, cycleRuleOn, previewBudgetChange, toEngineExpenses } from '../lib/forecast'
+import type { ForecastResult } from '../lib/forecast'
 import {
   getPayees, findOrCreatePayee,
   addBudgetSpendEntry, updateBudgetSpendEntry, deleteBudgetSpendEntry,
+  setExpenseOverride, clearExpenseOverride, setExpenseAmountFrom, deleteExpenseAmountVersion,
 } from '../lib/repository'
+import { budgetHistory, budgetFlag, type PastCycle, type BudgetFlag } from './budgetHistory'
+import Preview, { previewStats } from './Preview'
 import { parseDate, formatDate, addDays } from '../engine/dates'
 import { notifyDataChanged } from '../lib/dataEvents'
 import { useToast } from './toastContext'
@@ -26,11 +30,19 @@ interface Data {
   end: string
   closingCents: number
   floorCents: number
-  budgets: { id: string; name: string; plannedCents: number }[]
+  budgets: ReturnType<typeof budgetsInCycle>
   entries: any[]          // this cycle
   allEntries: any[]       // every cycle, for which places go where
   payees: any[]
+  rows: ForecastResult    // for previews: the same rows the forecast uses
+  history: Record<string, PastCycle[]>
+  flags: Record<string, BudgetFlag | null>
 }
+
+const PERIOD: Record<string, string> = { daily: 'day', weekly: 'week', fortnightly: 'fortnight', monthly: 'month', annually: 'year' }
+
+// How far a budget change is previewed: 12 paydays (budget nudge mock).
+const PREVIEW_PAYS = 12
 
 const todayStr = () => formatDate(new Date())
 const shift = (d: string, n: number) => formatDate(addDays(parseDate(d), n))
@@ -53,15 +65,25 @@ export function LogSheetsProvider({ accountId, onAddOther, children }: {
   async function load() {
     try {
       const [f, payees] = await Promise.all([
-        loadForecast(accountId, floorCents, { numCycles: 2 }),
+        loadForecast(accountId, floorCents, { numCycles: PREVIEW_PAYS + 1 }),
         getPayees(accountId),
       ])
       const c = f.cycles[0]
       if (!c) { setError('No open cycle.'); return }
       const all = f.budgetSpendRows ?? []
-      setData({
+      const budgets = budgetsInCycle(f, c.startDate, c.endDate)
+      const closed = (f.storedCycles ?? []).filter((x: any) => x.is_closed)
+      const history: Data['history'] = {}, flags: Data['flags'] = {}
+      for (const b of budgets) {
+        const row = f.expenseRows.find((e: any) => e.id === b.id)
+        if (!row) continue
+        history[b.id] = budgetHistory(toEngineExpenses([row])[0], closed, all, f.expenseOverrideRows ?? [],
+          d => cycleRuleOn(f.incomeRows, d))
+        flags[b.id] = budgetFlag(history[b.id], b.baseCents)
+      }
+      setData({ rows: f, history, flags,
         start: c.startDate, end: c.endDate, closingCents: c.committedClosingBalanceCents, floorCents,
-        budgets: budgetsInCycle(f, c.startDate, c.endDate),
+        budgets,
         entries: all.filter((e: any) => e.spent_date >= c.startDate && e.spent_date <= c.endDate),
         allEntries: all, payees: payees ?? [],
       })
@@ -90,7 +112,8 @@ export function LogSheetsProvider({ accountId, onAddOther, children }: {
             {error ? <div className="rw-sd">{error}</div>
               : !data ? <div className="rw-sd">Loading…</div>
               : view.kind === 'budget'
-                ? <BudgetSheet data={data} budgetId={view.budgetId} onClose={close}
+                ? <BudgetSheet data={data} budgetId={view.budgetId} onClose={close} accountId={accountId}
+                    onChanged={async () => { notifyDataChanged(); close() }}
                     onLog={() => setView({ kind: 'log', budgetId: view.budgetId, fromPlus: false, back: view.budgetId })}
                     onEdit={entry => setView({ kind: 'log', budgetId: entry.expense_id, fromPlus: false, entry, back: view.budgetId })} />
                 : <LogSheet key={view.entry?.id ?? 'new'} data={data} accountId={accountId} view={view}
@@ -109,9 +132,11 @@ export function LogSheetsProvider({ accountId, onAddOther, children }: {
 }
 
 /* ── a budget's spend this cycle ─────────────────────────────────────── */
-function BudgetSheet({ data, budgetId, onClose, onLog, onEdit }: {
-  data: Data; budgetId: string; onClose: () => void; onLog: () => void; onEdit: (entry: any) => void
+function BudgetSheet({ data, budgetId, accountId, onClose, onLog, onEdit, onChanged }: {
+  data: Data; budgetId: string; accountId: string; onClose: () => void; onLog: () => void
+  onEdit: (entry: any) => void; onChanged: () => void
 }) {
+  const [tab, setTab] = useState<'spend' | 'change'>('spend')
   const { activeAccount } = useAccount()
   const fmt = moneyFormatter(activeAccount?.currency_code)
   const money = (c: number) => (c < 0 ? '−' : '') + fmt(Math.abs(c), true)
@@ -127,6 +152,7 @@ function BudgetSheet({ data, budgetId, onClose, onLog, onEdit }: {
   const days: string[] = []
   for (const e of mine) if (!days.includes(e.spent_date)) days.push(e.spent_date)
 
+  const flag = data.flags[budgetId]
   return (
     <>
       <div className="rw-sh-h">
@@ -136,28 +162,190 @@ function BudgetSheet({ data, budgetId, onClose, onLog, onEdit }: {
         </div>
         <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button>
       </div>
-      {mine.length === 0 && <div className="rw-sd" style={{ padding: '14px 4px' }}>Nothing logged yet this cycle.</div>}
-      {days.map(d => (
-        <div key={d}>
-          <div className="rw-dayh">{label(d)}</div>
-          <div className="rw-group flush">
-            {mine.filter(e => e.spent_date === d).map(e => {
-              const place = placeName(e.payee_id)
-              const legacy = e.label && e.label !== 'Quick add' ? e.label : null
-              return (
-                <button key={e.id} type="button" className="rw-row" onClick={() => onEdit(e)}>
-                  <div className="rw-tx">
-                    <div className="rw-row-name">{place ?? e.note ?? legacy ?? <span className="rw-muted">No place</span>}</div>
-                    {place && e.note && <div className="rw-sub">{e.note}</div>}
-                  </div>
-                  <div className={`rw-am${e.amount_cents < 0 ? ' in' : ''}`}>{money(e.amount_cents)}</div>
-                </button>
-              )
-            })}
+      <div className="rw-seg flush">
+        <button type="button" className={tab === 'spend' ? 'on' : ''} onClick={() => setTab('spend')}>Spend</button>
+        <button type="button" className={tab === 'change' ? 'on' : ''} onClick={() => setTab('change')}>Change</button>
+      </div>
+
+      {tab === 'change' && b ? <BudgetChange data={data} budget={b} spentCents={spent} accountId={accountId} onCancel={() => setTab('spend')} onSaved={onChanged} /> : <>
+        {flag && (
+          <button type="button" className={`rw-flagban ${flag.dir}`} onClick={() => setTab('change')}>
+            <span><b>{flag.dir === 'over' ? '↑' : '↓'} Usually {flag.dir} by {fmt(flag.gapCents, false)}</b></span>
+            <span className="go">Change ›</span>
+          </button>
+        )}
+        {mine.length === 0 && <div className="rw-sd" style={{ padding: '14px 4px' }}>Nothing logged yet this cycle.</div>}
+        {days.map(d => (
+          <div key={d}>
+            <div className="rw-dayh">{label(d)}</div>
+            <div className="rw-group flush">
+              {mine.filter(e => e.spent_date === d).map(e => {
+                const place = placeName(e.payee_id)
+                const legacy = e.label && e.label !== 'Quick add' ? e.label : null
+                return (
+                  <button key={e.id} type="button" className="rw-row" onClick={() => onEdit(e)}>
+                    <div className="rw-tx">
+                      <div className="rw-row-name">{place ?? e.note ?? legacy ?? <span className="rw-muted">No place</span>}</div>
+                      {place && e.note && <div className="rw-sub">{e.note}</div>}
+                    </div>
+                    <div className={`rw-am${e.amount_cents < 0 ? ' in' : ''}`}>{money(e.amount_cents)}</div>
+                  </button>
+                )
+              })}
+            </div>
           </div>
+        ))}
+        <div className="rw-ctas"><button type="button" className="rw-cta" onClick={onLog}>+ Log spend</button></div>
+      </>}
+    </>
+  )
+}
+
+/* ── change a budget's amount (budget nudge) ─────────────────────────── */
+function BudgetChange({ data, budget, spentCents, accountId, onCancel, onSaved }: {
+  data: Data; budget: Data['budgets'][number]; spentCents: number; accountId: string
+  onCancel: () => void; onSaved: () => void
+}) {
+  const { activeAccount } = useAccount()
+  const toast = useToast()
+  const fmt = moneyFormatter(activeAccount?.currency_code)
+  const sym = currencySymbol(activeAccount?.currency_code)
+  const money = (c: number) => (c < 0 ? '−' : '') + fmt(Math.abs(c), false)
+  const flag = data.flags[budget.id]
+  const history = data.history[budget.id] ?? []
+  const cycles = data.rows.cycles
+  const starts = cycles.slice(0, 4).map((c: any) => c.startDate)
+
+  const [val, setVal] = useState(String(budget.plannedCents / 100))
+  const [scope, setScope] = useState<'once' | 'from'>('from')
+  const [fromIdx, setFromIdx] = useState(0)
+  const [busy, setBusy] = useState(false)
+
+  const valCents = Math.max(0, Math.round((parseFloat(val) || 0) * 100))
+  // The field is the whole pay's amount; a budget is stored per its own
+  // period, so a weekly budget on fortnightly pay saves half of it.
+  const perCents = budget.baseCents > 0 ? Math.round(valCents * budget.unitCents / budget.baseCents) : valCents
+  const from = scope === 'once' ? starts[0] : starts[fromIdx]
+  const changed = scope === 'once' ? valCents !== budget.plannedCents : valCents !== budget.baseCents || (fromIdx === 0 && budget.isOverride)
+  // It can't go under what's already spent, where the change reaches this cycle.
+  const belowSpent = (scope === 'once' || fromIdx === 0) && valCents < spentCents
+
+  const now = cycles.slice(0, PREVIEW_PAYS).map((c: any) => c.committedClosingBalanceCents)
+  const after = changed && val.trim()
+    ? previewBudgetChange(data.rows, data.floorCents, PREVIEW_PAYS + 1, {
+        expenseId: budget.id, cycleStart: from, totalCents: valCents, perOccurrenceCents: perCents,
+        scope: scope === 'once' ? 'once' : 'always',
+      }).slice(0, PREVIEW_PAYS).map(c => c.committedClosingBalanceCents)
+    : []
+  const payDates = cycles.slice(0, PREVIEW_PAYS).map((c: any) => shift(c.endDate, 1))
+  const st = after.length ? previewStats(now, after, data.floorCents) : null
+  const when = scope === 'once' ? 'this cycle' : fromIdx === 0 ? 'from this pay' : `from ${dayName(starts[fromIdx], true).replace(/^\w+ /, '')}`
+
+  const avgChip = flag?.averageCents ?? (history.length
+    ? Math.round(history.slice(-4).reduce((s, c) => s + c.spentCents, 0) / Math.min(4, history.length) / 500) * 500 : null)
+  const mx = Math.max(...history.map(c => c.spentCents), budget.baseCents, 1) * 1.15
+
+  async function save() {
+    if (!changed || belowSpent || busy) return
+    setBusy(true)
+    const ovRows = data.rows.expenseOverrideRows ?? []
+    const prevOv = ovRows.find((o: any) => o.expense_id === budget.id && o.cycle_start === from) ?? null
+    try {
+      if (scope === 'once') {
+        if (valCents === budget.baseCents) await clearExpenseOverride(budget.id, from)
+        else await setExpenseOverride(budget.id, accountId, from, valCents)
+        toast(`${budget.name}: ${money(valCents)} this cycle only`, { undo: async () => {
+          if (prevOv) await setExpenseOverride(budget.id, accountId, from, prevOv.amount_cents)
+          else await clearExpenseOverride(budget.id, from)
+          notifyDataChanged()
+        } })
+      } else {
+        const row = data.rows.expenseRows.find((e: any) => e.id === budget.id)
+        const prevSameDay = (row?.expense_amount_versions ?? []).find((v: any) => v.effective_from === from) ?? null
+        const written = await setExpenseAmountFrom(budget.id, accountId, from, perCents)
+        // That cycle now follows the new amount; later one-offs stay.
+        if (prevOv) await clearExpenseOverride(budget.id, from)
+        toast(`${budget.name}: ${money(valCents)} ${when}`, { undo: async () => {
+          if (prevSameDay) await setExpenseAmountFrom(budget.id, accountId, from, prevSameDay.amount_cents)
+          else await deleteExpenseAmountVersion(written.id)
+          if (prevOv) await setExpenseOverride(budget.id, accountId, from, prevOv.amount_cents)
+          notifyDataChanged()
+        } })
+      }
+      onSaved()
+    } catch (err: any) { alert('Could not change the budget: ' + err.message) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <>
+      {flag && (
+        <div className={`rw-verdict ${flag.dir}`}>
+          <div className="big">{flag.dir === 'over' ? '↑' : '↓'} {money(flag.gapCents)}</div>
+          <div className="t"><b>Usually {flag.dir} by {money(flag.gapCents)}</b>
+            {flag.cycles} of the last 4 closed cycles. Your average is {money(flag.averageCents)}.</div>
         </div>
-      ))}
-      <div className="rw-ctas"><button type="button" className="rw-cta" onClick={onLog}>+ Log spend</button></div>
+      )}
+
+      {history.length > 0 && (
+        <div className="rw-card rw-pv">
+          <div className="rw-pv-k"><span>Spent, last {history.length} pays</span>
+            <span className="rw-pv-lg"><i className="un" />under<i className="ov" />over</span></div>
+          <svg viewBox="0 0 300 96" role="img" aria-label="Spending against the budget, past pays">
+            {history.map((c, j) => {
+              const bw = 280 / Math.max(6, history.length), x = 10 + j * bw + bw * 0.18, w = bw * 0.64
+              const ht = c.spentCents / mx * 72, y = 80 - ht, over = c.spentCents > c.plannedCents
+              return <g key={c.start}>
+                <rect x={x} y={y} width={w} height={Math.max(ht, 1)} rx="3" fill={over ? 'var(--rw-near-floor)' : 'var(--rw-good)'} opacity={over ? 1 : 0.75} />
+                <text x={x + w / 2} y="92" fontSize="9" fill="var(--rw-muted)" textAnchor="middle" fontWeight="650">{money(c.spentCents)}</text>
+              </g>
+            })}
+            <line x1="6" x2="294" y1={80 - budget.baseCents / mx * 72} y2={80 - budget.baseCents / mx * 72} stroke="var(--rw-ink)" strokeDasharray="4 3" strokeOpacity=".6" />
+            <text x="294" y={76 - budget.baseCents / mx * 72} fontSize="9" fill="var(--rw-muted)" textAnchor="end" fontWeight="700">budget {money(budget.baseCents)}</text>
+          </svg>
+        </div>
+      )}
+
+      <div className="rw-lab">New amount</div>
+      <div className="rw-amtrow"><span>{sym}</span>
+        <input type="number" inputMode="decimal" aria-label="New budget amount" value={val} onChange={e => setVal(e.target.value)} />
+        <em>each pay</em></div>
+      <div className="rw-chips" style={{ marginTop: 8 }}>
+        {avgChip != null && <button type="button" className={`${flag ? 'avg ' + flag.dir : ''}${valCents === avgChip ? ' on' : ''}`}
+          onClick={() => setVal(String(avgChip / 100))}>Your average {money(avgChip)}</button>}
+        <button type="button" className={valCents === budget.baseCents ? 'on' : ''} onClick={() => setVal(String(budget.baseCents / 100))}>Current {money(budget.baseCents)}</button>
+      </div>
+      {scope === 'from' && Math.abs(perCents - valCents) > 0 && (
+        <div className="rw-hint">Saved as {money(perCents)} a {PERIOD[budget.frequency] ?? 'period'}, the way this budget is set.</div>
+      )}
+
+      <div className="rw-lab">When</div>
+      <div className="rw-seg flush">
+        <button type="button" className={scope === 'once' ? 'on' : ''} onClick={() => setScope('once')}>Just this cycle</button>
+        <button type="button" className={scope === 'from' ? 'on' : ''} onClick={() => setScope('from')}>From a date</button>
+      </div>
+      {scope === 'from' && (
+        <div className="rw-chips" style={{ marginTop: 8 }}>
+          {starts.map((d: string, k: number) => (
+            <button key={d} type="button" className={fromIdx === k ? 'on' : ''} onClick={() => setFromIdx(k)}>
+              {k === 0 ? 'This pay' : `Pay ${dayName(d).replace(/^\w+ /, '')}`}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!changed || !val.trim()
+        ? <div className="rw-empty">Type an amount, or tap a chip, to see what it does to each payday.</div>
+        : <Preview nowCents={now} newCents={after} payDates={payDates} floorCents={data.floorCents} money={money} />}
+
+      {belowSpent && <div className="rw-hint">You’ve already spent {money(spentCents)} this cycle, so it can’t go lower than that for this pay.</div>}
+
+      <div className="rw-ctas">
+        <button type="button" className="rw-cta sec" onClick={onCancel}>Cancel</button>
+        <button type="button" className="rw-cta" disabled={changed && (belowSpent || busy || !val.trim())} onClick={changed ? save : onCancel}>
+          {!changed ? 'Done' : `Use ${money(valCents)} ${when}${st && st.level === 'under' && st.worse ? ' anyway' : ''}`}
+        </button>
+      </div>
     </>
   )
 }

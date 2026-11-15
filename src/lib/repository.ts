@@ -1455,6 +1455,12 @@ export async function setExpenseAmountFrom(
   return data
 }
 
+// Undo for setExpenseAmountFrom: remove the dated amount it wrote.
+export async function deleteExpenseAmountVersion(versionId: string) {
+  const { error } = await supabase.from('expense_amount_versions').delete().eq('id', versionId)
+  if (error) throw error
+}
+
 // --- PLACES (payees) ---
 // Where spend happens: Woolworths, New World, Z Energy. One list per account.
 // Entries point at a place rather than copying its name, so renaming a place

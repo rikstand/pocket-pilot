@@ -36,6 +36,7 @@ export interface BudgetRow {
   onOpen: () => void
   onPlus?: () => void
   plusOpen?: boolean
+  flag?: 'over' | 'under' | null    // usually off (budget nudge)
   quickAdd?: ReactNode
 }
 
@@ -253,7 +254,9 @@ export default function CycleView(p: Props) {
                     <div key={b.id}>
                       <div className="rw-row" role="button" tabIndex={0} onClick={b.onOpen}>
                         <div className="rw-tx">
-                          <div className="rw-row-name">{b.name}</div>
+                          <div className="rw-row-name">{b.name}{b.flag && (
+                            <span className={`rw-bdg ${b.flag}`} role="img" aria-label={`Usually ${b.flag} budget`}>{b.flag === 'under' ? '↓' : '↑'}</span>
+                          )}</div>
                           <div className="rw-pb" aria-hidden="true">
                             <i className={pct > pace + 0.1 ? 'ahead' : ''} style={{ width: Math.min(100, pct * 100) + '%' }} />
                             <b style={{ left: pace * 100 + '%' }} />

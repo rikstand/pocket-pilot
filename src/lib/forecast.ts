@@ -34,7 +34,7 @@ import type {
 } from '../engine/types'
 import { carriedCardBalance, confirmedPaymentsFrom, cycleDaysOf, planModeOf } from './creditSchedule'
 import { formatDate, parseDate, addDays } from '../engine/dates'
-import { byNewest, latestVersion } from './versions'
+import { byNewest, latestVersion, versionForDate } from './versions'
 
 // Never toISOString() — this app runs at UTC+12 and that has caused real bugs.
 function todayStr() { return formatDate(new Date()) }
@@ -623,10 +623,18 @@ export function budgetsInCycle(rows: Omit<ForecastResult, 'cycles'>, start: stri
     })
     .map((e: any) => {
       const ov = (rows.expenseOverrideRows ?? []).find((o: any) => o.expense_id === e.id && o.cycle_start === start)
+      const base = budgetAmountForCycle(toEngineExpenses([e])[0], start, end, rule)
+      const unit = versionForDate(e.expense_amount_versions, start)?.amount_cents ?? base
       return {
         id: e.id as string,
         name: e.name as string,
-        plannedCents: ov ? ov.amount_cents as number : budgetAmountForCycle(toEngineExpenses([e])[0], start, end, rule),
+        plannedCents: ov ? ov.amount_cents as number : base,
+        // Without this cycle's own amount, and the amount per period as set
+        // (a weekly budget on fortnightly pay holds two of them a cycle).
+        baseCents: base,
+        unitCents: unit as number,
+        frequency: e.frequency as string,
+        isOverride: !!ov,
       }
     })
 }
