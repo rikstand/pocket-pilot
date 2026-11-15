@@ -571,3 +571,56 @@ describe('prompts to set money aside', () => {
     expect(ins.cardCanReduceCents).toBe(0)
   })
 })
+
+// ── changing how often you're paid (Journey 9, feat/refresh-pay) ────
+// Paid fortnightly on Thursdays from 5 Nov. This cycle: 3–16 Dec, so the
+// next payday is 17 Dec. The change takes effect at the close: the first
+// payday on the new schedule is the next payday or later.
+describe('changing how often you are paid', () => {
+  const P = '2026-12-17'
+  const changed = (frequency: 'weekly' | 'fortnightly' | 'monthly', first: string, newAmount?: number) => pay({
+    schedules: [{ effectiveFrom: first, frequency, anchorDate: first }],
+    amountVersions: newAmount ? [{ effectiveFrom: first, amountCents: newAmount }, { effectiveFrom: '2026-11-05', amountCents: 230000 }] : undefined,
+  })
+  const cyc = (inc: IncomeSource, n = 4) => cycleRun('2026-12-03', inc, n, '2026-11-05')
+
+  it('weekly from the next payday: this cycle stays, weekly cycles from then', () => {
+    expect(cyc(changed('weekly', P))).toEqual([
+      { start: '2026-12-03', end: '2026-12-16' },
+      { start: '2026-12-17', end: '2026-12-23' },
+      { start: '2026-12-24', end: '2026-12-30' },
+      { start: '2026-12-31', end: '2027-01-06' },
+    ])
+  })
+
+  it('weekly from a week after the next payday: a one-week bridge holds the last fortnightly pay', () => {
+    const inc = changed('weekly', '2026-12-24', 115000)
+    expect(cyc(inc).map(c => [c.start, c.end])).toEqual([
+      ['2026-12-03', '2026-12-16'], ['2026-12-17', '2026-12-23'], ['2026-12-24', '2026-12-30'], ['2026-12-31', '2027-01-06'],
+    ])
+    const out = run({ incomeSources: [inc], startDate: '2026-12-03', numCycles: 4, cycleAnchorDate: '2026-11-05' })
+    // the bridge gets the old fortnightly pay on 17 Dec; weekly pay from 24 Dec at the new amount
+    expect(out.map(c => c.committedIncomeCents)).toEqual([230000, 230000, 115000, 115000])
+  })
+
+  it('budgets re-spread on their own: a fortnightly budget is half of it in a weekly cycle', () => {
+    const rule = { frequency: 'weekly' as const, everyN: 1 }
+    expect(budgetAmountForCycle(budget(), '2026-12-17', '2026-12-23', rule)).toBe(16000)
+  })
+
+  it('monthly from the next payday, with a monthly amount from then', () => {
+    const inc = changed('monthly', P, 498000)
+    expect(cyc(inc, 3)).toEqual([
+      { start: '2026-12-03', end: '2026-12-16' },
+      { start: '2026-12-17', end: '2027-01-16' },
+      { start: '2027-01-17', end: '2027-02-16' },
+    ])
+    const out = run({ incomeSources: [inc], startDate: '2026-12-03', numCycles: 3, cycleAnchorDate: '2026-11-05' })
+    expect(out.map(c => c.committedIncomeCents)).toEqual([230000, 498000, 498000])
+  })
+
+  it('closing this cycle opens the first one on the new schedule', () => {
+    expect(nextCycleFor('2026-12-03', changed('weekly', P), '2026-11-05')).toEqual({ start: P, end: '2026-12-23' })
+    expect(nextCycleFor('2026-12-03', changed('monthly', P), '2026-11-05')).toEqual({ start: P, end: '2027-01-16' })
+  })
+})

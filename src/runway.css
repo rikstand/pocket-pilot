@@ -545,3 +545,11 @@ body.is-runway #root { border-inline: none; }
 .rw-sug > div { flex: 1; }
 .rw-sug b { font: var(--rw-text-row-name); }
 .rw-sug small { display: block; font: var(--rw-text-sub); font-size: 10.5px; color: var(--rw-muted); margin-top: 1px; }
+
+/* Your cycles, as they'd run after a pay change: a display, not a control. */
+.rw-cst { display: flex; gap: 3px; margin-top: 6px; }
+.rw-cst > div { min-width: 0; overflow: hidden; white-space: nowrap; border-radius: 8px; padding: 6px; font: var(--rw-text-label); font-size: 9.5px; font-weight: 600; color: var(--rw-muted); }
+.rw-cst b { display: block; font: var(--rw-text-sub); font-size: 10.5px; font-weight: 650; color: var(--rw-ink); }
+.rw-cst .now { background: var(--rw-surface-2); }
+.rw-cst .nw { background: color-mix(in srgb, var(--rw-line) 14%, var(--rw-surface)); }
+.rw-cst .gap { background: repeating-linear-gradient(45deg, var(--rw-surface-2), var(--rw-surface-2) 4px, var(--rw-surface) 4px, var(--rw-surface) 8px); }

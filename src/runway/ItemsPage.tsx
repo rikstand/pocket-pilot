@@ -13,9 +13,9 @@ import {
   reactivateExpense, reactivateIncomeSource, archiveExpense, unarchiveExpense,
   setExpenseScheduleFrom, setIncomeScheduleFrom, deleteExpenseScheduleVersion, deleteIncomeScheduleVersion,
 } from '../lib/repository'
-import { ScheduleFields, ruleOf, type Schedule, type How, type Unit } from './controls'
+import { ScheduleFields, ruleOf, DateChips, Segmented, type Schedule, type How, type Unit } from './controls'
 import { versionForDate, byOldest } from '../lib/versions'
-import { occurrencesOf } from '../engine/index'
+import { occurrencesOf, scheduleOn } from '../engine/index'
 import { parseDate, formatDate, addDays } from '../engine/dates'
 import { notifyDataChanged, useDataChanged } from '../lib/dataEvents'
 import { useToast } from './toastContext'
@@ -263,7 +263,7 @@ function amountOn(row: any, date: string) {
 }
 
 /* ── the item sheet: change the amount, stop it, or delete it ──────── */
-type Mode = 'amount' | 'stop' | 'delete' | 'sched'
+type Mode = 'amount' | 'stop' | 'delete' | 'sched' | 'pay'
 
 function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
   item: Item; rows: ForecastResult; floorCents: number; accountId: string
@@ -492,6 +492,18 @@ function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
             </div>
           )}
 
+          {isPrimary && (
+            <div className="rw-group flush" style={{ marginTop: 12 }}>
+              <button type="button" className="rw-row" onClick={() => setMode('pay')}>
+                <div className="rw-tx">
+                  <div className="rw-row-name">Change how often or payday</div>
+                  <div className="rw-sub">Changes the length of your cycles</div>
+                </div>
+                <span className="rw-chev">›</span>
+              </button>
+            </div>
+          )}
+
           {!isPrimary && (
             <div className="rw-group flush" style={{ marginTop: 12 }}>
               <button type="button" className="rw-row" onClick={() => setMode('sched')}>
@@ -529,6 +541,9 @@ function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
             <button type="button" className="rw-cta" disabled={busy} onClick={saveSched}>Change from {short(schedFrom)}{anyway}</button>
           </div>
         </>}
+
+        {mode === 'pay' && <PayChange row={r} rows={rows} floorCents={floorCents} accountId={accountId}
+          onBack={() => setMode('amount')} onSaved={onSaved} />}
 
         {mode === 'stop' && <>
           <div className="rw-note">Payments that already went out stay in your history. Nothing before the date you pick changes.</div>
@@ -591,4 +606,127 @@ function scheduleFromRow(r: any, first: string): Schedule {
   const how: How = n === 1 && simple[r.frequency] ? simple[r.frequency] : 'custom'
   const unit: Unit = r.frequency === 'fortnightly' ? 'weekly' : (['daily', 'weekly', 'monthly', 'annually'].includes(r.frequency) ? r.frequency : 'monthly')
   return { how, n: r.frequency === 'fortnightly' ? n * 2 : n, unit, first, ends: 'never', endDate: first, count: 4 }
+}
+
+/* ── how often you're paid: changes the length of your cycles ─────────
+ * Takes effect from the next payday at the earliest, so the cycle you're in
+ * stays as it is. Budgets re-spread on their own: they're a rate. */
+type PayFreq = 'weekly' | 'fortnightly' | 'monthly'
+const FREQ_NAME: Record<PayFreq, string> = { weekly: 'Weekly', fortnightly: 'Fortnightly', monthly: 'Monthly' }
+
+function PayChange({ row: r, rows, floorCents, accountId, onBack, onSaved }: {
+  row: any; rows: ForecastResult; floorCents: number; accountId: string; onBack: () => void; onSaved: () => void
+}) {
+  const { activeAccount } = useAccount()
+  const toast = useToast()
+  const fmt = moneyFormatter(activeAccount?.currency_code)
+  const sym = currencySymbol(activeAccount?.currency_code)
+  const money = (c: number) => (c < 0 ? '−' : '') + fmt(Math.abs(c), false)
+  const cur = rows.cycles[0]
+  const P = shift(cur.endDate, 1)                     // the next payday
+  const eng = toEngineIncome([r])[0]
+  const now = scheduleOn(eng, P)
+  const nowFreq = (['weekly', 'fortnightly', 'monthly'].includes(now.frequency) ? now.frequency : 'fortnightly') as PayFreq
+  const nowAmount = amountAt(r, true, P)
+  const perYear = (f: PayFreq) => PER_YEAR[f]
+
+  const [freq, setFreq] = useState<PayFreq>(nowFreq)
+  const [first, setFirst] = useState(P)
+  const suggested = (f: PayFreq) => Math.round(nowAmount * perYear(nowFreq) / perYear(f) / 100) * 100
+  const [amt, setAmt] = useState(String(nowAmount / 100))
+  const [busy, setBusy] = useState(false)
+  const cents = Math.max(0, Math.round((parseFloat(amt) || 0) * 100))
+
+  function pick(f: PayFreq) { setFreq(f); setAmt(String(suggested(f) / 100)) }
+
+  // Nothing to change: same schedule, a payday it already lands on, same pay.
+  const samePayday = freq === nowFreq && occurrencesOf(eng, first, first).length > 0
+  const changed = !(samePayday && cents === nowAmount)
+
+  const changedRows: ForecastResult = { ...rows, incomeRows: rows.incomeRows.map(x => x.id !== r.id ? x : {
+    ...x,
+    income_schedule_versions: [...(x.income_schedule_versions ?? []), { effective_from: first, frequency: freq, every_n: 1, anchor_date: first, created_at: '9999' }],
+    income_amount_versions: [...(x.income_amount_versions ?? []), { effective_from: first, amount_cents: cents, created_at: '9999' }],
+  }) }
+  const proj = projectFromRows(changedRows, floorCents, PREVIEW_PAYS + 1).slice(0, PREVIEW_PAYS + 1)
+  const lowIdx = proj.reduce((m, c, i) => c.committedClosingBalanceCents < proj[m].committedClosingBalanceCents ? i : m, 0)
+  const low = proj[lowIdx]?.committedClosingBalanceCents ?? 0
+  const level = low < 0 ? 'under' : low < floorCents ? 'near' : 'ok'
+
+  const budgets = budgetsInCycle(rows, cur.startDate, cur.endDate)
+  const budgetsNow = budgets.reduce((s, b) => s + b.baseCents, 0)
+  const budgetsNew = Math.round(budgetsNow * perYear(nowFreq) / perYear(freq))
+
+  // The cycles as they'd run: this one stays, any bridge, then the new length.
+  const strip = proj.slice(1, 6).map(c => ({ start: c.startDate, end: c.endDate,
+    days: (parseDate(c.endDate).getTime() - parseDate(c.startDate).getTime()) / 864e5 + 1 }))
+  const curDays = (parseDate(cur.endDate).getTime() - parseDate(cur.startDate).getTime()) / 864e5 + 1
+
+  async function save() {
+    if (!changed || busy) return
+    setBusy(true)
+    const prevSched = (r.income_schedule_versions ?? []).find((v: any) => v.effective_from === first) ?? null
+    const prevAmt = (r.income_amount_versions ?? []).find((v: any) => v.effective_from === first) ?? null
+    try {
+      const s = await setIncomeScheduleFrom(r.id, accountId, { effectiveFrom: first, frequency: freq, everyN: 1, anchorDate: first })
+      const a = cents !== amountAt(r, true, first) ? await setIncomeAmountFrom(r.id, first, cents) : null
+      toast(`Paid ${freq} from ${short(first)}`, { undo: async () => {
+        if (prevSched) await setIncomeScheduleFrom(r.id, accountId, { effectiveFrom: first, frequency: prevSched.frequency, everyN: prevSched.every_n ?? 1, anchorDate: prevSched.anchor_date })
+        else await deleteIncomeScheduleVersion(s.id)
+        if (a) { if (prevAmt) await setIncomeAmountFrom(r.id, first, prevAmt.amount_cents); else await deleteIncomeAmountVersion(a.id) }
+        notifyDataChanged()
+      } })
+      onSaved()
+    } catch (e: any) { alert('Could not change your pay: ' + e.message) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <>
+      <button type="button" className="rw-back" onClick={onBack}>‹ {r.name}</button>
+      <div className="rw-sd">Your cycles follow your main pay, so budgets and expenses re-spread on their own.</div>
+
+      <div className="rw-lab">How often you're paid</div>
+      <Segmented value={freq} onChange={pick} options={(['weekly', 'fortnightly', 'monthly'] as PayFreq[]).map(f => ({
+        value: f, label: FREQ_NAME[f] + (f === nowFreq ? ' · now' : '') }))} />
+
+      <div className="rw-lab">First payday on the new schedule</div>
+      <DateChips value={first} onChange={setFirst} today={P} min={P} label="First payday on the new schedule"
+        payDates={[shift(P, 7), shift(P, 14)]}
+        tagFor={(_d, i) => i === 0 ? 'next payday' : i === 1 ? 'a week later' : 'two weeks later'} />
+
+      <div className="rw-lab">Each pay</div>
+      <div className="rw-amtrow"><span>{sym}</span>
+        <input type="number" inputMode="decimal" aria-label="Each pay" value={amt} onChange={e => setAmt(e.target.value)} /></div>
+      {freq !== nowFreq && <div className="rw-hint">About {money(suggested(freq))} for the same yearly pay.</div>}
+
+      <div className="rw-lab">Your cycles</div>
+      <div className="rw-cst">
+        <div className="now" style={{ flex: curDays }}><b>{short(cur.startDate)} – {short(cur.endDate)}</b>this cycle stays</div>
+        {strip.map((c, i) => (
+          <div key={c.start} className={i === 0 && first > P ? 'gap' : 'nw'} style={{ flex: c.days }}>
+            <b>{short(c.start)}</b>{i === 0 && first > P ? `${c.days} days · bridge` : c.start === first ? freq : ''}
+          </div>
+        ))}
+      </div>
+
+      <div className="rw-tiles">
+        <div className="rw-tile"><div className="k">Each pay</div><div className="v">{money(cents)}</div><div className="d">was {money(nowAmount)}</div></div>
+        <div className="rw-tile"><div className="k">Budgets each pay</div><div className="v">{money(budgetsNew)}</div><div className="d">was {money(budgetsNow)}</div></div>
+        <div className={`rw-tile${level === 'under' ? ' out' : ''}`}><div className="k">{level === 'under' ? 'Overdrawn' : 'Lowest'}</div>
+          <div className={`v ${level}`}>{money(low)}</div><div className="d">before pay {short(shift(proj[lowIdx]?.endDate ?? cur.endDate, 1))}</div></div>
+      </div>
+      {level !== 'ok' && (level === 'under'
+        ? <div className="rw-warn-ban under"><span className="i">!</span><span>On {freq} pay you’d be <b>{money(-low)} overdrawn</b> before pay {short(shift(proj[lowIdx].endDate, 1))}. Forecast shows which expenses bunch up.</span></div>
+        : <div className="rw-warn-ban near"><span>On {freq} pay, before pay {short(shift(proj[lowIdx].endDate, 1))} dips <b>{money(floorCents - low)}</b> into your floor. Forecast shows which expenses bunch up.</span></div>)}
+
+      <div className="rw-note">Takes effect when you close this cycle on {short(cur.endDate)}. Nothing before then changes.</div>
+      <div className="rw-ctas">
+        <button type="button" className="rw-cta sec" onClick={onBack}>Back</button>
+        <button type="button" className="rw-cta" disabled={changed && busy} onClick={changed ? save : onBack}>
+          {!changed ? 'Done' : freq === nowFreq ? `Move payday to ${short(first)}` : `Switch to ${freq}`}
+        </button>
+      </div>
+    </>
+  )
 }

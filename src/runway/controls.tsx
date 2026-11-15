@@ -53,8 +53,10 @@ const chipDate = (d: string) => {
     : { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
 }
 
-export function DateChips({ value, onChange, today, payDates, min, label }: {
+export function DateChips({ value, onChange, today, payDates, min, label, tagFor }: {
   value: string; onChange: (d: string) => void; today: string; payDates: string[]; min?: string; label: string
+  // The second line for each date, where "today" / "payday" isn't right.
+  tagFor?: (d: string, i: number) => string
 }) {
   const input = useRef<HTMLInputElement>(null)
   const floor = min && min > today ? min : today
@@ -62,6 +64,7 @@ export function DateChips({ value, onChange, today, payDates, min, label }: {
   if (floor === today) opts.push({ d: today, tag: 'today' })
   else opts.push({ d: floor, tag: 'first date' })
   for (const p of payDates) if (p > floor && opts.length < 4 && !opts.some(o => o.d === p)) opts.push({ d: p, tag: 'payday' })
+  if (tagFor) opts.forEach((o, i) => { o.tag = tagFor(o.d, i) })
   const custom = !opts.some(o => o.d === value)
   return (
     <div className="rw-dchips" role="group" aria-label={label}>
