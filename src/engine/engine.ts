@@ -336,6 +336,35 @@ export function projectCycles(input: CycleInput): CycleResult[] {
   // change to its schedule from a date (cycleRun).
   const run = cycleRun(startDate, primary, numCycles, input.cycleAnchorDate)
 
+  // What a bill pot sets aside in cycle i: the next payment, less what's in
+  // the pot, spread over the cycles left until it (that cycle included),
+  // rounded up to the dollar. A one-cycle amount the user set wins. Nothing
+  // once the bill has stopped.
+  function billPotForCycle(g: SavingsGoal, exp: Expense, i: number, held: number): SavingsCycleLine | null {
+    const start = run[i].start
+    if (start < g.startCycleStart) return null
+    const lookTo = formatDate(addDays(parseDate(start), 3 * 366))
+    const next = occurrencesOf(exp, start, lookTo)[0]
+    if (!next) return null
+    const due = getAmountOn(exp.amountVersions, exp.amountCents, next)
+    const need = Math.max(0, due - held)
+    let cyclesLeft = 0
+    for (let j = i; j < run.length && run[j].start <= next; j++) cyclesLeft++
+    const last = run[run.length - 1]
+    if (next > last.end) {
+      const len = cycleDayCount(last.start, last.end)
+      cyclesLeft += Math.ceil(daysBetween(parseDate(last.end), parseDate(next)) / len)
+    }
+    const ov = g.overrides?.find(o => o.cycleStart === start)
+    const per = ov ? ov.amountCents : Math.ceil(need / Math.max(1, cyclesLeft) / 100) * 100
+    const amount = Math.max(0, Math.min(per, ov ? per : need))
+    if (amount <= 0) return null
+    return {
+      goalId: g.id, name: g.name, amountCents: amount, targetCents: due,
+      remainingAfterCents: Math.max(0, need - amount), isOverride: !!ov, expenseId: exp.id,
+    }
+  }
+
   // A card only reaches the forecast once its strategy is committed. Before
   // that the Credit page is a simulator and nothing here changes.
   //
@@ -352,6 +381,13 @@ export function projectCycles(input: CycleInput): CycleResult[] {
   // Running total per goal across this projection, so a goal knows when it has
   // been fully planned for and stops taking money.
   const plannedByGoal: Record<string, number> = {}
+
+  // Bill pots: what's in each pot right now, and which bill each one pays.
+  const billPots = (savingsGoals ?? []).filter(g => g.expenseId && expenses.some(e => e.id === g.expenseId))
+  const plainGoals = (savingsGoals ?? []).filter(g => !billPots.includes(g))
+  const potHeld: Record<string, number> = {}
+  const potFor: Record<string, SavingsGoal> = {}
+  for (const g of billPots) { potHeld[g.id] = Math.max(0, g.savedSoFarCents); potFor[g.expenseId!] = g }
 
   for (let i = 0; i < numCycles; i++) {
     const cycleEnd = run[i].end
@@ -373,6 +409,20 @@ export function projectCycles(input: CycleInput): CycleResult[] {
       if (src.isPotential) potentialIncomeCents += total
       else committedIncomeCents += total
     }
+
+    // ── bill pots: set aside towards each bill's next payment ────────
+    // Before the bills themselves, so a pot can pay a bill that falls due in
+    // the same cycle it sets the last amount aside.
+    let savingsTotalCents = 0
+    const savingsLines: SavingsCycleLine[] = []
+    for (const g of billPots) {
+      const line = billPotForCycle(g, expenses.find(e => e.id === g.expenseId)!, i, potHeld[g.id])
+      if (!line) continue
+      savingsLines.push(line)
+      savingsTotalCents += line.amountCents
+      potHeld[g.id] += line.amountCents
+    }
+    let savingsPaidBillsCents = 0
 
     // ── expenses — cycle-aware amount selection ──────────────────────
     let fixedExpensesCents    = 0
@@ -401,7 +451,16 @@ export function projectCycles(input: CycleInput): CycleResult[] {
       // kind of expense. It only applies where the expense actually falls in
       // the cycle.
       const override   = fallsInCycle ? expenseOverrideFor(expenseOverrides, exp.id, cycleStart) : null
-      const total      = override ?? usual
+      let total        = override ?? usual
+      // A bill with a pot is paid from the pot first; the account only covers
+      // what the pot is short.
+      const pot = exp.mode !== 'budget' ? potFor[exp.id] : undefined
+      if (pot && total > 0) {
+        const cover = Math.min(potHeld[pot.id], total)
+        potHeld[pot.id] -= cover
+        total -= cover
+        savingsPaidBillsCents += cover
+      }
       if      (exp.mode === 'fixed')    fixedExpensesCents    += total
       else if (exp.mode === 'variable') variableExpensesCents += total
       else if (exp.mode === 'budget') {
@@ -417,9 +476,7 @@ export function projectCycles(input: CycleInput): CycleResult[] {
     }
 
     // ── savings — DERIVED, like credit, never a stored expense ───────
-    let savingsTotalCents = 0
-    const savingsLines: SavingsCycleLine[] = []
-    for (const goal of savingsGoals ?? []) {
+    for (const goal of plainGoals) {
       const line = savingsForCycle(goal, cycleStart, plannedByGoal[goal.id] ?? 0)
       if (!line) continue
       savingsLines.push(line)
@@ -519,7 +576,7 @@ export function projectCycles(input: CycleInput): CycleResult[] {
       committedIncomeCents, potentialIncomeCents,
       fixedExpensesCents, variableExpensesCents, budgetExpensesCents,
       budgetBaselineCents, budgetActualCents,
-      savingsTotalCents, savingsLines,
+      savingsTotalCents, savingsLines, savingsPaidBillsCents,
       creditOpeningBalanceCents, creditAssumedSpendCents, creditInterestCents,
       creditMinimumCents, creditExtraCents, creditPaymentCents,
       creditClosingBalanceCents, creditSpareCents,
@@ -533,4 +590,93 @@ export function projectCycles(input: CycleInput): CycleResult[] {
   }
 
   return results
+}
+
+// ── prompts to set money aside for a bill (Journey 4) ───────────────
+// Setting money aside is never the default. A bill only prompts when the
+// forecast says it takes a payday under the floor, and each way out is only
+// offered if it actually changes that payday — the same rule for every user
+// and every bill, with no list of bill types:
+//
+//   1. Is this bill the reason? Without it, that payday would stay at or
+//      above the floor. (A payday that dips anyway isn't fixed by one bill.)
+//   2. Would putting money away help? The forecast is re-run with a pot for
+//      the bill. Offered only if that payday comes back to the floor and no
+//      payday before it that was fine drops under instead.
+//
+// Money set aside leaves the account early, so on its own it moves a dip
+// rather than removing it. It helps when something would otherwise take the
+// spare money in between — a card plan that takes whatever's spare, say. The
+// test finds that out from the forecast instead of assuming it.
+
+export interface BillPrompt {
+  expenseId: string
+  name: string
+  dueDates: string[]          // the bill's dates in that cycle
+  billCents: number           // what it takes from that cycle
+  cycleStart: string
+  cycleEnd: string
+  closingCents: number        // that payday as forecast
+  shortCents: number          // how far under the floor
+  // Put money away: offered only when it fixes that payday (test 2).
+  setAside: { firstCycleCents: number; cycles: number } | null
+  // Card pays less that cycle: how much less it could pay, up to the
+  // shortfall. 0 = not an option (no card plan with an extra that cycle).
+  cardCanReduceCents: number
+}
+
+export function billPrompts(
+  input: CycleInput,
+  // Paydays the user already chose to let dip for a bill. Not asked again.
+  accepted: { expenseId: string; cycleStart: string }[] = []
+): BillPrompt[] {
+  const floor = input.safetyFloorCents
+  const base = projectCycles(input)
+  const hasPot = new Set((input.savingsGoals ?? []).map(g => g.expenseId).filter(Boolean) as string[])
+  const out: BillPrompt[] = []
+  const everyCycleMemo: Record<string, boolean> = {}
+  const everyCycle = (exp: Expense) =>
+    (everyCycleMemo[exp.id] ??= base.every(b => occurrencesOf(exp, b.startDate, b.endDate).length > 0))
+
+  base.forEach((c, i) => {
+    if (c.committedClosingBalanceCents >= floor) return
+    for (const exp of input.expenses) {
+      if (exp.mode === 'budget' || hasPot.has(exp.id)) continue
+      if (accepted.some(a => a.expenseId === exp.id && a.cycleStart === c.startDate)) continue
+      const dates = occurrencesOf(exp, c.startDate, c.endDate)
+      if (dates.length === 0) continue
+      // A bill in every cycle can't be what makes one payday the low one, and
+      // a pot for it would set aside and pay the same amount each cycle —
+      // nothing changes, so it isn't asked about.
+      if (everyCycle(exp)) continue
+      const ov = expenseOverrideFor(input.expenseOverrides, exp.id, c.startDate)
+      const billCents = ov ?? dates.reduce((s, d) => s + getAmountOn(exp.amountVersions, exp.amountCents, d), 0)
+      if (billCents <= 0) continue
+
+      // 1. Is this bill the reason?
+      if (c.committedClosingBalanceCents + billCents < floor) continue
+
+      // 2. Would a pot for it fix this payday without breaking an earlier one?
+      const trial: SavingsGoal = {
+        id: '__trial', name: exp.name, targetCents: billCents, perCycleCents: 0,
+        startCycleStart: input.startDate, savedSoFarCents: 0, overrides: [], expenseId: exp.id,
+      }
+      const tried = projectCycles({ ...input, savingsGoals: [...(input.savingsGoals ?? []), trial] })
+      let fixes = tried[i].committedClosingBalanceCents >= floor
+      for (let j = 0; j < i && fixes; j++) {
+        if (base[j].committedClosingBalanceCents >= floor && tried[j].committedClosingBalanceCents < floor) fixes = false
+      }
+      const lines = tried.slice(0, i + 1).map(t => t.savingsLines.find(l => l.goalId === '__trial')?.amountCents ?? 0)
+
+      const short = floor - c.committedClosingBalanceCents
+      out.push({
+        expenseId: exp.id, name: exp.name, dueDates: dates, billCents,
+        cycleStart: c.startDate, cycleEnd: c.endDate,
+        closingCents: c.committedClosingBalanceCents, shortCents: short,
+        setAside: fixes ? { firstCycleCents: lines.find(a => a > 0) ?? 0, cycles: lines.filter(a => a > 0).length } : null,
+        cardCanReduceCents: Math.min(c.creditExtraCents, short),
+      })
+    }
+  })
+  return out
 }

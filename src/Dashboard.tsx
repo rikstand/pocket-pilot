@@ -1348,7 +1348,11 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       if (isSetAside(goalId)) {
         await unconfirmSavingsContribution(goalId, activeCycle.startDate)
       } else {
-        await confirmSavingsContribution(goalId, accountId, activeCycle.startDate)
+        // A pot for a bill changes amount cycle to cycle, so record what this
+        // cycle set aside. A goal's amount is known from the goal.
+        const line = savingsLines.find((l: any) => l.goalId === goalId)
+        await confirmSavingsContribution(goalId, accountId, activeCycle.startDate,
+          line?.expenseId ? line.amountCents : null)
       }
       reload()
     } catch (e: any) { alert('Could not update: ' + e.message) }

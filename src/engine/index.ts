@@ -1,4 +1,5 @@
-export { projectCycles, cycleStartAt, cycleEndAt, cycleIndexOf, nextCycleDates, cycleRun, nextCycleFor, budgetAmountForCycle, periodDays } from './engine'
+export { projectCycles, cycleStartAt, cycleEndAt, cycleIndexOf, nextCycleDates, cycleRun, nextCycleFor, budgetAmountForCycle, periodDays, billPrompts } from './engine'
+export type { BillPrompt } from './engine'
 export type { CycleRule } from './engine'
 export { getOccurrencesInRange, nthOccurrence, stepOf, occurrencesOf, scheduleOn, scheduleSegments } from './recurrence'
 export type { Schedule, Scheduled } from './recurrence'

@@ -24,16 +24,16 @@
 import {
   getIncomeSources, getExpenses, getCycles, getCreditAccount, getCreditExtraOverrides,
   getBudgetSpendEntries, getSavingsGoals, getAllSavingsContributions, getAllSavingsOverrides,
-  getAllExpenseOverrides, getCreditCyclePayments, getAllIncomeOverrides,
+  getAllExpenseOverrides, getCreditCyclePayments, getAllIncomeOverrides, getAcceptedDips,
 } from './repository'
-import { projectCycles, budgetAmountForCycle } from '../engine/index'
-import type { CycleRule } from '../engine/index'
+import { projectCycles, budgetAmountForCycle, billPrompts, occurrencesOf } from '../engine/index'
+import type { CycleRule, BillPrompt } from '../engine/index'
 import type {
   CycleResult, IncomeSource, Expense, CreditAccount, CreditExtraOverride,
   BudgetSpendEntry, ExpenseOverride, SavingsGoal, CreditPayment, IncomeOverride, ScheduleVersion,
 } from '../engine/types'
 import { carriedCardBalance, confirmedPaymentsFrom, cycleDaysOf, planModeOf } from './creditSchedule'
-import { formatDate, parseDate } from '../engine/dates'
+import { formatDate, parseDate, addDays } from '../engine/dates'
 import { byNewest, latestVersion } from './versions'
 
 // Never toISOString() — this app runs at UTC+12 and that has caused real bugs.
@@ -212,7 +212,10 @@ export function toEngineExpenseOverrides(rows: any[]): ExpenseOverride[] {
 export function toEngineSavings(
   goalRows: any[],
   contributionRows: any[],
-  overrideRows: any[]
+  overrideRows: any[],
+  // Needed for pots that save for a bill: which bills, and where the
+  // forecast starts. Without it a bill pot starts empty.
+  bills?: { expenses: Expense[]; projectFrom: string }
 ): SavingsGoal[] {
   return (goalRows ?? [])
     .filter((g: any) => g.status === 'active' && g.is_active !== false)
@@ -221,15 +224,42 @@ export function toEngineSavings(
         .filter((o: any) => o.savings_goal_id === g.id)
         .map((o: any) => ({ cycleStart: o.cycle_start, amountCents: o.amount_cents }))
 
-      // Each confirmed cycle counts for whatever that cycle's amount was —
-      // the override if there was one, otherwise the standing amount.
-      const confirmed = (contributionRows ?? [])
-        .filter((c: any) => c.savings_goal_id === g.id)
-        .reduce((sum: number, c: any) => {
-          const ov = overrides.find(o => o.cycleStart === c.cycle_start)
-          return sum + (ov ? ov.amountCents : g.per_cycle_cents)
-        }, 0)
+      // Each confirmed cycle counts for what went in that cycle: the amount
+      // saved with it, else the override, else the standing amount.
+      const amountOf = (c: any) => {
+        if (c.amount_cents != null) return c.amount_cents
+        const ov = overrides.find(o => o.cycleStart === c.cycle_start)
+        return ov ? ov.amountCents : g.per_cycle_cents
+      }
+      const mine = (contributionRows ?? []).filter((c: any) => c.savings_goal_id === g.id)
 
+      if (g.expense_id) {
+        // A pot for a bill holds what went in since the bill last came out of
+        // it, up to where the forecast starts. The forecast works out each
+        // cycle's amount from there, so the goal's own target and amount are
+        // not used.
+        const exp = bills?.expenses.find(e => e.id === g.expense_id)
+        const from = bills?.projectFrom
+        let held = 0
+        if (exp && from) {
+          const before = formatDate(addDays(parseDate(from), -1))
+          const back = formatDate(addDays(parseDate(from), -3 * 366))
+          const last = occurrencesOf(exp, back, before).pop() ?? ''
+          held = mine
+            .filter((c: any) => c.cycle_start > last && c.cycle_start < from)
+            .reduce((sum: number, c: any) => sum + amountOf(c), 0)
+          // A corrected total made since the bill last came out wins.
+          if (g.adjusted_total_cents != null && g.adjusted_at && g.adjusted_at.slice(0, 10) > last) {
+            held = g.adjusted_total_cents
+          }
+        }
+        return {
+          id: g.id, name: g.name, targetCents: 0, perCycleCents: 0,
+          startCycleStart: g.start_cycle_start, savedSoFarCents: held, overrides, expenseId: g.expense_id,
+        }
+      }
+
+      const confirmed = mine.reduce((sum: number, c: any) => sum + amountOf(c), 0)
       return {
         id: g.id,
         name: g.name,
@@ -258,6 +288,8 @@ export interface ForecastResult {
   savingsGoalRows: any[]
   savingsContributionRows: any[]
   savingsOverrideRows: any[]
+  /** Paydays the user chose to let dip for a bill. Optional, as above. */
+  acceptedDipRows?: any[]
   /** The cycle the projection starts from — the first open one. */
   projectFrom: any | null
 }
@@ -290,7 +322,7 @@ export async function loadForecast(
   const [
     incomeRows, expenseRows, storedCycles, creditCard, budgetSpendRows,
     savingsGoalRows, savingsContributionRows, savingsOverrideRows, expenseOverrideRows,
-    incomeOverrideRows,
+    incomeOverrideRows, acceptedDipRows,
   ] = await Promise.all([
     getIncomeSources(accountId),
     getExpenses(accountId),
@@ -302,6 +334,7 @@ export async function loadForecast(
     getAllSavingsOverrides(accountId),
     getAllExpenseOverrides(accountId),
     getAllIncomeOverrides(accountId),
+    getAcceptedDips(accountId),
   ])
 
   // Overrides and confirmed payments only exist once a card does, so this is
@@ -316,7 +349,7 @@ export async function loadForecast(
   const rows = {
     incomeRows, expenseRows, storedCycles, creditCard, creditOverrideRows, creditPaymentRows,
     budgetSpendRows, expenseOverrideRows, incomeOverrideRows,
-    savingsGoalRows, savingsContributionRows, savingsOverrideRows, projectFrom,
+    savingsGoalRows, savingsContributionRows, savingsOverrideRows, acceptedDipRows, projectFrom,
   }
   // A spare plan always keeps the account above its REAL floor, even when
   // the caller asks for breaches against a different one.
@@ -336,6 +369,7 @@ export async function loadForecast(
     savingsGoalRows,
     savingsContributionRows,
     savingsOverrideRows,
+    acceptedDipRows,
     projectFrom,
   }
 }
@@ -355,12 +389,23 @@ export function projectFromRows(
   // passes the account's own floor.
   spareFloorCents?: number
 ): CycleResult[] {
-  return projectCycles({
+  return projectCycles(engineInputFromRows(rows, safetyFloorCents, numCycles, spareFloorCents))
+}
+
+function engineInputFromRows(
+  rows: Omit<ForecastResult, 'cycles'>,
+  safetyFloorCents: number,
+  numCycles: number,
+  spareFloorCents?: number
+) {
+  const expenses = toEngineExpenses(rows.expenseRows)
+  const startDate = rows.projectFrom?.start_date ?? todayStr()
+  return {
     spareFloorCents: spareFloorCents ?? safetyFloorCents,
     incomeSources: toEngineIncome(rows.incomeRows),
-    expenses: toEngineExpenses(rows.expenseRows),
+    expenses,
     openingBalanceCents: rows.projectFrom?.opening_balance_cents ?? 0,
-    startDate: rows.projectFrom?.start_date ?? todayStr(),
+    startDate,
     numCycles,
     safetyFloorCents,
     creditAccount: toEngineCredit(rows.creditCard, rows.projectFrom, rows.creditPaymentRows ?? []),
@@ -369,10 +414,24 @@ export function projectFromRows(
     budgetSpend: toEngineBudgetSpend(rows.budgetSpendRows),
     expenseOverrides: toEngineExpenseOverrides(rows.expenseOverrideRows),
     incomeOverrides: toEngineIncomeOverrides(rows.incomeOverrideRows ?? []),
-    savingsGoals: toEngineSavings(rows.savingsGoalRows, rows.savingsContributionRows, rows.savingsOverrideRows),
+    savingsGoals: toEngineSavings(rows.savingsGoalRows, rows.savingsContributionRows, rows.savingsOverrideRows,
+      { expenses, projectFrom: startDate }),
     // The account's first cycle: monthly cycles are counted from it.
     cycleAnchorDate: rows.storedCycles?.[0]?.start_date ?? undefined,
-  })
+  }
+}
+
+/**
+ * Bills that take a payday under the floor, and which ways out actually help.
+ * Same rows, same input as the forecast, so the two can't disagree.
+ */
+export function billPromptsFromRows(
+  rows: Omit<ForecastResult, 'cycles'>,
+  safetyFloorCents: number,
+  numCycles: number
+): BillPrompt[] {
+  const accepted = (rows.acceptedDipRows ?? []).map((r: any) => ({ expenseId: r.expense_id, cycleStart: r.cycle_start }))
+  return billPrompts(engineInputFromRows(rows, safetyFloorCents, numCycles), accepted)
 }
 
 /**

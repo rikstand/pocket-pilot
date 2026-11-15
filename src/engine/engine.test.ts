@@ -464,3 +464,110 @@ describe('BNPL: change, pay off early, missed one', () => {
     expect(out).toEqual([9000, 0, 9000, 9000, 10000])
   })
 })
+
+// ── saving for a bill (Journey 4) ───────────────────────────────────
+import { billPrompts } from './engine'
+import type { SavingsGoal, CreditAccount } from './types'
+
+describe('a pot for a bill', () => {
+  // Pay in = $2,300 and a fortnightly bill out = $2,300, so every payday
+  // closes at the $1,000 opening. Insurance $1,040 on 15 Mar 2027 (11–24 Mar).
+  const rentLike = bill({ id: 'flat', frequency: 'fortnightly', anchorDate: '2026-11-05', amountCents: 230000 })
+  const insurance = bill({ id: 'ins', name: 'Car insurance', frequency: 'annually', anchorDate: '2027-03-15', amountCents: 104000 })
+  const pot = (over: Partial<SavingsGoal> = {}): SavingsGoal => ({
+    id: 'pot', name: 'Car insurance', targetCents: 104000, perCycleCents: 0, startCycleStart: '2026-11-05',
+    savedSoFarCents: 0, overrides: [], expenseId: 'ins', ...over,
+  })
+  const base = { expenses: [rentLike, insurance], numCycles: 12 }
+
+  it('sets aside the bill over the cycles up to it, then pays it: the account is not hit twice', () => {
+    const out = run({ ...base, savingsGoals: [pot()] })
+    // 10 cycles from 5 Nov to the one holding 15 Mar: $104 each
+    expect(out.slice(0, 10).map(c => c.savingsTotalCents)).toEqual(Array(10).fill(10400))
+    expect(out[9].fixedExpensesCents).toBe(230000)          // the insurance came from the pot
+    expect(out[9].savingsPaidBillsCents).toBe(104000)
+    // Same money out either way: by the bill's payday the account is where it would have been.
+    const without = run(base)
+    expect(out[9].committedClosingBalanceCents).toBe(without[9].committedClosingBalanceCents)
+  })
+
+  it('starts again for next year once the bill is paid', () => {
+    const out = run({ ...base, savingsGoals: [pot()], numCycles: 12 })
+    expect(out[10].savingsTotalCents).toBeGreaterThan(0)
+    expect(out[10].savingsTotalCents).toBeLessThan(10400)    // a year to go, so much less each cycle
+  })
+
+  it('what is already in the pot lowers what is still needed', () => {
+    const out = run({ ...base, savingsGoals: [pot({ savedSoFarCents: 54000 })] })
+    expect(out[0].savingsTotalCents).toBe(5000)               // $500 left over 10 cycles
+  })
+
+  it('a pot that is short: the account pays the difference', () => {
+    const out = run({ ...base, savingsGoals: [pot({ startCycleStart: '2027-02-25' })] })
+    // only 2 cycles to save: $520 each, then the pot pays all $1,040
+    expect(out[8].savingsTotalCents).toBe(52000)
+    expect(out[9].savingsPaidBillsCents).toBe(104000)
+  })
+
+  it('stops when the bill stops', () => {
+    const ended = { ...insurance, endDate: '2027-01-01' }
+    const out = run({ expenses: [rentLike, ended], numCycles: 6, savingsGoals: [pot()] })
+    expect(out.every(c => c.savingsTotalCents === 0)).toBe(true)
+  })
+})
+
+describe('prompts to set money aside', () => {
+  const rentLike = bill({ id: 'flat', frequency: 'fortnightly', anchorDate: '2026-11-05', amountCents: 230000 })
+  const insurance = bill({ id: 'ins', name: 'Car insurance', frequency: 'annually', anchorDate: '2027-03-15', amountCents: 104000 })
+  const input = (over: Partial<CycleInput> = {}): CycleInput => ({
+    incomeSources: [pay()], expenses: [rentLike, insurance], openingBalanceCents: 100000,
+    startDate: '2026-11-05', numCycles: 12, safetyFloorCents: 50000, ...over,
+  })
+
+  it('a bill that takes a payday under the floor prompts', () => {
+    const p = billPrompts(input())
+    expect(p.map(x => [x.expenseId, x.cycleStart, x.shortCents])).toEqual([['ins', '2027-03-11', 54000]])
+  })
+
+  it('…but putting money away is not offered when it only moves the dip earlier', () => {
+    // Nothing takes the spare money in between, so a pot just lowers earlier paydays.
+    expect(billPrompts(input())[0].setAside).toBeNull()
+  })
+
+  it('a payday that dips anyway is not blamed on a small bill', () => {
+    const small = bill({ id: 'sm', frequency: 'annually', anchorDate: '2027-03-15', amountCents: 2000 })
+    const p = billPrompts(input({ expenses: [rentLike, insurance, small], openingBalanceCents: 0 }))
+    expect(p.some(x => x.expenseId === 'sm')).toBe(false)
+  })
+
+  it('a bill in the very first cycle still prompts (the card may help even if saving cannot)', () => {
+    const soon = bill({ id: 'soon', frequency: 'annually', anchorDate: '2026-11-12', amountCents: 104000 })
+    const p = billPrompts(input({ expenses: [rentLike, soon] }))
+    expect(p.map(x => [x.expenseId, x.cycleStart])).toEqual([['soon', '2026-11-05']])
+    expect(p[0].setAside).toBeNull()
+  })
+
+  it('a payday you chose to let dip is not asked about again', () => {
+    expect(billPrompts(input(), [{ expenseId: 'ins', cycleStart: '2027-03-11' }])).toEqual([])
+  })
+
+  it('a bill that already has a pot does not prompt', () => {
+    const g: SavingsGoal = { id: 'pot', name: 'x', targetCents: 0, perCycleCents: 0, startCycleStart: '2026-11-05', savedSoFarCents: 0, overrides: [], expenseId: 'ins' }
+    expect(billPrompts(input({ savingsGoals: [g] }))).toEqual([])
+  })
+
+  it('with a card that takes whatever is spare, putting money away does fix it', () => {
+    // A $1,000 surplus each cycle, all swept to the card above the $500 floor.
+    const card: CreditAccount = {
+      id: 'c', name: 'Card', aprBasisPoints: 0, minPaymentPct: 0, minPaymentFloorCents: 0, assumedSpendCents: 0,
+      strategyExtraCents: 0, strategyCommitted: true, strategyMode: 'spare', currentBalanceCents: 5000000, paymentFrequency: 'per_cycle',
+    }
+    const surplus = bill({ id: 'flat', frequency: 'fortnightly', anchorDate: '2026-11-05', amountCents: 130000 })
+    const p = billPrompts(input({ expenses: [surplus, insurance], creditAccount: card }))
+    const ins = p.find(x => x.expenseId === 'ins')!
+    expect(ins.setAside).not.toBeNull()
+    expect(ins.setAside!.cycles).toBe(10)
+    // The card already pays nothing that cycle (nothing is spare), so it can't pay less.
+    expect(ins.cardCanReduceCents).toBe(0)
+  })
+})

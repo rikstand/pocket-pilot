@@ -1109,6 +1109,26 @@ export async function createSavingsGoal(
   return data
 }
 
+// A pot for a bill: money set aside each cycle so the bill comes out of the
+// pot instead of one payday. The forecast works out how much each cycle from
+// the bill itself, so there is no target or amount to store. It keeps going
+// while the bill repeats and stops when the bill ends.
+export async function createBillPot(
+  accountId: string,
+  fields: { expense_id: string; name: string; start_cycle_start: string }
+) {
+  const { data, error } = await supabase
+    .from('savings_goals')
+    .insert({
+      account_id: accountId, ...fields,
+      target_cents: 0, per_cycle_cents: 0, cycles_total: 0,
+    })
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
 export async function updateSavingsGoal(
   goalId: string,
   fields: {
@@ -1140,8 +1160,8 @@ export async function deleteSavingsGoal(goalId: string) {
 
 // --- SAVINGS CONTRIBUTIONS ---
 // One row per cycle where the money actually went in. The row existing is the
-// confirmation — no amount is stored, because what was meant to go in is
-// already known from the goal.
+// confirmation. A goal's amount is known from the goal, so it stores none; a
+// pot for a bill stores what went in, because that changes cycle to cycle.
 export async function getSavingsContributions(goalId: string) {
   const { data, error } = await supabase
     .from('savings_contributions')
@@ -1165,12 +1185,15 @@ export async function getAllSavingsContributions(accountId: string) {
 export async function confirmSavingsContribution(
   goalId: string,
   accountId: string,
-  cycleStart: string
+  cycleStart: string,
+  // What actually went in. Needed for a pot for a bill, whose amount changes
+  // cycle to cycle; leave it out for a goal and the goal's amount is used.
+  amountCents?: number | null
 ) {
   const { data, error } = await supabase
     .from('savings_contributions')
     .upsert(
-      { savings_goal_id: goalId, account_id: accountId, cycle_start: cycleStart },
+      { savings_goal_id: goalId, account_id: accountId, cycle_start: cycleStart, amount_cents: amountCents ?? null },
       { onConflict: 'savings_goal_id,cycle_start' }
     )
     .select()
@@ -1184,6 +1207,37 @@ export async function unconfirmSavingsContribution(goalId: string, cycleStart: s
     .from('savings_contributions')
     .delete()
     .eq('savings_goal_id', goalId)
+    .eq('cycle_start', cycleStart)
+  if (error) throw error
+}
+
+// --- PAYDAYS LEFT TO DIP ---
+// When a bill takes a payday under the floor and the user says "let it dip",
+// that payday isn't asked about again. One row per bill and cycle.
+export async function getAcceptedDips(accountId: string) {
+  const { data, error } = await supabase
+    .from('accepted_dips')
+    .select('*')
+    .eq('account_id', accountId)
+  if (error) throw error
+  return data
+}
+
+export async function acceptDip(accountId: string, expenseId: string, cycleStart: string) {
+  const { error } = await supabase
+    .from('accepted_dips')
+    .upsert(
+      { account_id: accountId, expense_id: expenseId, cycle_start: cycleStart },
+      { onConflict: 'expense_id,cycle_start' }
+    )
+  if (error) throw error
+}
+
+export async function clearAcceptedDip(expenseId: string, cycleStart: string) {
+  const { error } = await supabase
+    .from('accepted_dips')
+    .delete()
+    .eq('expense_id', expenseId)
     .eq('cycle_start', cycleStart)
   if (error) throw error
 }

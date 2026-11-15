@@ -136,6 +136,13 @@ export interface SavingsGoal {
   /** Confirmed so far, or a corrected figure. Set by the caller, not the engine. */
   savedSoFarCents: number
   overrides: SavingsOverride[]
+  // Saving for a bill: the expense this pot pays. Each cycle it sets aside
+  // what the next payment still needs, spread over the cycles left until it;
+  // when the bill falls due the pot pays first and the account only covers any
+  // shortfall. Then it starts again for the next one. For a bill pot,
+  // savedSoFarCents is what's in the pot now (since the bill last came out),
+  // and targetCents is ignored — the target is always the next payment.
+  expenseId?: string
 }
 
 /** What one goal takes from one cycle. */
@@ -147,6 +154,8 @@ export interface SavingsCycleLine {
   /** Still to find after this cycle's amount. Zero means the goal completes here. */
   remainingAfterCents: number
   isOverride: boolean
+  /** For a bill pot: the bill it's saving for. */
+  expenseId?: string
 }
 
 // ── expense overrides ─────────────────────────────────────────────
@@ -243,6 +252,10 @@ export interface CycleResult {
   // ── savings, zero when no active goals ──
   savingsTotalCents: number
   savingsLines: SavingsCycleLine[]
+  // What bill pots paid towards bills that fell due this cycle. Already taken
+  // off the bills above, so it is NOT subtracted again; shown so a screen can
+  // say "paid from savings".
+  savingsPaidBillsCents: number
 
   // ── credit, zero when no committed card ──
   creditOpeningBalanceCents: number
