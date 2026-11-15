@@ -26,7 +26,7 @@ import {
   getBudgetSpendEntries, getSavingsGoals, getAllSavingsContributions, getAllSavingsOverrides,
   getAllExpenseOverrides, getCreditCyclePayments, getAllIncomeOverrides, getAcceptedDips,
 } from './repository'
-import { projectCycles, budgetAmountForCycle, billPrompts, occurrencesOf } from '../engine/index'
+import { projectCycles, budgetAmountForCycle, billPrompts, occurrencesOf, scheduleOn } from '../engine/index'
 import type { CycleRule, BillPrompt } from '../engine/index'
 import type {
   CycleResult, IncomeSource, Expense, CreditAccount, CreditExtraOverride,
@@ -595,4 +595,38 @@ export function baselineChecks(
   // Biggest gap first — that is the one distorting the forecast most.
   return out.sort((a, b) =>
     (b.baselineCents - b.averageCents) - (a.baselineCents - a.averageCents))
+}
+
+
+/**
+ * How pay repeats on a date: the main pay's schedule then (the same pick the
+ * engine makes: the flagged pay, else the first certain one). Budgets use it
+ * to know whether they line up with the cycle.
+ */
+export function cycleRuleOn(incomeRows: any[], onDate: string): CycleRule {
+  const src = (incomeRows ?? []).find((s: any) => s.is_primary && !s.is_potential)
+    ?? (incomeRows ?? []).find((s: any) => !s.is_potential)
+  const pay = src ? toEngineIncome([src])[0] : undefined
+  const s = pay ? scheduleOn(pay, onDate) : null
+  return { frequency: (s?.frequency ?? 'fortnightly') as any, everyN: s?.everyN ?? 1 }
+}
+
+/** Each budget running in a cycle and what it allows for that cycle. */
+export function budgetsInCycle(rows: Omit<ForecastResult, 'cycles'>, start: string, end: string) {
+  const rule = cycleRuleOn(rows.incomeRows, start)
+  return (rows.expenseRows ?? [])
+    .filter((e: any) => (e.mode ?? 'fixed') === 'budget' && e.frequency !== 'once')
+    .filter((e: any) => {
+      const from = e.anchor_date > start ? e.anchor_date : start
+      const to = e.end_date && e.end_date < end ? e.end_date : end
+      return from <= to
+    })
+    .map((e: any) => {
+      const ov = (rows.expenseOverrideRows ?? []).find((o: any) => o.expense_id === e.id && o.cycle_start === start)
+      return {
+        id: e.id as string,
+        name: e.name as string,
+        plannedCents: ov ? ov.amount_cents as number : budgetAmountForCycle(toEngineExpenses([e])[0], start, end, rule),
+      }
+    })
 }

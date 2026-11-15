@@ -297,3 +297,111 @@ body.is-runway #root { border-inline: none; }
 /* By type: today's grouped cards, unchanged, until Journey 7. */
 .rw-bytype { padding-top: 4px; }
 .rw-qa { padding: 0 var(--rw-space-3) 10px; }
+
+/* ═══ Sheets (Journey 5 onwards) ═════════════════════════════════════ */
+/* Bottom sheet: radius-xl top corners, bg, a grab handle, a title in
+   sheet-title, and a close button. Centred at phone width on a computer. */
+.rw-ov {
+  position: fixed; inset: 0; z-index: 80; background: rgba(0,0,0,.42);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.rw-sheet {
+  width: 100%; max-width: 480px; max-height: 94vh; overflow-y: auto;
+  background: var(--rw-bg); border-radius: var(--rw-radius-xl) var(--rw-radius-xl) 0 0;
+  padding: 9px 14px calc(18px + env(safe-area-inset-bottom));
+  font: var(--rw-text-body); font-feature-settings: 'tnum' 1; color: var(--rw-ink); text-align: left;
+  animation: rw-up .25s; scrollbar-width: none;
+}
+.rw-sheet::-webkit-scrollbar { width: 0; }
+@keyframes rw-up { from { transform: translateY(40px); } to { transform: none; } }
+.rw-grab { width: 34px; height: 4px; border-radius: 3px; background: var(--rw-hairline); margin: 0 auto 10px; }
+.rw-sh-h { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.rw-sheet .rw-sheet-title { font: var(--rw-text-sheet-title); }
+.rw-x { width: 28px; height: 28px; flex: 0 0 28px; border-radius: 50%; border: none; cursor: pointer; font-size: 15px; background: var(--rw-surface-2); }
+.rw-sd { font: var(--rw-text-sub); font-size: 11.5px; color: var(--rw-muted); margin-top: 2px; }
+.rw-sd b { color: var(--rw-ink); font-weight: 650; }
+.rw .rw-muted { color: var(--rw-muted); }
+.rw-card { margin-top: 10px; background: var(--rw-surface); border-radius: var(--rw-radius-lg); padding: 11px var(--rw-space-3); }
+.rw-group.flush { margin: 0; }
+.rw-dayh { font: var(--rw-text-sub); font-weight: 650; color: var(--rw-muted); padding: 10px 4px 4px; }
+
+/* Amount field: large, typed. */
+.rw-amt-row { display: flex; align-items: center; gap: 8px; }
+.rw-amt { flex: 1; display: flex; align-items: baseline; gap: 2px; min-width: 0; }
+.rw-amt span { font: var(--rw-text-amount); font-size: 30px; color: var(--rw-muted); }
+.rw-amt input {
+  flex: 1; min-width: 0; border: none; background: transparent; outline: none; color: var(--rw-ink);
+  font: var(--rw-text-amount); font-size: 34px; letter-spacing: -.03em; font-feature-settings: 'tnum' 1;
+}
+.rw-amt input::-webkit-inner-spin-button { -webkit-appearance: none; }
+.rw-refb {
+  border: 1px solid var(--rw-hairline); background: var(--rw-surface); border-radius: var(--rw-radius-pill);
+  padding: 5px 10px; cursor: pointer; white-space: nowrap; font: var(--rw-text-sub); font-weight: 650; color: var(--rw-muted);
+}
+.rw .rw-refb { color: var(--rw-muted); }
+.rw .rw-refb.on { background: color-mix(in srgb, var(--rw-good) 14%, transparent); border-color: transparent; color: var(--rw-good); }
+
+.rw-lab { font: var(--rw-text-label); color: var(--rw-muted); text-transform: uppercase; letter-spacing: .05em; margin: 12px 0 6px; }
+
+/* Chips: selected = ink fill with bg text; unselected = surface with a
+   hairline. Dashed for the ones that open more (More…, Other…, Earlier…). */
+.rw-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.rw-chips button {
+  border: 1px solid var(--rw-hairline); background: var(--rw-surface); border-radius: var(--rw-radius-pill);
+  padding: 7px 11px; cursor: pointer; white-space: nowrap; font: var(--rw-text-row-name); font-size: 12px;
+}
+.rw .rw-chips button { color: var(--rw-muted); }
+.rw .rw-chips button.on { background: var(--rw-ink); color: var(--rw-bg); border-color: var(--rw-ink); }
+.rw-chips button.dash { border-style: dashed; }
+.rw-hint { font: var(--rw-text-sub); font-size: 11.5px; color: var(--rw-muted); margin-top: 7px; }
+.rw-hint button { border: none; background: none; padding: 0; cursor: pointer; font: inherit; font-weight: 700; text-decoration: underline; }
+.rw .rw-hint button { color: var(--rw-ink); }
+
+.rw-srch, .rw-note {
+  width: 100%; margin-top: 8px; border: 1px solid var(--rw-hairline); background: var(--rw-surface-2);
+  border-radius: 11px; padding: 9px 11px; outline: none; color: var(--rw-ink); font: var(--rw-text-body);
+}
+.rw-res { margin-top: 4px; }
+.rw-res button {
+  display: flex; justify-content: space-between; width: 100%; border: none; background: none; cursor: pointer;
+  padding: 8px 2px; border-bottom: 1px solid var(--rw-hairline); text-align: left; font: var(--rw-text-row-name);
+}
+.rw-res button span { font: var(--rw-text-sub); color: var(--rw-muted); }
+
+/* Day strip: one button per day so far, weekday letter over the date. */
+.rw-days { display: flex; gap: 3px; margin-top: 8px; overflow-x: auto; scrollbar-width: none; }
+.rw-days::-webkit-scrollbar { height: 0; }
+.rw-days button {
+  flex: 1 1 0; min-width: 24px; border: 1px solid var(--rw-hairline); background: var(--rw-surface);
+  border-radius: 10px; padding: 4px 0; cursor: pointer; display: flex; flex-direction: column; align-items: center;
+  font: var(--rw-text-row-name); font-size: 12px;
+}
+.rw-days button span { font: var(--rw-text-label); font-size: 8.5px; font-weight: 600; color: var(--rw-muted); }
+.rw .rw-days button.on { background: var(--rw-ink); color: var(--rw-bg); border-color: var(--rw-ink); }
+.rw-days button.on span { color: var(--rw-bg); opacity: .7; }
+
+/* Going over a budget: plain while payday stays above the floor; the
+   warning levels only when it doesn't. */
+.rw-strip { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 7px 10px; border-radius: 11px; background: var(--rw-surface); }
+.rw-strip .g1 { font: var(--rw-text-tile); white-space: nowrap; }
+.rw-strip .g2 { font: var(--rw-text-sub); color: var(--rw-muted); line-height: 1.3; }
+.rw-strip .g2 b { color: var(--rw-ink); }
+.rw-strip.near { background: color-mix(in srgb, var(--rw-near-floor) 15%, transparent); }
+.rw-strip.near .g1 { color: var(--rw-near-floor-text); }
+.rw-strip.under { background: color-mix(in srgb, var(--rw-under-floor) 13%, transparent); }
+.rw-strip.under .g1 { color: var(--rw-under-floor); }
+
+.rw-ctas { display: flex; gap: 8px; margin-top: 12px; }
+.rw-cta {
+  flex: 1; border: none; border-radius: var(--rw-radius-md); padding: 12px; cursor: pointer;
+  background: var(--rw-action); font: var(--rw-text-row-name);
+}
+.rw .rw-cta { color: var(--rw-action-ink); }
+.rw .rw-cta.sec { flex: 0 0 32%; background: var(--rw-surface-2); color: var(--rw-ink); }
+.rw-cta:disabled { opacity: .35; cursor: default; }
+.rw-addo {
+  display: block; width: 100%; border: none; background: none; cursor: pointer; text-align: left;
+  border-top: 1px solid var(--rw-hairline); margin-top: 12px; padding: 11px 2px 0;
+  font: var(--rw-text-row-name); font-size: 12px;
+}
+.rw .rw-addo { color: var(--rw-muted); }

@@ -1359,13 +1359,17 @@ export async function updateBudgetSpendEntry(
   entryId: string,
   amountCents: number,
   label: string,
-  place?: { payeeId?: string | null; note?: string | null }
+  place?: { payeeId?: string | null; note?: string | null },
+  // Moving an entry to another budget or another day (Journey 5's edit).
+  move?: { expenseId?: string; spentDate?: string }
 ) {
   const fields: any = { amount_cents: amountCents, label }
   if (place) {
     fields.payee_id = place.payeeId ?? null
     fields.note = place.note?.trim() ? place.note.trim() : null
   }
+  if (move?.expenseId) fields.expense_id = move.expenseId
+  if (move?.spentDate) fields.spent_date = move.spentDate
   const { data, error } = await supabase
     .from('budget_spend_entries')
     .update(fields)

@@ -6,8 +6,8 @@ import { ToastContext, type Show, type ToastOptions } from './toastContext'
  * other action sits beside Undo. A new toast replaces the one showing.
  * Pages call useToast() from ./toastContext.
  */
-// How long a toast stays, from the Cycle mock (J8).
-const SHOW_MS = 3000
+// How long a toast stays. Long enough to read it and reach Undo (J5).
+const SHOW_MS = 5000
 
 interface Current extends ToastOptions { id: number; message: string }
 

@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react'
 import type { Page } from '../AppShell'
 import { PhoneLayout } from '../lib/useViewport'
+import { useLog } from './logContext'
 import PlanHub from './PlanHub'
 import MoreHub from './MoreHub'
 
@@ -50,6 +51,8 @@ export default function RunwayShell({ active, onNavigate, onAdd, darkMode, onTog
     return () => { document.body.classList.remove('is-runway') }
   }, [])
 
+  // The centre + logs spend (Journey 5); without the sheets it falls back.
+  const log = useLog()
   const tab = TAB_OF[active]
   const back = BACK[active]
 
@@ -76,7 +79,7 @@ export default function RunwayShell({ active, onNavigate, onAdd, darkMode, onTog
         <nav className="rw-tabs">
           {tabButton('cycle', 'Cycle')}
           {tabButton('forecast', 'Forecast')}
-          <button type="button" className="rw-fab" aria-label="Add" onClick={onAdd}>{ICON.add}</button>
+          <button type="button" className="rw-fab" aria-label="Log spend" onClick={() => (log ? log.log() : onAdd())}>{ICON.add}</button>
           {tabButton('plan', 'Plan')}
           {tabButton('more', 'More')}
         </nav>

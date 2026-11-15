@@ -40,6 +40,8 @@ import { byOldest, versionForDate } from './lib/versions'
 import { ExpenseIcon, guessIcon } from './lib/icons'
 import { useViewport } from './lib/useViewport'
 import { useNewLook } from './lib/look'
+import { useDataChanged } from './lib/dataEvents'
+import { useLog } from './runway/logContext'
 import CycleView, { type DayItem, type BudgetRow } from './runway/CycleView'
 import { buildRunway, type RunwayEvent } from './runway/runwaySeries'
 
@@ -125,6 +127,8 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
   const deskForecast = viewport === 'desktop' && variant === 'forecast'
   // The new look's Cycle screen (Journey 8). Behind the switch in Settings.
   const [newLook] = useNewLook()
+  // Journey 5's sheets, when the new shell provides them.
+  const logSheets = useLog()
 
   // NEW — cycle carousel dot tracking (Available-to-spend / Next-payments swipe)
   const [activeCarouselDot, setActiveCarouselDot] = useState(0)
@@ -357,6 +361,9 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
     }
     load()
   }, [accountId, reloadKey, horizonCycles, variant])
+
+  // Spend logged from the tab bar's + saves while this screen sits underneath.
+  useDataChanged(() => setReloadKey(k => k + 1))
 
   useEffect(() => {
     // On desktop the cycles wrap into a grid, so there is no row to scroll.
@@ -2417,10 +2424,12 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
         id: cd.expenseId, name: cd.name,
         spentCents: entries.reduce((sum: number, e: any) => sum + e.amount_cents, 0),
         plannedCents: cd.totalCents,
-        onOpen: () => openLog(cd),
-        onPlus: isCurrentCycle ? () => { setBudEdit(null); toggleQuickAdd(cd.expenseId) } : undefined,
-        plusOpen: openQuickAdd === cd.expenseId,
-        quickAdd: isCurrentCycle ? <div className="rw-qa">{quickAddForm(cd)}</div> : null,
+        onOpen: logSheets ? () => logSheets.budget(cd.expenseId) : () => openLog(cd),
+        onPlus: !isCurrentCycle && status !== 'overdue' ? undefined
+          : logSheets ? () => logSheets.log(cd.expenseId)
+          : isCurrentCycle ? () => { setBudEdit(null); toggleQuickAdd(cd.expenseId) } : undefined,
+        plusOpen: !logSheets && openQuickAdd === cd.expenseId,
+        quickAdd: !logSheets && isCurrentCycle ? <div className="rw-qa">{quickAddForm(cd)}</div> : null,
       }
     })
 

@@ -11,6 +11,7 @@ import WishlistPage from './WishlistPage'
 import CreditPage from './CreditPage'
 import SettingsPage from './SettingsPage'
 import RunwayShell from './runway/RunwayShell'
+import { LogSheetsProvider } from './runway/LogSheets'
 import { ToastProvider } from './runway/Toast'
 import { useNewLook } from './lib/look'
 
@@ -35,7 +36,8 @@ function AuthedApp({ userId }: { userId: string }) {
     if (to !== 'expenses') setAddSignal(0)
   }
 
-  // The new shell's +: today's add-expense sheet until Journey 9 replaces it.
+  // Today's add-expense sheet: "Add a bill, one-off or income" under Log
+  // spend, until Journey 9 replaces it.
   function addFromShell() {
     setPage('expenses')
     setAddSignal(n => n + 1)
@@ -94,6 +96,7 @@ function AuthedApp({ userId }: { userId: string }) {
   )
 
   if (newLook) return (
+    <LogSheetsProvider accountId={activeAccount.id} onAddOther={addFromShell}>
     <RunwayShell
       active={shown}
       onNavigate={navigate}
@@ -104,6 +107,7 @@ function AuthedApp({ userId }: { userId: string }) {
     >
       {pages}
     </RunwayShell>
+    </LogSheetsProvider>
   )
 
   return (
