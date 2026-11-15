@@ -5,7 +5,9 @@ import type { Page } from '../AppShell'
  * Journeys 2, 3, 4 and 9 replace them one at a time.
  */
 const ROWS: { page: Page; name: string; sub: string }[] = [
-  { page: 'expenses', name: 'Expenses', sub: 'Bills, budgets and BNPL' },
+  { page: 'items',    name: 'Expenses & income', sub: 'Everything that repeats, and what it is each pay' },
+  // Today's page, for adding and changing how often, until feat/refresh-add.
+  { page: 'expenses', name: 'Expenses (old)', sub: 'Add a bill, change how often' },
   { page: 'wishlist', name: 'Wishlist', sub: 'Things to buy and how to pay' },
   { page: 'credit',   name: 'Credit',   sub: 'Your card and its plan' },
 ]

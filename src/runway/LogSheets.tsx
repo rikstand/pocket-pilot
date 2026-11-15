@@ -7,6 +7,7 @@ import {
   getPayees, findOrCreatePayee,
   addBudgetSpendEntry, updateBudgetSpendEntry, deleteBudgetSpendEntry,
   setExpenseOverride, clearExpenseOverride, setExpenseAmountFrom, deleteExpenseAmountVersion,
+  archiveExpense, unarchiveExpense, deactivateExpense, reactivateExpense,
 } from '../lib/repository'
 import { budgetHistory, budgetFlag, type PastCycle, type BudgetFlag } from './budgetHistory'
 import Preview, { previewStats } from './Preview'
@@ -245,6 +246,25 @@ function BudgetChange({ data, budget, spentCents, accountId, onCancel, onSaved }
     ? Math.round(history.slice(-4).reduce((s, c) => s + c.spentCents, 0) / Math.min(4, history.length) / 500) * 500 : null)
   const mx = Math.max(...history.map(c => c.spentCents), budget.baseCents, 1) * 1.15
 
+  // Anything ever logged to it, in any cycle.
+  const everUsed = data.allEntries.some(e => e.expense_id === budget.id)
+
+  async function retire() {
+    if (busy) return
+    setBusy(true)
+    try {
+      if (everUsed) {
+        await archiveExpense(budget.id, data.end)
+        toast(`${budget.name} archived from ${dayName(shift(data.end, 1), false)}`, { undo: async () => { await unarchiveExpense(budget.id); notifyDataChanged() } })
+      } else {
+        await deactivateExpense(budget.id)
+        toast(`${budget.name} deleted`, { undo: async () => { await reactivateExpense(budget.id); notifyDataChanged() } })
+      }
+      onSaved()
+    } catch (err: any) { alert('Could not change the budget: ' + err.message) }
+    finally { setBusy(false) }
+  }
+
   async function save() {
     if (!changed || belowSpent || busy) return
     setBusy(true)
@@ -344,6 +364,18 @@ function BudgetChange({ data, budget, spentCents, accountId, onCancel, onSaved }
         <button type="button" className="rw-cta sec" onClick={onCancel}>Cancel</button>
         <button type="button" className="rw-cta" disabled={changed && (belowSpent || busy || !val.trim())} onClick={changed ? save : onCancel}>
           {!changed ? 'Done' : `Use ${money(valCents)} ${when}${st && st.level === 'under' && st.worse ? ' anyway' : ''}`}
+        </button>
+      </div>
+
+      {/* Archive keeps the spend history; Delete only for a budget nothing was ever logged to. */}
+      <div className="rw-group flush" style={{ marginTop: 12 }}>
+        <button type="button" className="rw-row" disabled={busy} onClick={retire}>
+          <div className="rw-tx">
+            <div className="rw-row-name rw-danger">{everUsed ? `Archive ${budget.name}` : `Delete ${budget.name}`}</div>
+            <div className="rw-sub">{everUsed
+              ? `Stops it from the next pay, ${dayName(shift(data.end, 1), false)}. Spending history stays`
+              : 'Nothing was ever logged to it, so nothing is lost'}</div>
+          </div>
         </button>
       </div>
     </>

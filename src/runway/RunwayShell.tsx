@@ -26,10 +26,11 @@ interface Props {
 // Which tab a page belongs to, and where its back button goes.
 const TAB_OF: Record<Page, 'cycle' | 'forecast' | 'plan' | 'more'> = {
   cycle: 'cycle', forecast: 'forecast',
-  plan: 'plan', expenses: 'plan', wishlist: 'plan', credit: 'plan',
+  plan: 'plan', items: 'plan', expenses: 'plan', wishlist: 'plan', credit: 'plan',
   more: 'more', settings: 'more',
 }
 const BACK: Partial<Record<Page, { to: Page; label: string }>> = {
+  items:    { to: 'plan', label: 'Plan' },
   expenses: { to: 'plan', label: 'Plan' },
   wishlist: { to: 'plan', label: 'Plan' },
   credit:   { to: 'plan', label: 'Plan' },

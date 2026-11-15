@@ -274,6 +274,23 @@ export async function deactivateExpense(expenseId: string) {
   if (error) throw error
 }
 
+// Undo for a delete: switch it back on.
+export async function reactivateExpense(expenseId: string) {
+  const { error } = await supabase.from('expenses').update({ is_active: true }).eq('id', expenseId)
+  if (error) throw error
+}
+
+export async function reactivateIncomeSource(incomeId: string) {
+  const { error } = await supabase.from('income_sources').update({ is_active: true }).eq('id', incomeId)
+  if (error) throw error
+}
+
+// Undo for setIncomeAmountFrom: remove the dated amount it wrote.
+export async function deleteIncomeAmountVersion(versionId: string) {
+  const { error } = await supabase.from('income_amount_versions').delete().eq('id', versionId)
+  if (error) throw error
+}
+
 // --- SCHEDULE CHANGES FROM A DATE ---
 // From effectiveFrom on, the item repeats on a new schedule. Payments before
 // it never change, and the item stays one item: its spend log, places and

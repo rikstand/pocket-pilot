@@ -12,6 +12,7 @@ import CreditPage from './CreditPage'
 import SettingsPage from './SettingsPage'
 import RunwayShell from './runway/RunwayShell'
 import { LogSheetsProvider } from './runway/LogSheets'
+import ItemsPage from './runway/ItemsPage'
 import { ToastProvider } from './runway/Toast'
 import { useNewLook } from './lib/look'
 
@@ -26,9 +27,9 @@ function AuthedApp({ userId }: { userId: string }) {
   const [newLook] = useNewLook()
   const [addSignal, setAddSignal] = useState(0)
 
-  // Plan and More only exist in the new shell. Turning the new look off
+  // Plan, More and Expenses & income only exist in the new shell. Turning the new look off
   // while on one of them shows Cycle.
-  const shown: Page = !newLook && (page === 'plan' || page === 'more') ? 'cycle' : page
+  const shown: Page = !newLook && (page === 'plan' || page === 'more' || page === 'items') ? 'cycle' : page
 
   function navigate(to: Page) {
     setPage(to)
@@ -80,6 +81,7 @@ function AuthedApp({ userId }: { userId: string }) {
       {shown === 'forecast' && (
         <Dashboard key={'forecast-' + dataVersion} userId={userId} accountId={activeAccount.id} variant="forecast" />
       )}
+      {shown === 'items' && <ItemsPage accountId={activeAccount.id} onNavigate={navigate} />}
       {shown === 'expenses' && (
         <ExpensesPage userId={userId} accountId={activeAccount.id} onBack={goCycleAndReload} addSignal={addSignal} />
       )}

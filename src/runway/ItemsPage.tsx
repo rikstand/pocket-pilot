@@ -1,0 +1,523 @@
+import { useEffect, useState } from 'react'
+import type { Page } from '../AppShell'
+import { useAccount } from '../lib/AccountContext'
+import { moneyFormatter, currencySymbol } from '../lib/money'
+import {
+  loadForecast, projectFromRows, budgetsInCycle, cycleRuleOn,
+  toEngineExpenses, toEngineIncome, type ForecastResult,
+} from '../lib/forecast'
+import {
+  setExpenseAmountFrom, deleteExpenseAmountVersion, setIncomeAmountFrom, deleteIncomeAmountVersion,
+  setExpenseOverride, clearExpenseOverride, setIncomeOverride, clearIncomeOverride,
+  setExpenseEndDate, setIncomeEndDate, deactivateExpense, deactivateIncomeSource,
+  reactivateExpense, reactivateIncomeSource, archiveExpense, unarchiveExpense,
+} from '../lib/repository'
+import { versionForDate, byOldest } from '../lib/versions'
+import { occurrencesOf } from '../engine/index'
+import { parseDate, formatDate, addDays } from '../engine/dates'
+import { notifyDataChanged, useDataChanged } from '../lib/dataEvents'
+import { useToast } from './toastContext'
+import { useLog } from './logContext'
+import Preview, { previewStats } from './Preview'
+
+/**
+ * Journey 9, part one: Expenses & income. Everything that repeats, with what
+ * it comes to each pay, and a sheet to change an amount, stop it or delete
+ * it. Adding and "Change how often" come next (feat/refresh-add), and
+ * changing how often you're paid after that (feat/refresh-pay).
+ */
+
+const PREVIEW_PAYS = 12
+const todayStr = () => formatDate(new Date())
+const shift = (d: string, n: number) => formatDate(addDays(parseDate(d), n))
+const far = () => shift(todayStr(), 2 * 366)
+const dayName = (d: string) => {
+  const x = parseDate(d), soon = (x.getTime() - Date.now()) / 864e5 < 330
+  return x.toLocaleDateString('en-NZ', soon ? { weekday: 'short', day: 'numeric', month: 'short' }
+    : { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }).replace(',', '')
+}
+const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+const ord = (n: number) => { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]) }
+
+// How many times a year something on this schedule happens.
+const PER_YEAR: Record<string, number> = { daily: 365.25, weekly: 52.18, fortnightly: 26.09, monthly: 12, annually: 1, once: 0 }
+const perYear = (r: any) => (PER_YEAR[r.frequency] ?? 0) / Math.max(1, r.every_n ?? 1)
+const PERIOD: Record<string, string> = { daily: 'day', weekly: 'week', fortnightly: 'fortnight', monthly: 'month', annually: 'year' }
+
+type Kind = 'income' | 'fixed' | 'estimate' | 'budget' | 'bnpl'
+const kindOf = (r: any, isIncome: boolean): Kind =>
+  isIncome ? 'income' : r.lay_by_id ? 'bnpl' : r.mode === 'budget' ? 'budget' : r.mode === 'variable' ? 'estimate' : 'fixed'
+const KIND_NAME: Record<Kind, string> = { income: 'Income', fixed: 'Fixed', estimate: 'Estimate', budget: 'Budget', bnpl: 'BNPL' }
+
+export function Mark({ kind }: { kind: Kind }) {
+  const box = { className: 'rw-mark', viewBox: '0 0 10 10', 'aria-hidden': true }
+  switch (kind) {
+    case 'fixed':    return <svg {...box}><circle cx="5" cy="5" r="4" fill="var(--rw-muted)" /></svg>
+    case 'estimate': return <svg {...box}><circle cx="5" cy="5" r="3.6" fill="none" stroke="var(--rw-muted)" strokeWidth="1.4" strokeDasharray="2 1.6" /></svg>
+    case 'budget':   return <svg {...box}><rect x="0.5" y="3" width="9" height="4" rx="2" fill="none" stroke="var(--rw-muted)" strokeWidth="1.3" /><rect x="0.5" y="3" width="5" height="4" rx="2" fill="var(--rw-muted)" /></svg>
+    case 'income':   return <svg {...box}><path d="M5 9V1M1.5 4.5L5 1l3.5 3.5" fill="none" stroke="var(--rw-good)" strokeWidth="1.6" /></svg>
+    case 'bnpl':     return <svg {...box}><circle cx="5" cy="5" r="3.8" fill="none" stroke="var(--rw-bnpl)" strokeWidth="1.4" /><path d="M5 1.2A3.8 3.8 0 0 1 5 8.8Z" fill="var(--rw-bnpl)" /></svg>
+  }
+}
+
+interface Item {
+  id: string
+  row: any
+  isIncome: boolean
+  kind: Kind
+  name: string
+  amountCents: number       // per payment now (a budget: per pay)
+  perPayCents: number
+  next: string[]            // the next payments, from today
+}
+
+export default function ItemsPage({ accountId, onNavigate }: { accountId: string; onNavigate: (p: Page) => void }) {
+  const { activeAccount } = useAccount()
+  const toast = useToast()
+  const logSheets = useLog()
+  const fmt = moneyFormatter(activeAccount?.currency_code)
+  const money = (c: number) => (c < 0 ? '−' : '') + fmt(Math.abs(c), false)
+  const floorCents = activeAccount?.safety_floor_cents ?? 0
+  const [rows, setRows] = useState<ForecastResult | null>(null)
+  const [error, setError] = useState('')
+  const [open, setOpen] = useState<Item | null>(null)
+  const [showArchived, setShowArchived] = useState(false)
+
+  async function load() {
+    try { setRows(await loadForecast(accountId, floorCents, { numCycles: PREVIEW_PAYS + 1 })); setError('') }
+    catch (e: any) { setError(e.message) }
+  }
+  useEffect(() => { load() }, [accountId, floorCents])
+  useDataChanged(load)
+
+  if (error) return <div className="rw-page"><div className="rw-page-head"><div className="rw-sd">{error}</div></div></div>
+  if (!rows) return <div className="rw-page"><div className="rw-page-head"><div className="rw-sd">Loading…</div></div></div>
+
+  const t = todayStr()
+  const cycle = rows.cycles[0]
+  const rule = cycleRuleOn(rows.incomeRows, t)
+  const paysPerYear = (PER_YEAR[rule.frequency] ?? 26.09) / Math.max(1, rule.everyN ?? 1)
+  // "Each fortnightly pay": from how you're paid, never assumed.
+  const payWord = (rule.everyN ?? 1) === 1 && ['daily', 'weekly', 'fortnightly', 'monthly'].includes(rule.frequency) ? rule.frequency + ' ' : ''
+  const budgets = cycle ? budgetsInCycle(rows, cycle.startDate, cycle.endDate) : []
+
+  const ended = (r: any) => r.end_date && r.end_date < t
+  const toItem = (r: any, isIncome: boolean): Item => {
+    const kind = kindOf(r, isIncome)
+    const eng = isIncome ? toEngineIncome([r])[0] : toEngineExpenses([r])[0]
+    const versions = isIncome ? r.income_amount_versions : r.expense_amount_versions
+    const amount = kind === 'budget'
+      ? (budgets.find(b => b.id === r.id)?.baseCents ?? 0)
+      : versionForDate(versions, t)?.amount_cents ?? r.amount_cents ?? 0
+    return {
+      id: r.id, row: r, isIncome, kind, name: r.name,
+      amountCents: amount,
+      perPayCents: kind === 'budget' ? amount : Math.round(amount * perYear(r) / paysPerYear),
+      next: kind === 'budget' ? [] : occurrencesOf(eng, t, far()).slice(0, 12),
+    }
+  }
+
+  const income = rows.incomeRows.filter((r: any) => r.frequency !== 'once' && !r.is_potential && !ended(r)).map(r => toItem(r, true))
+  const live = rows.expenseRows.filter((r: any) => r.frequency !== 'once' && !r.archived_at && !ended(r))
+  const items = live.map(r => toItem(r, false))
+  const fixed = items.filter(i => i.kind === 'fixed')
+  const estimates = items.filter(i => i.kind === 'estimate')
+  const budgetItems = items.filter(i => i.kind === 'budget')
+  const bnpl = items.filter(i => i.kind === 'bnpl' && i.next.length > 0)
+  const archived = rows.expenseRows.filter((r: any) => r.archived_at)
+
+  const sum = (l: Item[]) => l.reduce((s, i) => s + i.perPayCents, 0)
+  const pay = sum(income)
+  const tot = { fixed: sum(fixed), est: sum(estimates), bud: sum(budgetItems) }
+  const out = tot.fixed + tot.est + tot.bud
+  const left = pay - out
+  const scale = Math.max(pay, out, 1)
+
+  function schedText(i: Item) {
+    const r = i.row
+    if (i.kind === 'budget') return `${money(i.amountCents)} a pay`
+    const n = Math.max(1, r.every_n ?? 1)
+    const first = parseDate(r.anchor_date)
+    const wd = first.toLocaleDateString('en-NZ', { weekday: 'short' })
+    let s: string
+    if (r.frequency === 'weekly' && n === 1) s = `Weekly · ${wd}`
+    else if (r.frequency === 'fortnightly' && n === 1) s = `Fortnightly · ${wd}`
+    else if (r.frequency === 'monthly' && n === 1) s = `Monthly · ${ord(first.getDate())}`
+    else if (r.frequency === 'monthly' && n === 3) s = 'Quarterly'
+    else if (r.frequency === 'annually' && n === 1) s = 'Yearly'
+    else s = `Every ${n} ${PERIOD[r.frequency] ?? r.frequency}s`
+    const tail = !(['weekly', 'fortnightly'].includes(r.frequency) && n === 1) && !(r.frequency === 'monthly' && n === 1)
+    if (tail && i.next[0]) s += ` · next ${short(i.next[0])}`
+    if (r.end_date) s += ` · last ${short(r.end_date)}`
+    if (i.isIncome && r.is_primary) s += ' · main income'
+    return s
+  }
+
+  function row(i: Item) {
+    const differs = i.kind !== 'budget' && Math.abs(i.perPayCents - i.amountCents) >= 100
+    const openIt = i.kind === 'budget' ? () => logSheets?.budget(i.id)
+      : i.kind === 'bnpl' ? () => onNavigate('wishlist')
+      : () => setOpen(i)
+    let sub = schedText(i)
+    if (i.kind === 'bnpl') {
+      const vs = [...(i.row.expense_amount_versions ?? [])].sort(byOldest)
+      const done = vs.filter((v: any) => v.effective_from < t).length
+      sub = `${Math.min(done + 1, vs.length)} of ${vs.length} · last payment ${short(vs[vs.length - 1]?.effective_from ?? t)}`
+    }
+    return (
+      <button key={i.id} type="button" className="rw-row" onClick={openIt}>
+        <Mark kind={i.kind} />
+        <div className="rw-tx"><div className="rw-row-name">{i.name}</div><div className="rw-sub">{sub}</div></div>
+        <div className={`rw-am${i.isIncome ? ' in' : ''}`}>
+          {i.isIncome ? '+' : ''}{i.kind === 'estimate' ? '~' : ''}{money(i.kind === 'bnpl' ? (i.next[0] ? amountOn(i.row, i.next[0]) : i.amountCents) : i.amountCents)}
+          {i.kind === 'budget' ? null : differs ? <small>≈ {money(i.perPayCents)} a pay</small> : null}
+        </div>
+        {i.kind === 'bnpl' && <span className="rw-chev">›</span>}
+      </button>
+    )
+  }
+
+  const section = (label: string, list: Item[], isIn = false) => list.length === 0 ? null : (
+    <>
+      <div className="rw-dl"><span className="rw-dl-k">{label} · {list.length}</span><span>{isIn ? '+' : ''}{money(sum(list))} a pay</span></div>
+      <div className="rw-group">{[...list].sort((a, b) => a.name.localeCompare(b.name)).map(row)}</div>
+    </>
+  )
+
+  async function restore(r: any) {
+    const prevEnd = r.end_date
+    try {
+      await unarchiveExpense(r.id)
+      toast(`${r.name} restored`, { undo: async () => { await archiveExpense(r.id, prevEnd ?? t); notifyDataChanged() } })
+      notifyDataChanged()
+    } catch (e: any) { alert('Could not restore: ' + e.message) }
+  }
+
+  return (
+    <div className="rw-page">
+      <div className="rw-page-head">
+        <div className="rw-page-title">Expenses &amp; income</div>
+        <div className="rw-sub">Everything that repeats. One-offs live in their cycle.</div>
+      </div>
+
+      <div className="rw-sum">
+        <div className="rw-sum-k"><span>Each {payWord}pay, on average</span><b>{money(pay)}</b></div>
+        <div className="rw-sbar" aria-hidden="true">
+          <i className="fix" style={{ width: tot.fixed / scale * 100 + '%' }} />
+          <i className="est" style={{ width: tot.est / scale * 100 + '%' }} />
+          <i className="bud" style={{ width: tot.bud / scale * 100 + '%' }} />
+          {left > 0 && <i className="lf" style={{ width: left / scale * 100 + '%' }} />}
+          <b style={{ left: pay / scale * 100 + '%' }} />
+        </div>
+        <div className="rw-kg">
+          <span><em className="fix" />Fixed<b>{money(tot.fixed)}</b></span>
+          <span><em className="est" />Estimates<b>{money(tot.est)}</b></span>
+          <span><em className="bud" />Budgets<b>{money(tot.bud)}</b></span>
+          <span><em className="lf" />{left >= 0 ? 'Not planned' : 'Over'}<b>{money(Math.abs(left))}</b></span>
+        </div>
+      </div>
+
+      {section('Income', income, true)}
+      {section('Fixed', fixed)}
+      {section('Estimates', estimates)}
+      {section('Budgets', budgetItems)}
+
+      {archived.length > 0 && (
+        <div className="rw-group" style={{ marginTop: 6 }}>
+          <button type="button" className="rw-row" onClick={() => setShowArchived(s => !s)}>
+            <div className="rw-tx"><div className="rw-sub">{archived.length} archived budget{archived.length > 1 ? 's' : ''}</div></div>
+            <span className={`rw-chev${showArchived ? ' open' : ''}`}>›</span>
+          </button>
+          {showArchived && archived.map((r: any) => (
+            <div key={r.id} className="rw-row done static">
+              <Mark kind="budget" />
+              <div className="rw-tx"><div className="rw-row-name">{r.name}</div><div className="rw-sub">History kept</div></div>
+              <button type="button" className="rw-mini sec" onClick={() => restore(r)}>Restore</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {bnpl.length > 0 && (
+        <>
+          <div className="rw-dl"><span className="rw-dl-k">BNPL · {bnpl.length}</span><span>managed in Plan</span></div>
+          <div className="rw-group">{bnpl.map(row)}</div>
+        </>
+      )}
+
+      {open && (
+        <ItemSheet item={open} rows={rows} floorCents={floorCents} accountId={accountId}
+          onClose={() => setOpen(null)} onSaved={() => { setOpen(null); notifyDataChanged() }} />
+      )}
+    </div>
+  )
+}
+
+function amountOn(row: any, date: string) {
+  return versionForDate(row.expense_amount_versions, date)?.amount_cents ?? row.amount_cents ?? 0
+}
+
+/* ── the item sheet: change the amount, stop it, or delete it ──────── */
+type Mode = 'amount' | 'stop' | 'delete'
+
+function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
+  item: Item; rows: ForecastResult; floorCents: number; accountId: string
+  onClose: () => void; onSaved: () => void
+}) {
+  const { activeAccount } = useAccount()
+  const toast = useToast()
+  const fmt = moneyFormatter(activeAccount?.currency_code)
+  const sym = currencySymbol(activeAccount?.currency_code)
+  const money = (c: number) => (c < 0 ? '−' : '') + fmt(Math.abs(c), false)
+  const t = todayStr()
+  const r = item.row
+  const cycle = rows.cycles[0]
+  const isPrimary = item.isIncome && r.is_primary
+
+  const eng = item.isIncome ? toEngineIncome([r])[0] : toEngineExpenses([r])[0]
+  const inThisCycle = cycle ? occurrencesOf(eng, cycle.startDate, cycle.endDate) : []
+  // Nothing has gone out (or come in) yet: deleting it loses nothing.
+  const hasPast = r.anchor_date < t
+
+  const [mode, setMode] = useState<Mode>('amount')
+  const [amt, setAmt] = useState(String(item.amountCents / 100))
+  const [scope, setScope] = useState<'one' | 'from'>('from')
+  const [more, setMore] = useState(false)
+  const [from, setFrom] = useState(item.next[0] ?? t)
+  const [stopAt, setStopAt] = useState<string>(item.next[0] ?? 'now')
+  const [busy, setBusy] = useState(false)
+
+  const cents = Math.max(0, Math.round((parseFloat(amt) || 0) * 100))
+  const opts = more ? item.next.slice(0, 12) : item.next.slice(0, 3)
+
+  // The forecast as it is, and with this change: the same rows with one edit.
+  function withChange(): ForecastResult {
+    const vKey = item.isIncome ? 'income_amount_versions' : 'expense_amount_versions'
+    const editRow = (fn: (x: any) => any | null) => item.isIncome
+      ? { ...rows, incomeRows: rows.incomeRows.map(x => x.id === r.id ? fn(x) : x).filter(Boolean) }
+      : { ...rows, expenseRows: rows.expenseRows.map(x => x.id === r.id ? fn(x) : x).filter(Boolean) }
+    if (mode === 'delete') return editRow(() => null)
+    if (mode === 'stop') return editRow(x => ({ ...x, end_date: stopAt === 'now' ? shift(t, -1) : stopAt }))
+    if (scope === 'from') return editRow(x => ({ ...x, [vKey]: [...(x[vKey] ?? []), { effective_from: from, amount_cents: cents, created_at: '9999' }] }))
+    const total = cents * inThisCycle.length
+    return item.isIncome
+      ? { ...rows, incomeOverrideRows: [...(rows.incomeOverrideRows ?? []).filter((o: any) => !(o.income_source_id === r.id && o.cycle_start === cycle.startDate)),
+          { income_source_id: r.id, cycle_start: cycle.startDate, amount_cents: total }] }
+      : { ...rows, expenseOverrideRows: [...(rows.expenseOverrideRows ?? []).filter((o: any) => !(o.expense_id === r.id && o.cycle_start === cycle.startDate)),
+          { expense_id: r.id, cycle_start: cycle.startDate, amount_cents: total }] }
+  }
+
+  const changed = mode !== 'amount' || (scope === 'one' ? cents !== item.amountCents && inThisCycle.length > 0 : cents !== amountAt(r, item.isIncome, from))
+  const now = rows.cycles.slice(0, PREVIEW_PAYS).map(c => c.committedClosingBalanceCents)
+  const after = changed && amt.trim() ? projectFromRows(withChange(), floorCents, PREVIEW_PAYS + 1).slice(0, PREVIEW_PAYS).map(c => c.committedClosingBalanceCents) : []
+  const payDates = rows.cycles.slice(0, PREVIEW_PAYS).map(c => shift(c.endDate, 1))
+  const st = after.length ? previewStats(now, after, floorCents) : null
+  const anyway = st && st.level === 'under' && st.worse ? ' anyway' : ''
+
+  // Where each payment lands, as a position between paydays on the preview.
+  const ticks = mode === 'amount'
+    ? (scope === 'one' ? inThisCycle : item.next.filter(d => d >= from)).flatMap(d => {
+        const i = rows.cycles.findIndex(c => d >= c.startDate && d <= c.endDate)
+        if (i < 0 || i >= PREVIEW_PAYS) return []
+        const c = rows.cycles[i]
+        const len = (parseDate(c.endDate).getTime() - parseDate(c.startDate).getTime()) / 864e5 + 1
+        const f = ((parseDate(d).getTime() - parseDate(c.startDate).getTime()) / 864e5 + 0.5) / len
+        return [i - 1 + f]
+      })
+    : []
+
+  // Estimates: the real bills confirmed in past cycles.
+  const history = item.kind === 'estimate'
+    ? (rows.expenseOverrideRows ?? []).filter((o: any) => o.expense_id === r.id && cycle && o.cycle_start < cycle.startDate)
+        .sort((a: any, b: any) => a.cycle_start.localeCompare(b.cycle_start)).slice(-6)
+    : []
+
+  async function saveAmount() {
+    if (!changed || busy) return
+    setBusy(true)
+    try {
+      if (scope === 'from') {
+        const vKey = item.isIncome ? 'income_amount_versions' : 'expense_amount_versions'
+        const prev = (r[vKey] ?? []).find((v: any) => v.effective_from === from) ?? null
+        const written = item.isIncome ? await setIncomeAmountFrom(r.id, from, cents) : await setExpenseAmountFrom(r.id, accountId, from, cents)
+        toast(`${r.name}: ${money(cents)} from ${short(from)}`, { undo: async () => {
+          if (prev) { if (item.isIncome) await setIncomeAmountFrom(r.id, from, prev.amount_cents); else await setExpenseAmountFrom(r.id, accountId, from, prev.amount_cents) }
+          else if (item.isIncome) await deleteIncomeAmountVersion(written.id); else await deleteExpenseAmountVersion(written.id)
+          notifyDataChanged()
+        } })
+      } else {
+        const start = cycle.startDate
+        const total = cents * inThisCycle.length
+        const prevOv = item.isIncome
+          ? (rows.incomeOverrideRows ?? []).find((o: any) => o.income_source_id === r.id && o.cycle_start === start)
+          : (rows.expenseOverrideRows ?? []).find((o: any) => o.expense_id === r.id && o.cycle_start === start)
+        const usual = inThisCycle.reduce((s, d) => s + amountAt(r, item.isIncome, d), 0)
+        if (item.isIncome) { if (total === usual) await clearIncomeOverride(r.id, start); else await setIncomeOverride(r.id, accountId, start, total) }
+        else { if (total === usual) await clearExpenseOverride(r.id, start); else await setExpenseOverride(r.id, accountId, start, total) }
+        toast(`${r.name}: ${money(cents)} this cycle only`, { undo: async () => {
+          if (item.isIncome) { if (prevOv) await setIncomeOverride(r.id, accountId, start, prevOv.amount_cents); else await clearIncomeOverride(r.id, start) }
+          else { if (prevOv) await setExpenseOverride(r.id, accountId, start, prevOv.amount_cents); else await clearExpenseOverride(r.id, start) }
+          notifyDataChanged()
+        } })
+      }
+      onSaved()
+    } catch (e: any) { alert('Could not save: ' + e.message) }
+    finally { setBusy(false) }
+  }
+
+  async function saveStop() {
+    setBusy(true)
+    const prevEnd = r.end_date ?? null
+    const end = stopAt === 'now' ? shift(t, -1) : stopAt
+    try {
+      if (item.isIncome) await setIncomeEndDate(r.id, end); else await setExpenseEndDate(r.id, end)
+      toast(stopAt === 'now' ? `${r.name} stopped` : `${r.name} stops after ${short(end)}`, { undo: async () => {
+        if (item.isIncome) await setIncomeEndDate(r.id, prevEnd); else await setExpenseEndDate(r.id, prevEnd)
+        notifyDataChanged()
+      } })
+      onSaved()
+    } catch (e: any) { alert('Could not stop it: ' + e.message) }
+    finally { setBusy(false) }
+  }
+
+  async function saveDelete() {
+    setBusy(true)
+    try {
+      if (item.isIncome) await deactivateIncomeSource(r.id); else await deactivateExpense(r.id)
+      toast(`${r.name} deleted`, { undo: async () => {
+        if (item.isIncome) await reactivateIncomeSource(r.id); else await reactivateExpense(r.id)
+        notifyDataChanged()
+      } })
+      onSaved()
+    } catch (e: any) { alert('Could not delete: ' + e.message) }
+    finally { setBusy(false) }
+  }
+
+  const preview = after.length > 0 && (
+    <>
+      <Preview nowCents={now} newCents={after} payDates={payDates} floorCents={floorCents} money={money} ticks={ticks} />
+    </>
+  )
+
+  return (
+    <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="rw-sheet" role="dialog" aria-modal="true">
+        <div className="rw-grab" />
+        <div className="rw-sh-h">
+          <div className="rw-sh-t">
+            <Mark kind={item.kind} />
+            <div>
+              <div className="rw-sheet-title">{r.name}</div>
+              <div className="rw-sd">{KIND_NAME[item.kind]}{isPrimary ? ' · main income' : ''}</div>
+            </div>
+          </div>
+          <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button>
+        </div>
+
+        {mode === 'amount' && <>
+          <div className="rw-card">
+            <div className="rw-lab" style={{ marginTop: 0 }}>{item.kind === 'estimate' ? 'Usual estimate' : 'Amount'}</div>
+            <div className="rw-amt-row"><div className="rw-amt"><span>{sym}</span>
+              <input type="number" inputMode="decimal" aria-label="Amount" value={amt} onChange={e => setAmt(e.target.value)} />
+            </div></div>
+            <div className="rw-seg flush">
+              <button type="button" className={scope === 'one' ? 'on' : ''} disabled={inThisCycle.length === 0} onClick={() => setScope('one')}>Just this cycle</button>
+              <button type="button" className={scope === 'from' ? 'on' : ''} onClick={() => setScope('from')}>From a date</button>
+            </div>
+            {scope === 'from' ? (
+              <div className="rw-chips" style={{ marginTop: 8 }}>
+                {opts.map(d => <button key={d} type="button" className={from === d ? 'on' : ''} onClick={() => setFrom(d)}>{dayName(d)}</button>)}
+                {!more && item.next.length > 3 && <button type="button" className="dash" onClick={() => setMore(true)}>More dates</button>}
+              </div>
+            ) : (
+              <div className="rw-hint">
+                {inThisCycle.length === 1 ? `Only the ${short(inThisCycle[0])} payment. Then back to the usual.`
+                  : `Each of this cycle's ${inThisCycle.length} payments. Then back to the usual.`}
+              </div>
+            )}
+            {inThisCycle.length === 0 && <div className="rw-hint">Nothing due this cycle, so a change starts from a date.</div>}
+          </div>
+
+          {preview}
+
+          <div className="rw-ctas">
+            <button type="button" className="rw-cta sec" onClick={onClose}>Close</button>
+            <button type="button" className="rw-cta" disabled={changed && (busy || !amt.trim())} onClick={changed ? saveAmount : onClose}>
+              {!changed ? 'Done' : `Use ${money(cents)} ${scope === 'one' ? 'this cycle' : 'from ' + short(from)}${anyway}`}
+            </button>
+          </div>
+
+          {history.length > 0 && (
+            <div className="rw-card">
+              <div className="rw-pv-k"><span>Real bills, last {history.length}</span>
+                <span>avg {money(history.reduce((s: number, o: any) => s + o.amount_cents, 0) / history.length)}</span></div>
+              <HistoryBars values={history.map((o: any) => o.amount_cents)} line={item.amountCents} lineLabel={`estimate ${money(item.amountCents)}`} money={money} />
+            </div>
+          )}
+
+          {!isPrimary && (
+            <div className="rw-group flush" style={{ marginTop: 12 }}>
+              <button type="button" className="rw-row" onClick={() => setMode(hasPast ? 'stop' : 'delete')}>
+                <div className="rw-tx">
+                  <div className="rw-row-name rw-danger">{hasPast ? `Stop ${r.name}` : `Delete ${r.name}`}</div>
+                  <div className="rw-sub">{hasPast ? 'Pick the last payment. History stays' : 'Nothing has gone out yet, so nothing is lost'}</div>
+                </div>
+                <span className="rw-chev">›</span>
+              </button>
+            </div>
+          )}
+        </>}
+
+        {mode === 'stop' && <>
+          <div className="rw-note">Payments that already went out stay in your history. Nothing before the date you pick changes.</div>
+          <div className="rw-lab">Last payment</div>
+          <div className="rw-chips">
+            <button type="button" className={stopAt === 'now' ? 'on' : ''} onClick={() => setStopAt('now')}>None. Stop now</button>
+            {item.next.slice(0, 3).map(d => <button key={d} type="button" className={stopAt === d ? 'on' : ''} onClick={() => setStopAt(d)}>{dayName(d)}</button>)}
+          </div>
+          {preview}
+          <div className="rw-ctas">
+            <button type="button" className="rw-cta sec" onClick={() => setMode('amount')}>Back</button>
+            <button type="button" className="rw-cta" disabled={busy} onClick={saveStop}>
+              {stopAt === 'now' ? 'Stop now' : `Stop after ${short(stopAt)}`}{anyway}
+            </button>
+          </div>
+        </>}
+
+        {mode === 'delete' && <>
+          <div className="rw-note">Nothing has gone out for {r.name} yet, so deleting it loses nothing.</div>
+          {preview}
+          <div className="rw-ctas">
+            <button type="button" className="rw-cta sec" onClick={() => setMode('amount')}>Back</button>
+            <button type="button" className="rw-cta dang" disabled={busy} onClick={saveDelete}>Delete {r.name}</button>
+          </div>
+        </>}
+      </div>
+    </div>
+  )
+}
+
+function amountAt(r: any, isIncome: boolean, date: string) {
+  return versionForDate(isIncome ? r.income_amount_versions : r.expense_amount_versions, date)?.amount_cents ?? r.amount_cents ?? 0
+}
+
+export function HistoryBars({ values, line, lineLabel, money }: {
+  values: number[]; line: number; lineLabel: string; money: (c: number) => string
+}) {
+  const mx = Math.max(...values, line, 1) * 1.15
+  const bw = 280 / Math.max(6, values.length)
+  const ly = 80 - line / mx * 72
+  return (
+    <svg viewBox="0 0 300 96" role="img" aria-label={lineLabel}>
+      {values.map((v, j) => {
+        const x = 10 + j * bw + bw * 0.18, w = bw * 0.64, ht = v / mx * 72
+        return <g key={j}>
+          <rect x={x} y={80 - ht} width={w} height={Math.max(ht, 1)} rx="3" fill={v > line ? 'var(--rw-near-floor)' : 'var(--rw-ink)'} opacity={v > line ? 1 : 0.8} />
+          <text x={x + w / 2} y="92" fontSize="9" fill="var(--rw-muted)" textAnchor="middle" fontWeight="650">{money(v)}</text>
+        </g>
+      })}
+      <line x1="6" x2="294" y1={ly} y2={ly} stroke="var(--rw-ink)" strokeDasharray="4 3" strokeOpacity=".6" />
+      <text x="294" y={ly - 4} fontSize="9" fill="var(--rw-muted)" textAnchor="end" fontWeight="700">{lineLabel}</text>
+    </svg>
+  )
+}
