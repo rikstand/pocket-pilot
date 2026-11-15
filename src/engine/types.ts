@@ -52,6 +52,9 @@ export interface Expense {
   mode: 'fixed' | 'variable' | 'budget'
   endDate?: string             // last date this can occur on. undefined = recurs forever (default, unchanged behaviour). Powers lay-by self-retirement.
   schedules?: ScheduleVersion[] // schedules from a date, newest written first. Missing = one schedule.
+  // Dates a payment was due but didn't go out (a missed BNPL payment). It is
+  // left out of the forecast; the repayment is its own one-off.
+  skipDates?: string[]
 }
 
 // ── credit ────────────────────────────────────────────────────────

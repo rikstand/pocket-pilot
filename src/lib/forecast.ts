@@ -118,6 +118,9 @@ export function toEngineExpenses(rows: any[]): Expense[] {
       mode: exp.mode ?? 'fixed',
       endDate: exp.end_date ?? undefined,
       schedules: toEngineSchedules(exp.expense_schedule_versions),
+      // Missed BNPL payments: left out of the forecast (the repayment is its
+      // own one-off). An undone miss deletes its row, so it counts again.
+      skipDates: (exp.bnpl_missed_payments ?? []).map((m: any) => m.payment_date),
     }
   })
 }

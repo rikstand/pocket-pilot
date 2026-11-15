@@ -203,7 +203,7 @@ export async function deactivateIncomeSource(incomeId: string) {
 export async function getExpenses(accountId: string) {
   const { data, error } = await supabase
     .from('expenses')
-    .select(`*, expense_amount_versions(*), expense_schedule_versions(*)`)
+    .select(`*, expense_amount_versions(*), expense_schedule_versions(*), bnpl_missed_payments!bnpl_missed_payments_expense_id_fkey(*)`)
     .eq('account_id', accountId)
     .eq('is_active', true)
     .order('created_at')
@@ -449,6 +449,111 @@ export async function createBnplPlan(
   }
 
   return { layby, expense }
+}
+
+// --- ADJUSTING A RUNNING BNPL PLAN (Journey 3) ---
+// Change and Pay off early both replace the payments still to come. Payments
+// before the first new one are never touched. The new payments are written
+// first and the old future ones removed after, so if anything fails halfway
+// the plan still has its payments rather than none.
+//
+// Pay off early is the same call with one payment and frequency 'once'.
+export async function replaceBnplPayments(
+  accountId: string,
+  plan: { expenseId: string; layById: string | null },
+  change: { frequency: 'once' | 'weekly' | 'fortnightly' | 'monthly' | 'annually'; payments: { date: string; amountCents: number }[] }
+) {
+  const pays = change.payments
+  if (!pays.length) throw new Error('A BNPL plan needs at least one payment.')
+  const first = pays[0].date
+  const last  = pays[pays.length - 1].date
+
+  // 1. The new schedule from the first new payment, and one amount per payment.
+  const { data: sched, error: e1 } = await supabase
+    .from('expense_schedule_versions')
+    .insert({ expense_id: plan.expenseId, account_id: accountId, effective_from: first, frequency: change.frequency, every_n: 1, anchor_date: first })
+    .select('id').single()
+  if (e1) throw e1
+  const { data: amts, error: e2 } = await supabase
+    .from('expense_amount_versions')
+    .insert(pays.map(p => ({ expense_id: plan.expenseId, account_id: accountId, amount_cents: p.amountCents, effective_from: p.date })))
+    .select('id')
+  if (e2) throw e2
+
+  // 2. The old future ones go: an old amount dated after a new payment would
+  //    otherwise win on the dates after it.
+  const keepAmts = (amts ?? []).map((r: any) => r.id)
+  const { error: e3 } = await supabase.from('expense_amount_versions').delete()
+    .eq('expense_id', plan.expenseId).gte('effective_from', first)
+    .not('id', 'in', `(${keepAmts.join(',')})`)
+  if (e3) throw e3
+  const { error: e4 } = await supabase.from('expense_schedule_versions').delete()
+    .eq('expense_id', plan.expenseId).gte('effective_from', first).neq('id', sched.id)
+  if (e4) throw e4
+
+  // 3. The plan ends on its new last payment.
+  const { error: e5 } = await supabase.from('expenses').update({ end_date: last }).eq('id', plan.expenseId)
+  if (e5) throw e5
+
+  // 4. The plan row's totals follow: payments made so far plus the new ones.
+  if (plan.layById) {
+    const { data: before, error: e6 } = await supabase.from('expense_amount_versions')
+      .select('amount_cents').eq('expense_id', plan.expenseId).lt('effective_from', first)
+    if (e6) throw e6
+    const paidCount = (before ?? []).length
+    const paidCents = (before ?? []).reduce((s: number, r: any) => s + r.amount_cents, 0)
+    const newCents  = pays.reduce((s, p) => s + p.amountCents, 0)
+    const { error: e7 } = await supabase.from('lay_bys').update({
+      payments_total: paidCount + pays.length,
+      payment_amount_cents: pays[0].amountCents,
+      target_amount_cents: paidCents + newCents,
+      target_date: last,
+    }).eq('id', plan.layById)
+    if (e7) throw e7
+  }
+}
+
+// Missed one: the payment due on paymentDate didn't go out. It is left out of
+// the forecast (the engine skips that date), and the repayment — the amount
+// plus any late fee you enter — is a one-off on repayDate: a date you pick, or
+// one period after the last payment. Undo puts it all back.
+export async function markBnplPaymentMissed(
+  accountId: string,
+  userId: string,
+  missed: {
+    expenseId: string; layById: string | null; name: string
+    paymentDate: string; amountCents: number; feeCents: number; repayDate: string
+  }
+) {
+  const repay = await addExpense(accountId, userId, {
+    name: `${missed.name} · missed payment`,
+    frequency: 'once',
+    anchorDate: missed.repayDate,
+    mode: 'fixed',
+    amountCents: missed.amountCents + missed.feeCents,
+  })
+  const { data, error } = await supabase
+    .from('bnpl_missed_payments')
+    .insert({
+      account_id: accountId, expense_id: missed.expenseId, lay_by_id: missed.layById,
+      payment_date: missed.paymentDate, amount_cents: missed.amountCents, fee_cents: missed.feeCents,
+      repay_date: missed.repayDate, repay_expense_id: repay.id,
+    })
+    .select().single()
+  if (error) {
+    await deactivateExpense(repay.id)
+    throw error
+  }
+  return data
+}
+
+export async function undoBnplMissed(missedId: string) {
+  const { data: row, error: e1 } = await supabase
+    .from('bnpl_missed_payments').select('repay_expense_id').eq('id', missedId).maybeSingle()
+  if (e1) throw e1
+  if (row?.repay_expense_id) await deactivateExpense(row.repay_expense_id)
+  const { error } = await supabase.from('bnpl_missed_payments').delete().eq('id', missedId)
+  if (error) throw error
 }
 
 // Removes a BNPL plan from the forecast: its expense and its plan row are

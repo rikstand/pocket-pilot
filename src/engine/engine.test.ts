@@ -412,3 +412,55 @@ describe('cycles when the pay schedule changes', () => {
     expect(a.map(c => c.start)).toEqual(['2026-11-05', '2026-11-19', '2026-12-03', '2026-12-17', '2026-12-31', '2027-01-14'])
   })
 })
+
+// ── adjusting a running BNPL plan (Journey 3) ───────────────────────
+describe('BNPL: change, pay off early, missed one', () => {
+  // 4 × $90 fortnightly from 10 Nov: 10 Nov, 24 Nov, 8 Dec, 22 Dec
+  const plan = (over: Partial<Expense> = {}) => bill({
+    id: 'bn', frequency: 'fortnightly', anchorDate: '2026-11-10', endDate: '2026-12-22', amountCents: 9000,
+    amountVersions: ['2026-12-22', '2026-12-08', '2026-11-24', '2026-11-10'].map(d => ({ amountCents: 9000, effectiveFrom: d })),
+    ...over,
+  })
+  const cycles = (e: Expense) => run({ expenses: [e], numCycles: 5 }).map(c => c.fixedExpensesCents)
+
+  it('as saved today: four payments, one per cycle', () => {
+    // 5–18 Nov · 19 Nov–2 Dec · 3–16 Dec · 17–30 Dec · 31 Dec–13 Jan
+    expect(cycles(plan())).toEqual([9000, 9000, 9000, 9000, 0])
+  })
+
+  it('Change: the $180 left becomes 3 weekly payments from 1 Dec; earlier ones stay', () => {
+    const changed = plan({
+      endDate: '2026-12-15',
+      schedules: [{ effectiveFrom: '2026-12-01', frequency: 'weekly', anchorDate: '2026-12-01' }],
+      amountVersions: [
+        { amountCents: 6000, effectiveFrom: '2026-12-15' },
+        { amountCents: 6000, effectiveFrom: '2026-12-08' },
+        { amountCents: 6000, effectiveFrom: '2026-12-01' },
+        { amountCents: 9000, effectiveFrom: '2026-11-24' },
+        { amountCents: 9000, effectiveFrom: '2026-11-10' },
+      ],
+    })
+    expect(occurrencesOf(changed, '2026-11-01', '2027-01-31')).toEqual(['2026-11-10', '2026-11-24', '2026-12-01', '2026-12-08', '2026-12-15'])
+    expect(cycles(changed)).toEqual([9000, 9000 + 6000, 12000, 0, 0])
+  })
+
+  it('Pay off early: the $180 left in one go on 1 Dec', () => {
+    const early = plan({
+      endDate: '2026-12-01',
+      schedules: [{ effectiveFrom: '2026-12-01', frequency: 'once', anchorDate: '2026-12-01' }],
+      amountVersions: [
+        { amountCents: 18000, effectiveFrom: '2026-12-01' },
+        { amountCents: 9000, effectiveFrom: '2026-11-24' },
+        { amountCents: 9000, effectiveFrom: '2026-11-10' },
+      ],
+    })
+    expect(cycles(early)).toEqual([9000, 9000 + 18000, 0, 0, 0])
+  })
+
+  it('Missed one: the missed date drops out; the repayment is its own one-off', () => {
+    const missed = plan({ skipDates: ['2026-11-24'] })
+    const repay  = bill({ id: 'rp', frequency: 'once', anchorDate: '2027-01-05', amountCents: 9000 + 1000 })
+    const out = run({ expenses: [missed, repay], numCycles: 5 }).map(c => c.fixedExpensesCents)
+    expect(out).toEqual([9000, 0, 9000, 9000, 10000])
+  })
+})

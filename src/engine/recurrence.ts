@@ -89,6 +89,7 @@ export interface Schedule {
 export interface Scheduled extends Schedule {
   endDate?: string
   schedules?: ScheduleVersion[]
+  skipDates?: string[]      // payments that didn't go out
 }
 
 /**
@@ -143,12 +144,19 @@ export function scheduleSegments(
  * one from it. With no changes this is exactly getOccurrencesInRange.
  */
 export function occurrencesOf(item: Scheduled, rangeStart: string, rangeEnd: string): string[] {
+  let out: string[]
   if (!item.schedules || item.schedules.length === 0) {
-    return getOccurrencesInRange(item.anchorDate, item.frequency, rangeStart, rangeEnd, item.endDate, item.everyN ?? 1)
+    out = getOccurrencesInRange(item.anchorDate, item.frequency, rangeStart, rangeEnd, item.endDate, item.everyN ?? 1)
+  } else {
+    out = []
+    for (const seg of scheduleSegments(item, rangeStart, rangeEnd)) {
+      out.push(...getOccurrencesInRange(seg.schedule.anchorDate, seg.schedule.frequency, seg.from, seg.to, item.endDate, seg.schedule.everyN ?? 1))
+    }
   }
-  const out: string[] = []
-  for (const seg of scheduleSegments(item, rangeStart, rangeEnd)) {
-    out.push(...getOccurrencesInRange(seg.schedule.anchorDate, seg.schedule.frequency, seg.from, seg.to, item.endDate, seg.schedule.everyN ?? 1))
+  // A payment that didn't go out isn't money leaving the account.
+  if (item.skipDates && item.skipDates.length > 0) {
+    const skip = new Set(item.skipDates)
+    out = out.filter(d => !skip.has(d))
   }
   return out
 }
