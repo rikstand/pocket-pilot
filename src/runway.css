@@ -448,8 +448,9 @@ body.is-runway #root { border-inline: none; }
 .rw-pv-lg i { display: inline-block; width: 12px; margin-left: 6px; border-top: 2.4px solid var(--rw-line); }
 .rw-pv-lg i.gh { border-top-color: var(--rw-ink); opacity: .3; margin-left: 0; }
 .rw-pv-lg i.fl { border-top: 1.6px dashed var(--rw-under-floor); }
-.rw-pv-lg i.un { border-top-color: var(--rw-good); margin-left: 0; }
-.rw-pv-lg i.ov { border-top-color: var(--rw-near-floor); }
+/* Not .un/.ov: design.css's .ov is a full-screen overlay, and it caught this legend mark. */
+.rw-pv-lg i.lg-under { border-top-color: var(--rw-good); margin-left: 0; }
+.rw-pv-lg i.lg-over { border-top-color: var(--rw-near-floor); }
 .rw-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
 .rw-tile { background: var(--rw-surface); border-radius: var(--rw-radius-md); padding: 8px 9px; border: 1.5px solid transparent; }
 .rw-tile.out { border-color: var(--rw-under-floor); }

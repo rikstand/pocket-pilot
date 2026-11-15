@@ -290,7 +290,7 @@ function BudgetChange({ data, budget, spentCents, accountId, onCancel, onSaved }
       {history.length > 0 && (
         <div className="rw-card rw-pv">
           <div className="rw-pv-k"><span>Spent, last {history.length} pays</span>
-            <span className="rw-pv-lg"><i className="un" />under<i className="ov" />over</span></div>
+            <span className="rw-pv-lg"><i className="lg-under" />under<i className="lg-over" />over</span></div>
           <svg viewBox="0 0 300 96" role="img" aria-label="Spending against the budget, past pays">
             {history.map((c, j) => {
               const bw = 280 / Math.max(6, history.length), x = 10 + j * bw + bw * 0.18, w = bw * 0.64
