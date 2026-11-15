@@ -44,6 +44,7 @@ import { useDataChanged } from './lib/dataEvents'
 import { useLog } from './runway/logContext'
 import CycleView, { type DayItem, type BudgetRow } from './runway/CycleView'
 import CloseSheet from './runway/CloseSheet'
+import PastCycles from './runway/PastCycles'
 import { buildRunway, type RunwayEvent } from './runway/runwaySeries'
 import { budgetHistory, budgetFlag } from './runway/budgetHistory'
 
@@ -162,6 +163,8 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
   const [closeStep,          setCloseStep]          = useState(0)
   // The new look's close (Journey 8). Same close underneath.
   const [rwCloseOpen,        setRwCloseOpen]        = useState(false)
+  // Looking back at closed cycles (Journey 10), new look only.
+  const [showPast,           setShowPast]           = useState(false)
   const [closeVarActuals,  setCloseVarActuals]  = useState<Record<string, string>>({})
   const [closePayLanded,   setClosePayLanded]   = useState<boolean | null>(null)
   const [closePayAmount,   setClosePayAmount]   = useState('')
@@ -2475,7 +2478,10 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
   }
 
   const money = (cents: number) => (cents < 0 ? '−' : '') + fmt(Math.abs(cents), false)
-  const cycleView = variant === 'cycle' && newLook && !activeCycle.isHistorical ? (() => {
+  const hasClosed = rawStoredCycles.some((x: any) => x.is_closed)
+  const cycleView = variant === 'cycle' && newLook && showPast
+    ? <PastCycles accountId={accountId} onBackToNow={() => setShowPast(false)} />
+    : variant === 'cycle' && newLook && !activeCycle.isHistorical ? (() => {
     const d = cycleViewData()
     return (
       <CycleView
@@ -2487,6 +2493,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
         ended={status === 'overdue'}
         onClose={() => setRwCloseOpen(true)}
         onForecast={() => onForecast?.()}
+        onPast={hasClosed ? () => setShowPast(true) : undefined}
         onAddToCycle={openAddToCycle}
         byType={cycleBody}
         money={money}

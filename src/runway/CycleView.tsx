@@ -56,6 +56,7 @@ interface Props {
   ended: boolean
   onClose: () => void
   onForecast: () => void
+  onPast?: () => void            // ‹ to closed cycles (Journey 10), when there are any
   onAddToCycle: () => void
   byType: ReactNode
   money: (cents: number) => string
@@ -176,7 +177,9 @@ export default function CycleView(p: Props) {
     <div className="rw-page">
       {/* ── which cycle ── */}
       <div className="rw-cnav">
-        <span className="rw-cnav-gap" />
+        {p.onPast
+          ? <button type="button" className="rw-cnav-b" aria-label="Earlier cycles" onClick={p.onPast}>‹</button>
+          : <span className="rw-cnav-gap" />}
         <div className="rw-cnav-t">
           <b>{day(p.start)} – {day(p.end, true)}</b>
           <span>{inCycle ? `day ${todayIdx + 1} of ${n} · ` : 'ended · '}{p.payName} {day(p.payDate)}</span>

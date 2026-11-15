@@ -697,6 +697,35 @@ export async function closeCycle(
   if (error) throw error
 }
 
+// --- PAST CYCLES (Journey 10) ---
+// What each estimate actually came to, saved at close. A correction adds a
+// new row rather than editing the old one, so the first figure stays as
+// history; the newest row for a cycle and expense is the one that counts.
+export async function getCycleActuals(accountId: string) {
+  const { data, error } = await supabase
+    .from('cycle_expense_actuals')
+    .select('*')
+    .eq('account_id', accountId)
+    .order('created_at')
+  if (error) throw error
+  return data
+}
+
+export async function addCycleActual(cycleId: string, accountId: string, expenseId: string, amountCents: number) {
+  const { data, error } = await supabase
+    .from('cycle_expense_actuals')
+    .insert({ cycle_id: cycleId, account_id: accountId, expense_id: expenseId, actual_amount_cents: amountCents })
+    .select().single()
+  if (error) throw error
+  return data
+}
+
+// Undo for a correction: remove the row it added.
+export async function deleteCycleActual(id: string) {
+  const { error } = await supabase.from('cycle_expense_actuals').delete().eq('id', id)
+  if (error) throw error
+}
+
 // --- WISHLIST ---
 export async function getWishlistItems(accountId: string) {
   const { data, error } = await supabase
