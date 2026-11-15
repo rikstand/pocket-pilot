@@ -553,3 +553,37 @@ body.is-runway #root { border-inline: none; }
 .rw-cst .now { background: var(--rw-surface-2); }
 .rw-cst .nw { background: color-mix(in srgb, var(--rw-line) 14%, var(--rw-surface)); }
 .rw-cst .gap { background: repeating-linear-gradient(45deg, var(--rw-surface-2), var(--rw-surface-2) 4px, var(--rw-surface) 4px, var(--rw-surface) 8px); }
+
+/* ═══ Closing the cycle (Journey 8) ══════════════════════════════════ */
+.rw-steps { display: flex; gap: 4px; margin: 2px 0 10px; }
+.rw-steps i { flex: 1; height: 4px; border-radius: 2px; background: var(--rw-hairline); }
+.rw-steps i.on { background: var(--rw-ink); }
+.rw-fld { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px;
+  background: var(--rw-surface); border-radius: var(--rw-radius-md); padding: 10px 12px; }
+.rw-fld .l { font: var(--rw-text-row-name); }
+.rw-fld .l small { display: block; font: var(--rw-text-sub); font-size: 10.5px; color: var(--rw-muted); }
+.rw-fld-in { display: flex; align-items: center; gap: 2px; font: var(--rw-text-tile); color: var(--rw-muted); }
+.rw-fld-in input { width: 96px; text-align: right; border: 1px solid var(--rw-hairline); background: var(--rw-surface-2); color: var(--rw-ink);
+  border-radius: var(--rw-radius-sm); padding: 7px 9px; font: var(--rw-text-tile); outline: none; font-feature-settings: 'tnum' 1; }
+.rw-fld-in input::-webkit-inner-spin-button { -webkit-appearance: none; }
+/* Amount field, large and centred: the one number this step asks for. */
+.rw-big { display: flex; align-items: baseline; justify-content: center; gap: 2px; margin: 14px 0 2px; }
+.rw-big span { font: var(--rw-text-amount); font-size: 30px; color: var(--rw-muted); }
+.rw-big input { width: 190px; border: none; background: transparent; outline: none; text-align: center; color: var(--rw-ink);
+  font: var(--rw-text-amount); font-size: 38px; letter-spacing: -.04em; font-feature-settings: 'tnum' 1; }
+.rw-big input::-webkit-inner-spin-button { -webkit-appearance: none; }
+.rw-tiles.two { grid-template-columns: 1fr 1fr; }
+.rw-tile.sel { border-color: var(--rw-ink); }
+.rw-tile .v.good { color: var(--rw-good); }
+.rw-warn-ban.rw-col { flex-direction: column; align-items: stretch; gap: 8px; }
+.rw-done { text-align: center; padding: 22px 0 6px; }
+.rw-done .ck { width: 52px; height: 52px; border-radius: 50%; background: var(--rw-good); color: #fff; font-size: 26px;
+  display: grid; place-items: center; margin: 0 auto 10px; }
+/* Diverging bars: better than forecast to the right (good), worse to the left. */
+.rw-dvr { display: grid; grid-template-columns: 104px 1fr 56px; align-items: center; gap: 6px; padding: 6px 0; font: var(--rw-text-body); font-size: 12px; }
+.rw-dvr .dn small { display: block; font: var(--rw-text-sub); font-size: 9.5px; color: var(--rw-muted); }
+.rw-dvr .db { position: relative; height: 12px; background: linear-gradient(var(--rw-hairline), var(--rw-hairline)) center/1px 100% no-repeat; }
+.rw-dvr .db i { position: absolute; top: 0; bottom: 0; border-radius: 2px; }
+.rw-dvr .dvv { text-align: right; font: var(--rw-text-row-name); font-size: 11.5px; }
+.rw-dvr .dvv.good { color: var(--rw-good); }
+.rw-dvr .dvv.near { color: var(--rw-near-floor-text); }

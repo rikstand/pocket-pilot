@@ -43,6 +43,7 @@ import { useNewLook } from './lib/look'
 import { useDataChanged } from './lib/dataEvents'
 import { useLog } from './runway/logContext'
 import CycleView, { type DayItem, type BudgetRow } from './runway/CycleView'
+import CloseSheet from './runway/CloseSheet'
 import { buildRunway, type RunwayEvent } from './runway/runwaySeries'
 import { budgetHistory, budgetFlag } from './runway/budgetHistory'
 
@@ -159,6 +160,8 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
 
   const [closeOpen,          setCloseOpen]          = useState(false)
   const [closeStep,          setCloseStep]          = useState(0)
+  // The new look's close (Journey 8). Same close underneath.
+  const [rwCloseOpen,        setRwCloseOpen]        = useState(false)
   const [closeVarActuals,  setCloseVarActuals]  = useState<Record<string, string>>({})
   const [closePayLanded,   setClosePayLanded]   = useState<boolean | null>(null)
   const [closePayAmount,   setClosePayAmount]   = useState('')
@@ -974,6 +977,22 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
       setEditCard(null); reload()
     } catch (e: any) { setEditError(e.message) }
     finally { setEditSaving(false) }
+  }
+
+  // The one close: this cycle's closing balance (next cycle's opening) and
+  // the estimates' real amounts, in one database call. Used by both looks.
+  async function submitClose(close: { closingCents: number; actuals: { expense_id: string; actual_amount_cents: number }[] }) {
+    const nextStart = addOneDay(activeCycle.endDate)
+    const chained   = nextCycleFor(activeCycle.startDate, cyclePay, rawStoredCycles[0]?.start_date)
+    const nextEnd   = chained.start === nextStart ? chained.end : cycleEndAt(nextStart, ruleAt(nextStart), 0)
+    await closeCycle(accountId, {
+      cycleId:        activeCycle.id ?? null,
+      closingCents:   close.closingCents,
+      projectedCents: activeCycle.committedClosingBalanceCents ?? null,
+      nextStart,
+      nextEnd,
+      actuals:        close.actuals,
+    })
   }
 
   async function applyFreeze() {
@@ -2466,7 +2485,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
         cardLine={d.cardLine} runway={d.runway} items={d.items} budgets={d.budgets}
         showClose={status === 'overdue' || (status === 'now' && today() === activeCycle.endDate)}
         ended={status === 'overdue'}
-        onClose={openClose}
+        onClose={() => setRwCloseOpen(true)}
         onForecast={() => onForecast?.()}
         onAddToCycle={openAddToCycle}
         byType={cycleBody}
@@ -2475,8 +2494,26 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
     )
   })() : null
 
+  const rwClose = rwCloseOpen && cycleView ? (
+    <CloseSheet
+      start={activeCycle.startDate} end={activeCycle.endDate}
+      payName={primaryIncome?.name ?? 'Pay'} payDate={nextCycleStartDate} scheduledPayCents={scheduledPayCents}
+      forecastCents={activeCycle.committedClosingBalanceCents}
+      estimates={varExpensesInCycle.map(e => ({ ...e, confirmed: !!overrideFor(e.id, activeCycle.startDate) }))}
+      budgets={budgetCards.map(cd => ({ name: cd.name, plannedCents: cd.totalCents,
+        spentCents: entriesForExpenseInCycle(cd.expenseId).reduce((t: number, e: any) => t + e.amount_cents, 0) }))}
+      notSetAside={showSavings ? savingsLines.filter((l: any) => !isSetAside(l.goalId))
+        .map((l: any) => ({ name: goalRow(l.goalId)?.name ?? 'Savings', amountCents: l.amountCents })) : []}
+      currencySymbol={sym}
+      money={money}
+      onCancel={() => { setRwCloseOpen(false); reload() }}
+      onSubmit={submitClose}
+    />
+  ) : null
+
   return (
     <>
+      {rwClose}
       {cycleView ?? <div className="scrollarea">
 
         {variant === 'cycle' && !deskCycle && (
