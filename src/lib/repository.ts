@@ -674,6 +674,8 @@ export async function closeCycle(
     nextStart: string
     nextEnd: string
     actuals: { expense_id: string; actual_amount_cents: number }[]
+    enteredCents?: number | null   // the balance typed at the close
+    payIn?: boolean | null         // whether next cycle's pay was in it
   }
 ) {
   if (close.cycleId && close.projectedCents != null && Number.isFinite(close.projectedCents)) {
@@ -695,6 +697,30 @@ export async function closeCycle(
     p_actuals:       close.actuals,
   })
   if (error) throw error
+
+  // What was typed, kept so the close can be fixed later (Journey 10). The
+  // close itself has happened; failing to keep this only costs the fix sheet
+  // its "you entered" line.
+  if (close.cycleId && (close.enteredCents != null || close.payIn != null)) {
+    const { error: hErr } = await supabase
+      .from('cycles')
+      .update({ entered_balance_cents: close.enteredCents ?? null, pay_in_balance: close.payIn ?? null })
+      .eq('id', close.cycleId)
+      .eq('account_id', accountId)
+    if (hErr) console.warn('Could not keep what was entered at the close:', hErr.message)
+  }
+}
+
+/** Journey 10: change the most recent close and the next cycle's opening, together.
+ *  Returns how much every payday after moved. */
+export async function fixLastClose(accountId: string, cycleId: string, closingCents: number,
+  enteredCents: number | null, payIn: boolean | null): Promise<number> {
+  const { data, error } = await supabase.rpc('fix_last_close', {
+    p_account_id: accountId, p_cycle_id: cycleId, p_closing_cents: closingCents,
+    p_entered_cents: enteredCents, p_pay_in: payIn,
+  })
+  if (error) throw error
+  return Number(data ?? 0)
 }
 
 // --- PAST CYCLES (Journey 10) ---

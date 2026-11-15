@@ -24,7 +24,7 @@ interface Props {
   currencySymbol: string
   money: (cents: number) => string
   onCancel: () => void
-  onSubmit: (close: { closingCents: number; actuals: { expense_id: string; actual_amount_cents: number }[] }) => Promise<void>
+  onSubmit: (close: { closingCents: number; enteredCents: number; payIn: boolean; actuals: { expense_id: string; actual_amount_cents: number }[] }) => Promise<void>
 }
 
 const day = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
@@ -77,6 +77,8 @@ export default function CloseSheet(p: Props) {
     try {
       await p.onSubmit({
         closingCents: opening,
+        enteredCents: real,
+        payIn: landed === 'yes',
         actuals: p.estimates.map(e => ({ expense_id: e.id, actual_amount_cents: e.confirmed ? e.estimatedCents : cents(actuals[e.id] ?? '') })),
       })
       setDone(true)

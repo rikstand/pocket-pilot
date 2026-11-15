@@ -601,3 +601,4 @@ body.is-runway #root { border-inline: none; }
 .rw-card.rw-inset { margin: 10px var(--rw-space-3) 0; }
 .rw-savmark { width: 9px; height: 9px; flex: 0 0 9px; background: var(--rw-line); transform: rotate(45deg) scale(.75); }
 .rw-cardmark { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 2px; background: var(--rw-credit); }
+.rw-ob { font: var(--rw-text-sub); font-size: 11px; color: var(--rw-muted); margin-top: 8px; }

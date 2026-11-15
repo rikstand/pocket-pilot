@@ -984,7 +984,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
 
   // The one close: this cycle's closing balance (next cycle's opening) and
   // the estimates' real amounts, in one database call. Used by both looks.
-  async function submitClose(close: { closingCents: number; actuals: { expense_id: string; actual_amount_cents: number }[] }) {
+  async function submitClose(close: { closingCents: number; enteredCents: number; payIn: boolean; actuals: { expense_id: string; actual_amount_cents: number }[] }) {
     const nextStart = addOneDay(activeCycle.endDate)
     const chained   = nextCycleFor(activeCycle.startDate, cyclePay, rawStoredCycles[0]?.start_date)
     const nextEnd   = chained.start === nextStart ? chained.end : cycleEndAt(nextStart, ruleAt(nextStart), 0)
@@ -995,6 +995,8 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
       nextStart,
       nextEnd,
       actuals:        close.actuals,
+      enteredCents:   close.enteredCents,
+      payIn:          close.payIn,
     })
   }
 
@@ -1029,6 +1031,8 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
         nextStart,
         nextEnd,
         actuals,
+        enteredCents:   closeRealCents,
+        payIn:          closePayLanded,
       })
 
       setCloseFrozen(true)

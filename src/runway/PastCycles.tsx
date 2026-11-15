@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
 import { loadForecast, cycleRuleOn, toEngineExpenses, toEngineIncome, type ForecastResult } from '../lib/forecast'
-import { getCycleActuals, addCycleActual, deleteCycleActual, addBudgetSpendEntry, deleteBudgetSpendEntry, getPayees } from '../lib/repository'
+import { getCycleActuals, addCycleActual, deleteCycleActual, addBudgetSpendEntry, deleteBudgetSpendEntry, getPayees, fixLastClose } from '../lib/repository'
 import { versionForDate } from '../lib/versions'
 import { occurrencesOf } from '../engine/index'
 import { budgetAmountForCycle } from '../engine/engine'
@@ -17,7 +17,8 @@ import { Segmented } from './controls'
  * Each shows what happened and, where a forecast was saved at close, how it
  * compared. Records can be corrected (an estimate's real amount, a spend you
  * missed); the closing balance never moves here, because it was real.
- * Fixing a close and catching up missed ones come in feat/refresh-fix.
+ * Only the most recent close can be fixed (Fix this close): it moves the
+ * next cycle's opening, so every payday after. Catching up is feat/refresh-catchup.
  */
 
 const shift = (d: string, n: number) => formatDate(addDays(parseDate(d), n))
@@ -36,7 +37,7 @@ export default function PastCycles({ accountId, onBackToNow }: { accountId: stri
   const [error, setError] = useState('')
   const [idx, setIdx] = useState<number | null>(null)
   const [tab, setTab] = useState<'what' | 'avf'>('what')
-  const [sheet, setSheet] = useState<{ kind: 'est'; item: any } | { kind: 'bud'; budget: any } | null>(null)
+  const [sheet, setSheet] = useState<{ kind: 'est'; item: any } | { kind: 'bud'; budget: any } | { kind: 'fix' } | null>(null)
 
   async function load() {
     try {
@@ -65,6 +66,9 @@ export default function PastCycles({ accountId, onBackToNow }: { accountId: stri
   const view = describe(c, data, floorCents)
   const hasForecast = c.projected_close_cents != null
   const vsForecast = hasForecast ? c.closing_balance_cents - Number(c.projected_close_cents) : null
+  const isLatest = i === closed.length - 1
+  const stored = data.rows.storedCycles ?? []
+  const next = stored.find((x: any) => x.start_date > c.start_date) ?? null
 
   return (
     <div className="rw-page">
@@ -85,6 +89,9 @@ export default function PastCycles({ accountId, onBackToNow }: { accountId: stri
           <div><span>vs forecast</span><b className={vsForecast == null ? 'none' : vsForecast >= 0 ? 'good' : 'near'}>
             {vsForecast == null ? '—' : (vsForecast > 0 ? '+' : '') + money(vsForecast)}</b></div>
         </div>
+        {c.fixed_from_cents != null && c.fixed_at && (
+          <div className="rw-ob">Fixed {short(String(c.fixed_at).slice(0, 10))}: was {money(Number(c.fixed_from_cents))}</div>
+        )}
       </div>
 
       <div style={{ margin: '12px 12px 0' }}>
@@ -144,6 +151,15 @@ export default function PastCycles({ accountId, onBackToNow }: { accountId: stri
         </>}
       </>}
 
+      <div className="rw-group" style={{ marginTop: 14 }}>
+        {isLatest && next
+          ? <button type="button" className="rw-row" onClick={() => setSheet({ kind: 'fix' })}>
+              <div className="rw-tx"><div className="rw-row-name">Fix this close</div><div className="rw-sub">Wrong balance, or wrong answer about pay</div></div>
+              <span className="rw-chev">›</span></button>
+          : <div className="rw-row static"><div className="rw-tx"><div className="rw-sub">Only the most recent close can be fixed. Older ones don't change today's balance.</div></div></div>}
+      </div>
+
+      {sheet?.kind === 'fix' && next && <FixClose cycle={c} next={next} rows={data.rows} accountId={accountId} money={money} onClose={() => setSheet(null)} />}
       {sheet?.kind === 'est' && <EstimateFix cycle={c} item={sheet.item} accountId={accountId} money={money}
         closing={c.closing_balance_cents} hasForecast={hasForecast} onClose={() => setSheet(null)} />}
       {sheet?.kind === 'bud' && <MissedSpend cycle={c} budget={sheet.budget} accountId={accountId} money={money}
@@ -322,6 +338,96 @@ function MissedSpend({ cycle, budget, accountId, money, closing, hasForecast, pa
         <div className="rw-ctas">
           <button type="button" className="rw-cta sec" onClick={onClose}>Close</button>
           <button type="button" className="rw-cta" disabled={!cents || busy} onClick={save}>Add to the {short(cycle.start_date)} cycle</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ── fix the most recent close: its balance and the next cycle's opening, together ── */
+function FixClose({ cycle, next, rows, accountId, money, onClose }: {
+  cycle: any; next: any; rows: ForecastResult; accountId: string; money: (c: number) => string; onClose: () => void
+}) {
+  const { activeAccount } = useAccount()
+  const toast = useToast()
+  const sym = currencySymbol(activeAccount?.currency_code)
+  const payDate = shift(cycle.end_date, 1)
+  const pay = rows.incomeRows.find((r: any) => r.is_primary && !r.is_potential)
+  const payName = pay?.name ?? 'Pay'
+  const payOv = pay ? (rows.incomeOverrideRows ?? []).find((o: any) => o.income_source_id === pay.id && o.cycle_start === payDate) : null
+  const scheduled = pay ? (payOv?.amount_cents ?? versionForDate(pay.income_amount_versions, payDate)?.amount_cents ?? 0) : 0
+
+  const oldClose = Number(cycle.closing_balance_cents ?? 0)
+  const oldEntered = cycle.entered_balance_cents != null ? Number(cycle.entered_balance_cents) : null
+  const oldPayIn: boolean | null = cycle.pay_in_balance ?? null
+  const cents = (x: string) => Math.round((parseFloat(x) || 0) * 100)
+  const [bal, setBal] = useState(String((oldEntered ?? oldClose) / 100))
+  const [landed, setLanded] = useState<'yes' | 'no'>(oldPayIn ? 'yes' : 'no')
+  const [payAmt, setPayAmt] = useState(String((oldEntered != null && oldPayIn ? oldEntered - oldClose : scheduled) / 100))
+  const [busy, setBusy] = useState(false)
+
+  const real = cents(bal)
+  const newClose = real - (landed === 'yes' ? cents(payAmt) : 0)
+  const delta = newClose - oldClose
+  const changed = Math.round(delta) !== 0
+  const looksLikePay = landed === 'no' && scheduled > 0 && Math.abs(delta - scheduled) < scheduled * 0.25
+  const signed = (v: number) => Math.round(v / 100) === 0 ? money(0) : (v > 0 ? '+' : '') + money(v)
+
+  async function save() {
+    if (busy || !changed || looksLikePay) return
+    setBusy(true)
+    try {
+      const moved = await fixLastClose(accountId, cycle.id, newClose, real, landed === 'yes')
+      toast(`Close fixed. Every payday after moves ${signed(moved)}`, {
+        undo: async () => { await fixLastClose(accountId, cycle.id, oldClose, oldEntered, oldPayIn); notifyDataChanged() },
+      })
+      notifyDataChanged(); onClose()
+    } catch (e: any) { alert('Could not fix the close, so nothing was changed.\n\n' + e.message) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget && !busy) onClose() }}>
+      <div className="rw-sheet" role="dialog" aria-modal="true">
+        <div className="rw-grab" />
+        <div className="rw-sh-h"><div><div className="rw-sheet-title">Fix the {short(cycle.end_date)} close</div>
+          <div className="rw-sd">Closed {money(oldClose)}{oldEntered != null
+            ? <> · you entered {money(oldEntered)}, {payName} {oldPayIn ? 'in it' : 'not in it'}</> : null}</div></div>
+          <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>
+
+        <div className="rw-lab">Balance you checked that day</div>
+        <div className="rw-big"><span>{sym}</span>
+          <input type="number" inputMode="decimal" aria-label="Balance you checked" value={bal} onChange={e => setBal(e.target.value)} /></div>
+
+        <div className="rw-lab">Was {payName} in that balance?</div>
+        <div className="rw-seg flush" role="radiogroup">
+          <button type="button" role="radio" aria-checked={landed === 'yes'} className={landed === 'yes' ? 'on' : ''} onClick={() => setLanded('yes')}>Yes, it was in</button>
+          <button type="button" role="radio" aria-checked={landed === 'no'} className={landed === 'no' ? 'on' : ''} onClick={() => setLanded('no')}>No, not yet</button>
+        </div>
+        {landed === 'yes' && <>
+          <div className="rw-lab">Amount that landed</div>
+          <div className="rw-amtrow"><span>{sym}</span>
+            <input type="number" inputMode="decimal" aria-label="Amount that landed" value={payAmt} onChange={e => setPayAmt(e.target.value)} /></div>
+        </>}
+
+        <div className="rw-tiles">
+          <div className="rw-tile"><div className="k">Closed at</div><div className="v">{money(newClose)}</div><div className="d">was {money(oldClose)}</div></div>
+          <div className="rw-tile"><div className="k">{short(next.start_date)} opens</div>
+            <div className="v">{money(Number(next.opening_balance_cents) + delta)}</div><div className="d">was {money(Number(next.opening_balance_cents))}</div></div>
+          <div className="rw-tile"><div className="k">Every payday after</div>
+            <div className={`v ${delta >= 0 ? 'good' : 'near'}`}>{signed(delta)}</div><div className="d">{changed ? `from ${short(next.start_date)}` : 'no change'}</div></div>
+        </div>
+
+        {looksLikePay && (
+          <div className="rw-warn-ban near rw-col">
+            <span><b>That's about one {payName} more than before.</b> If pay was already in the balance, the opening would count it twice.</span>
+            <button type="button" className="rw-cta" onClick={() => setLanded('yes')}>{payName} was in the balance</button>
+          </div>
+        )}
+
+        <div className="rw-ctas">
+          <button type="button" className="rw-cta sec" onClick={onClose}>Cancel</button>
+          <button type="button" className="rw-cta" disabled={busy || !changed || looksLikePay} onClick={save}>Save the fix</button>
         </div>
       </div>
     </div>
