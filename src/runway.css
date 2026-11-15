@@ -198,3 +198,102 @@ body.is-runway #root { border-inline: none; }
 /* The J8 mock coloured Undo mint, but mint is for graphics, never small text
    (design system), and fails on the light toast in dark mode. */
 .rw-toast.hide { opacity: 0; pointer-events: none; }
+
+/* ═══ Cycle screen (Journey 8) ═══════════════════════════════════════ */
+.rw .rw-ink { color: var(--rw-ink); font-weight: 650; }
+
+.rw-cnav { display: flex; align-items: center; justify-content: space-between; padding: 8px var(--rw-space-3) 0; }
+.rw-cnav-gap { width: 30px; }
+.rw-cnav-b {
+  width: 30px; height: 30px; border-radius: 50%; cursor: pointer; font-size: 15px;
+  border: 1px solid var(--rw-hairline); background: var(--rw-surface);
+}
+.rw-cnav-t { text-align: center; }
+.rw-cnav-t b { display: block; font: var(--rw-text-sheet-title); font-size: 15px; }
+.rw-cnav-t span { font: var(--rw-text-sub); color: var(--rw-muted); }
+
+/* Hero E: spare first, before pay under it. */
+.rw-hero-card { margin: 10px var(--rw-space-3) 0; background: var(--rw-surface); border-radius: var(--rw-radius-lg); padding: var(--rw-space-3); }
+.rw-hero-v { font: var(--rw-text-hero); letter-spacing: -.02em; }
+.rw-hero-v.near  { color: var(--rw-near-floor-text); }
+.rw-hero-v.under { color: var(--rw-under-floor); }
+.rw-hero-k { font: var(--rw-text-sub); color: var(--rw-muted); margin-top: 3px; }
+.rw-hero-card-line { font: var(--rw-text-sub); font-size: 12px; color: var(--rw-muted); margin-top: 6px; }
+.rw-hero-sub {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--rw-hairline);
+  font: var(--rw-text-sub); font-size: 12px; color: var(--rw-muted);
+}
+.rw-hero-sub b { font: var(--rw-text-tile); font-size: 14px; color: var(--rw-ink); }
+
+/* The close banner: ink, so it reads as the one thing to do today. */
+.rw-ban {
+  margin: 8px var(--rw-space-3) 0; border-radius: var(--rw-radius-md); padding: 9px 11px;
+  display: flex; align-items: center; gap: 9px; background: var(--rw-ink); color: var(--rw-bg);
+}
+.rw-ban-i { width: 20px; height: 20px; flex: 0 0 20px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11px; font-weight: 800; background: var(--rw-line); color: var(--rw-ink); }
+.rw-ban-tx { flex: 1; line-height: 1.3; }
+.rw-ban-tx b { font: var(--rw-text-row-name); }
+.rw-ban-tx small { display: block; font: var(--rw-text-sub); opacity: .75; }
+.rw-ban button {
+  border: none; border-radius: var(--rw-radius-sm); padding: 7px 12px; cursor: pointer;
+  font: var(--rw-text-row-name); font-weight: 700; background: var(--rw-bg); color: var(--rw-ink);
+}
+
+.rw-runway { margin: 10px var(--rw-space-3) 0; background: var(--rw-surface); border-radius: var(--rw-radius-lg); padding: 8px 4px 4px; }
+.rw-runway svg { display: block; width: 100%; height: auto; }
+.rw-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 12px; padding: 4px 6px 2px;
+  font: var(--rw-text-sub); font-size: 9.5px; color: var(--rw-muted); }
+.rw-legend span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.rw-legend i { display: inline-block; width: 14px; height: 0; }
+.rw-legend i.ln { border-top: 2.5px solid var(--rw-line); }
+.rw-legend i.fl { border-top: 1.5px dashed var(--rw-under-floor); }
+
+/* Segmented control: grey track, selected option white. The only one. */
+.rw-seg { display: flex; margin: 12px var(--rw-space-3) 0; background: var(--rw-surface-2); border-radius: 11px; padding: 3px; gap: 2px; }
+.rw-seg button { flex: 1; border: none; background: transparent; border-radius: 8px; padding: 6px; cursor: pointer;
+  font: var(--rw-text-row-name); font-size: 12px; color: var(--rw-muted); }
+.rw-seg button.on { background: var(--rw-surface); color: var(--rw-ink); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+
+/* Day headings in the list. */
+.rw-dl { display: flex; justify-content: space-between; align-items: center; gap: 6px;
+  padding: 12px 18px 5px; font: var(--rw-text-sub); font-weight: 650; color: var(--rw-muted); }
+.rw-dl span { font-weight: 500; }
+.rw-dl.today { color: var(--rw-ink); }
+.rw-dl.needs { color: var(--rw-near-floor-text); justify-content: flex-start; }
+.rw-dl.needs span { margin-left: auto; color: var(--rw-muted); }
+.rw-dl.needs b { background: var(--rw-near-floor); color: #fff; border-radius: var(--rw-radius-pill); padding: 0 6px; font-size: 10px; }
+.rw-dl .rw-dl-k { color: var(--rw-muted); font-weight: 650; }
+
+.rw-mark { width: 9px; height: 9px; flex: 0 0 9px; }
+.rw-row .rw-am { font: var(--rw-text-row-name); text-align: right; white-space: nowrap; }
+.rw-row .rw-am.in { color: var(--rw-good); }
+.rw-row .rw-am small { display: block; font: var(--rw-text-sub); font-size: 10px; color: var(--rw-muted); }
+.rw-row.done .rw-row-name, .rw-row.done .rw-am { color: var(--rw-muted); }
+.rw-row.needs { background: color-mix(in srgb, var(--rw-near-floor) 7%, var(--rw-surface)); }
+.rw-row .rw-warn { color: var(--rw-near-floor-text); font-weight: 650; }
+.rw-row.flash { animation: rw-flash 1.2s; }
+@keyframes rw-flash { 0% { background: color-mix(in srgb, var(--rw-line) 18%, transparent); } 100% { background: transparent; } }
+.rw-chev.open { transform: rotate(90deg); }
+.rw-chev { transition: transform .2s; }
+
+.rw-mini { border: none; border-radius: var(--rw-radius-sm); padding: 7px 10px; cursor: pointer; white-space: nowrap;
+  font: var(--rw-text-row-name); font-size: 11.5px; font-weight: 700; background: var(--rw-action); color: var(--rw-action-ink); }
+.rw .rw-mini { color: var(--rw-action-ink); }
+.rw-pill { font: var(--rw-text-label); font-size: 10.5px; padding: 3px 9px; border-radius: var(--rw-radius-pill); white-space: nowrap; }
+.rw-pill.good { background: color-mix(in srgb, var(--rw-good) 14%, transparent); color: var(--rw-good); }
+
+/* Budget pace: the bar is spent, the tick is how far through the cycle. */
+.rw-pb { height: 5px; border-radius: 3px; background: var(--rw-surface-2); margin-top: 6px; position: relative; }
+.rw-pb i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--rw-ink); }
+.rw-pb i.ahead { background: var(--rw-near-floor); }
+.rw-pb b { position: absolute; top: -3px; width: 2px; height: 11px; background: var(--rw-ink); opacity: .45; }
+.rw-plus { width: 28px; height: 28px; flex: 0 0 28px; border-radius: 50%; cursor: pointer; font-size: 16px;
+  border: 1.5px solid var(--rw-hairline); background: var(--rw-surface); }
+.rw-plus.on { background: var(--rw-action); color: var(--rw-action-ink); border-color: var(--rw-action); }
+.rw .rw-plus.on { color: var(--rw-action-ink); }
+
+/* By type: today's grouped cards, unchanged, until Journey 7. */
+.rw-bytype { padding-top: 4px; }
+.rw-qa { padding: 0 var(--rw-space-3) 10px; }

@@ -39,6 +39,9 @@ import { parseDate, formatDate, addDays } from './engine/dates'
 import { byOldest, versionForDate } from './lib/versions'
 import { ExpenseIcon, guessIcon } from './lib/icons'
 import { useViewport } from './lib/useViewport'
+import { useNewLook } from './lib/look'
+import CycleView, { type DayItem, type BudgetRow } from './runway/CycleView'
+import { buildRunway, type RunwayEvent } from './runway/runwaySeries'
 
 function fmtDate(d: string) {
   return parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
@@ -93,7 +96,11 @@ const PERIOD_WORD: Record<string, string> = {
   daily: 'day', weekly: 'week', fortnightly: 'fortnight', monthly: 'month', annually: 'year',
 }
 
-export default function Dashboard({ userId, accountId, variant }: { userId: string, accountId: string, variant: 'cycle' | 'forecast' }) {
+export default function Dashboard({ userId, accountId, variant, onForecast }: {
+  userId: string, accountId: string, variant: 'cycle' | 'forecast'
+  // The new look's Cycle screen links to Forecast with its › button.
+  onForecast?: () => void
+}) {
   const { activeAccount } = useAccount()
 
   // Amounts follow the account's currency — see lib/money.ts
@@ -116,6 +123,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // Desktop Forecast: graph and cycles on the left, the chosen cycle's own
   // cards on the right — the same cards, with the same actions, as mobile.
   const deskForecast = viewport === 'desktop' && variant === 'forecast'
+  // The new look's Cycle screen (Journey 8). Behind the switch in Settings.
+  const [newLook] = useNewLook()
 
   // NEW — cycle carousel dot tracking (Available-to-spend / Next-payments swipe)
   const [activeCarouselDot, setActiveCarouselDot] = useState(0)
@@ -757,6 +766,14 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   }
 
   // NEW — open the Salary / recurring income edit sheet
+  // A one-off (income or expense) opens its own sheet.
+  function openOneOff(cd: any, certain: boolean) {
+    setOneOffError(''); setOneOffName(cd.name)
+    setOneOffAmt(String(cd.totalCents / 100))
+    setOneOffCertain(certain)
+    setOneOffItem(cd)
+  }
+
   function openIncomeEdit(cd: any) {
     const src = rawIncome.find((s: any) => s.id === cd.incomeId)
     if (!src) return
@@ -1774,6 +1791,54 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // The cycle header, every section (each keeps its own open/close
   // accordion) and the add button. Rendered on its own on the phone and
   // Forecast page; beside the glance column on the desktop Cycle page.
+  // Logging spend against a budget, inline under its row. Shared by the
+  // grouped cards and the new Cycle screen until Journey 5's sheet replaces it.
+  function quickAddForm(cd: any) {
+      const places = placesFor(cd.expenseId)
+      return (
+        <div className="qa" onClick={e => e.stopPropagation()}>
+          {places.length > 0 && (
+            <div className="qa-places">
+              {places.map(p => (
+                <button key={p.id} type="button" className={`qa-place${qaPlace === p.id ? ' on' : ''}`}
+                  onClick={() => { setQaPlace(qaPlace === p.id ? null : p.id); setQaWhere('') }}>
+                  {p.name}<small>{p.n}×</small>
+                </button>
+              ))}
+            </div>
+          )}
+          {!qaPlace && (
+            <>
+              <input className="qa-where" list={'qa-places-' + cd.expenseId}
+                placeholder="Where? (optional)" value={qaWhere}
+                onChange={e => setQaWhere(e.target.value)} />
+              <datalist id={'qa-places-' + cd.expenseId}>
+                {rawPayees.map((p: any) => <option key={p.id} value={p.name} />)}
+              </datalist>
+            </>
+          )}
+          <div className="qa-row">
+            <span className="pre">{sym}</span>
+            <input className="qa-amt" type="number" inputMode="decimal" placeholder="0.00" autoFocus
+              value={quickAddAmount} onChange={e => setQuickAddAmount(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') saveQuickAdd(cd.expenseId, cd.name) }} />
+            <button className="budg-qa-save" disabled={qaSaving}
+              onClick={() => saveQuickAdd(cd.expenseId, cd.name)}>{qaSaving ? '…' : 'Add'}</button>
+          </div>
+          {qaNote !== null && (
+            <input className="qa-where" placeholder="Note (optional)" value={qaNote}
+              onChange={e => setQaNote(e.target.value)} />
+          )}
+          <div className="qa-meta">
+            {yesterdayInCycle
+              ? <button type="button" onClick={() => setQaYesterday(y => !y)}>{qaYesterday ? 'yesterday' : 'today'} ▾</button>
+              : <span>today</span>}
+            {qaNote === null && <button type="button" onClick={() => setQaNote('')}>+ note</button>}
+          </div>
+        </div>
+      )
+    }
+
   const cycleBody = (
     <>
     <div className="cyc">
@@ -2127,51 +2192,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
                       <button className={`budg-plus${quickAddOpen ? ' on' : ''}`} onClick={e => { e.stopPropagation(); setBudEdit(null); toggleQuickAdd(cd.expenseId) }}>{quickAddOpen ? '×' : '+'}</button>
                     )}
                   </div>
-                  {quickAddOpen && isCurrentCycle && (() => {
-                    const places = placesFor(cd.expenseId)
-                    return (
-                      <div className="qa" onClick={e => e.stopPropagation()}>
-                        {places.length > 0 && (
-                          <div className="qa-places">
-                            {places.map(p => (
-                              <button key={p.id} type="button" className={`qa-place${qaPlace === p.id ? ' on' : ''}`}
-                                onClick={() => { setQaPlace(qaPlace === p.id ? null : p.id); setQaWhere('') }}>
-                                {p.name}<small>{p.n}×</small>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        {!qaPlace && (
-                          <>
-                            <input className="qa-where" list={'qa-places-' + cd.expenseId}
-                              placeholder="Where? (optional)" value={qaWhere}
-                              onChange={e => setQaWhere(e.target.value)} />
-                            <datalist id={'qa-places-' + cd.expenseId}>
-                              {rawPayees.map((p: any) => <option key={p.id} value={p.name} />)}
-                            </datalist>
-                          </>
-                        )}
-                        <div className="qa-row">
-                          <span className="pre">{sym}</span>
-                          <input className="qa-amt" type="number" inputMode="decimal" placeholder="0.00" autoFocus
-                            value={quickAddAmount} onChange={e => setQuickAddAmount(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') saveQuickAdd(cd.expenseId, cd.name) }} />
-                          <button className="budg-qa-save" disabled={qaSaving}
-                            onClick={() => saveQuickAdd(cd.expenseId, cd.name)}>{qaSaving ? '…' : 'Add'}</button>
-                        </div>
-                        {qaNote !== null && (
-                          <input className="qa-where" placeholder="Note (optional)" value={qaNote}
-                            onChange={e => setQaNote(e.target.value)} />
-                        )}
-                        <div className="qa-meta">
-                          {yesterdayInCycle
-                            ? <button type="button" onClick={() => setQaYesterday(y => !y)}>{qaYesterday ? 'yesterday' : 'today'} ▾</button>
-                            : <span>today</span>}
-                          {qaNote === null && <button type="button" onClick={() => setQaNote('')}>+ note</button>}
-                        </div>
-                      </div>
-                    )
-                  })()}
+                  {quickAddOpen && isCurrentCycle && quickAddForm(cd)}
                   {budgetEditor(cd, spent)}
                 </div>
               )
@@ -2282,9 +2303,166 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   )
 
   // ── render ────────────────────────────────────────────────────────
+  /* ── the new look's Cycle screen (Journey 8) ─────────────────────────
+   * Built from the same rows and the same engine result as the cards below,
+   * one entry per payment so each lands on its own day. Every tap opens the
+   * sheet the card would have opened. */
+  function cycleViewData() {
+    const c = activeCycle
+    const HOW: Record<string, string> = { daily: 'Daily', weekly: 'Weekly', fortnightly: 'Fortnightly', monthly: 'Monthly', annually: 'Yearly', once: 'One-off' }
+    const howOften = (row: any) => (row.every_n ?? 1) > 1
+      ? `Every ${row.every_n} ${PERIOD_WORD[row.frequency] ?? row.frequency}s`
+      : (HOW[row.frequency] ?? row.frequency)
+    const t = today()
+    const items: DayItem[] = []
+    const events: RunwayEvent[] = []
+    const cardFor = (pred: (cd: any) => boolean) => [...incomeCards, ...fixedCards, ...varCards].find(pred)
+    // A one-cycle amount is a total for the cycle: spread over its payments,
+    // any leftover cent on the last one.
+    const spread = (total: number, occs: string[], i: number) => {
+      const each = Math.floor(total / occs.length)
+      return i === occs.length - 1 ? total - each * (occs.length - 1) : each
+    }
+
+    for (const src of rawIncome) {
+      const occs = occurrencesOf(toEngineIncome([src])[0], c.startDate, c.endDate)
+      if (!occs.length) continue
+      const ov = src.frequency === 'once' ? null : incomeOverrideFor(src.id, c.startDate)
+      const cd = cardFor(x => x.incomeId === src.id)
+      occs.forEach((d: string, i: number) => {
+        const cents = ov ? spread(ov.amount_cents, occs, i) : (versionForDate(src.income_amount_versions, d)?.amount_cents ?? 0)
+        if (!src.is_potential) events.push({ date: d, cents })
+        items.push({
+          key: `inc-${src.id}-${d}`, date: d, name: src.name, mark: 'income', amountCents: cents, isIn: true,
+          sub: src.is_potential ? 'Not certain yet' : ov ? 'This cycle only' : howOften(src),
+          onOpen: cd ? () => (src.frequency === 'once' ? openOneOff(cd, !(cd.isPotential ?? true)) : openIncomeEdit(cd)) : undefined,
+        })
+      })
+    }
+
+    for (const exp of rawExpenses) {
+      const mode = exp.mode ?? 'fixed'
+      if (mode === 'budget') continue
+      const occs = occurrencesOf(toEngineExpenses([exp])[0], c.startDate, c.endDate)
+      if (!occs.length) continue
+      const isLayby = !!exp.lay_by_id
+      const ov = isLayby ? null : overrideFor(exp.id, c.startDate)
+      const cd = cardFor(x => x.expenseId === exp.id)
+      const sorted = isLayby ? [...(exp.expense_amount_versions ?? [])].sort(byOldest) : []
+      const layby = isLayby ? rawLayBys.find((l: any) => l.id === exp.lay_by_id) : null
+      occs.forEach((d: string, i: number) => {
+        const cents = ov ? spread(ov.amount_cents, occs, i)
+          : isLayby ? (sorted.find((v: any) => v.effective_from === d)?.amount_cents ?? 0)
+          : (versionForDate(exp.expense_amount_versions, d)?.amount_cents ?? 0)
+        events.push({ date: d, cents: -cents })
+        const isEstimate = mode === 'variable'
+        const open = isEstimate && !ov
+        let sub = howOften(exp)
+        if (isLayby) {
+          const n = sorted.findIndex((v: any) => v.effective_from === d)
+          sub = `BNPL · ${n >= 0 ? n + 1 : '?'} of ${layby?.payments_total ?? sorted.length}`
+        } else if (isEstimate) sub = ov ? 'Confirmed' : 'Estimate'
+        else if (ov) sub = 'This cycle only'
+        items.push({
+          key: `exp-${exp.id}-${d}`, date: d, name: exp.name, mark: isLayby ? 'bnpl' : isEstimate ? 'estimate' : 'fixed',
+          amountCents: cents, estimate: open, sub,
+          needs: open && d < t, needsText: 'not confirmed',
+          action: open && cd ? { label: 'Confirm', run: () => openVar(cd) } : undefined,
+          donePill: isEstimate && ov ? '✓' : undefined,
+          onOpen: !cd ? undefined
+            : cd.act === 'oneoff' ? () => openOneOff(cd, false)
+            : isEstimate ? () => openVar(cd)
+            : cd.act === 'edit' ? () => openEdit(cd) : undefined,
+        })
+      })
+    }
+
+    // Savings leave at the start of the cycle; set aside any day of it.
+    if (showSavings) {
+      for (const line of savingsLines) {
+        events.push({ date: c.startDate, cents: -line.amountCents })
+        const goal = goalRow(line.goalId)
+        if (!goal) continue
+        const done = isSetAside(line.goalId)
+        items.push({
+          key: `sav-${line.goalId}`, date: c.startDate, name: goal.name, mark: 'savings', amountCents: line.amountCents,
+          sub: goal.expense_id ? 'Set aside for the bill' : `${fmt(savedSoFar(line.goalId), false)} of ${fmt(goal.target_cents, false)}`,
+          needs: !done && c.startDate < t, needsText: 'not set aside',
+          action: done ? undefined : { label: 'Set aside', run: () => toggleSetAside(line.goalId) },
+          donePill: done ? 'Set aside ✓' : undefined,
+          onOpen: () => setSavTarget(goal),
+        })
+      }
+    }
+
+    // The card payment, on its due date when the cycle has one.
+    if (showCredit && creditPaymentCents > 0) {
+      const d = creditDueDate ?? c.endDate
+      events.push({ date: d, cents: -creditPaymentCents })
+      items.push({
+        key: 'card', date: d, name: rawCredit?.name ?? 'Card', mark: 'credit', amountCents: creditPaymentCents,
+        sub: creditExtraCents > 0 ? `Min ${fmt(creditMinimumCents, false)} + extra ${fmt(creditExtraCents, false)}` : 'Minimum',
+        needs: creditState === 'due', needsText: 'not confirmed',
+        action: creditState === 'due' ? { label: 'Confirm', run: openConfirmPay } : undefined,
+        donePill: creditState === 'paid' ? 'Paid ✓' : undefined,
+        onOpen: openCreditAdjust,
+      })
+    }
+
+    items.sort((a, b) => a.date.localeCompare(b.date))
+
+    const budgets: BudgetRow[] = budgetCards.map(cd => {
+      const entries = entriesForExpenseInCycle(cd.expenseId)
+      return {
+        id: cd.expenseId, name: cd.name,
+        spentCents: entries.reduce((sum: number, e: any) => sum + e.amount_cents, 0),
+        plannedCents: cd.totalCents,
+        onOpen: () => openLog(cd),
+        onPlus: isCurrentCycle ? () => { setBudEdit(null); toggleQuickAdd(cd.expenseId) } : undefined,
+        plusOpen: openQuickAdd === cd.expenseId,
+        quickAdd: isCurrentCycle ? <div className="rw-qa">{quickAddForm(cd)}</div> : null,
+      }
+    })
+
+    const runway = buildRunway({
+      start: c.startDate, end: c.endDate, today: t, openingCents: c.openingBalanceCents, events,
+      budgets: budgetCards.map(cd => ({
+        plannedCents: cd.totalCents,
+        entries: entriesForExpenseInCycle(cd.expenseId).map((e: any) => ({ date: e.spent_date, cents: e.amount_cents })),
+      })),
+      expectedClosingCents: c.committedClosingBalanceCents,
+    })
+    // Normally 0. Anything else means a payment the list doesn't date (a bill
+    // paid from a savings pot, say); the line still ends on the forecast.
+    if (Math.abs(runway.gapCents) >= 100) console.warn('Runway differs from the forecast by', runway.gapCents, 'cents')
+
+    const spareCard = !!rawCredit?.strategy_committed && planModeOf(rawCredit) === 'spare'
+    return { items, budgets, runway, cardLine: spareCard ? { cents: creditExtraCents, name: rawCredit?.name ?? 'your card' } : null }
+  }
+
+  const money = (cents: number) => (cents < 0 ? '−' : '') + fmt(Math.abs(cents), false)
+  const cycleView = variant === 'cycle' && newLook && !activeCycle.isHistorical ? (() => {
+    const d = cycleViewData()
+    return (
+      <CycleView
+        start={activeCycle.startDate} end={activeCycle.endDate} today={today()}
+        payDate={nextCycleStartDate} payName={primaryIncome?.name ?? cycleIncome?.name ?? 'Pay'}
+        floorCents={floorCents} closingCents={activeCycle.committedClosingBalanceCents}
+        cardLine={d.cardLine} runway={d.runway} items={d.items} budgets={d.budgets}
+        showClose={status === 'overdue' || (status === 'now' && today() === activeCycle.endDate)}
+        ended={status === 'overdue'}
+        onClose={openClose}
+        onForecast={() => onForecast?.()}
+        onAddToCycle={openAddToCycle}
+        byType={cycleBody}
+        money={money}
+      />
+    )
+  })() : null
+
   return (
     <>
-      <div className="scrollarea">
+      {cycleView ?? <div className="scrollarea">
 
         {variant === 'cycle' && !deskCycle && (
           <div className="cyc-carousel-wrap">
@@ -2326,7 +2504,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
         {!deskCycle && !deskForecast && closeBlock}
 
-      </div>
+      </div>}
 
       {/* ═══ OVERLAY 1 — Edit scope ═══ */}
       {editCard && (

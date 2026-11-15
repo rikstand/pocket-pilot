@@ -73,7 +73,7 @@ function AuthedApp({ userId }: { userId: string }) {
   const pages = (
     <>
       {shown === 'cycle' && (
-        <Dashboard key={'cycle-' + dataVersion} userId={userId} accountId={activeAccount.id} variant="cycle" />
+        <Dashboard key={'cycle-' + dataVersion} userId={userId} accountId={activeAccount.id} variant="cycle" onForecast={() => navigate('forecast')} />
       )}
       {shown === 'forecast' && (
         <Dashboard key={'forecast-' + dataVersion} userId={userId} accountId={activeAccount.id} variant="forecast" />
