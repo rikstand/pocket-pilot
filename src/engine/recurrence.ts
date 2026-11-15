@@ -1,4 +1,4 @@
-import type { Frequency } from './types'
+import type { Frequency, ScheduleVersion } from './types'
 import { parseDate, formatDate, addDays, addMonthsClamped, daysBetween } from './dates'
 
 /**
@@ -75,4 +75,80 @@ export function getOccurrencesInRange(
     if (d >= start) results.push(formatDate(d))
   }
   return results
+}
+
+// ── schedules from a date ───────────────────────────────────────────
+/** How an item repeats: what one schedule needs. */
+export interface Schedule {
+  frequency: Frequency
+  everyN?: number
+  anchorDate: string
+}
+
+/** Anything with a schedule, an optional end date and schedule changes. */
+export interface Scheduled extends Schedule {
+  endDate?: string
+  schedules?: ScheduleVersion[]
+}
+
+/**
+ * The schedule changes in date order, one per date. Two changes saved for the
+ * same date: the newest written wins — callers pass them newest-first, the
+ * same order as amount versions.
+ */
+export function changesInOrder(versions: ScheduleVersion[] | undefined): ScheduleVersion[] {
+  const seen = new Set<string>()
+  const out: ScheduleVersion[] = []
+  for (const v of versions ?? []) {
+    if (seen.has(v.effectiveFrom)) continue
+    seen.add(v.effectiveFrom)
+    out.push(v)
+  }
+  return out.sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? -1 : a.effectiveFrom > b.effectiveFrom ? 1 : 0))
+}
+
+/** The schedule in force on a date. */
+export function scheduleOn(item: Scheduled, onDate: string): Schedule {
+  let s: Schedule = item
+  for (const v of changesInOrder(item.schedules)) {
+    if (v.effectiveFrom <= onDate) s = v
+    else break
+  }
+  return s
+}
+
+/**
+ * The stretches of [rangeStart, rangeEnd] and the schedule in force over each.
+ * One stretch when nothing changes inside the range.
+ */
+export function scheduleSegments(
+  item: Scheduled, rangeStart: string, rangeEnd: string
+): { from: string; to: string; schedule: Schedule }[] {
+  const changes = changesInOrder(item.schedules).filter(v => v.effectiveFrom > rangeStart && v.effectiveFrom <= rangeEnd)
+  const out: { from: string; to: string; schedule: Schedule }[] = []
+  let from = rangeStart
+  let sched = scheduleOn(item, rangeStart)
+  for (const v of changes) {
+    out.push({ from, to: formatDate(addDays(parseDate(v.effectiveFrom), -1)), schedule: sched })
+    from = v.effectiveFrom
+    sched = v
+  }
+  out.push({ from, to: rangeEnd, schedule: sched })
+  return out
+}
+
+/**
+ * Every date an item falls on between rangeStart and rangeEnd, following any
+ * schedule changes: the old schedule up to the day before a change, the new
+ * one from it. With no changes this is exactly getOccurrencesInRange.
+ */
+export function occurrencesOf(item: Scheduled, rangeStart: string, rangeEnd: string): string[] {
+  if (!item.schedules || item.schedules.length === 0) {
+    return getOccurrencesInRange(item.anchorDate, item.frequency, rangeStart, rangeEnd, item.endDate, item.everyN ?? 1)
+  }
+  const out: string[] = []
+  for (const seg of scheduleSegments(item, rangeStart, rangeEnd)) {
+    out.push(...getOccurrencesInRange(seg.schedule.anchorDate, seg.schedule.frequency, seg.from, seg.to, item.endDate, seg.schedule.everyN ?? 1))
+  }
+  return out
 }

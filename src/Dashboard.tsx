@@ -29,10 +29,10 @@ import {
   dueDateInCycle, committedPlanCheck, confirmedPaymentsFrom, predictedBalanceOn,
   planModeOf, isMonthlyCard,
 } from './lib/creditSchedule'
-import { loadForecast, projectFromRows, cycleTickLabel, cycleDateLabel, baseYearOf, baselineChecks, previewBudgetChange, toEngineExpenses } from './lib/forecast'
+import { loadForecast, projectFromRows, cycleTickLabel, cycleDateLabel, baseYearOf, baselineChecks, previewBudgetChange, toEngineExpenses, toEngineIncome } from './lib/forecast'
 import type { ForecastResult } from './lib/forecast'
-import { getOccurrencesInRange, nthOccurrence } from './engine/recurrence'
-import { budgetAmountForCycle, cycleEndAt, nextCycleDates } from './engine/engine'
+import { nthOccurrence, occurrencesOf, scheduleOn } from './engine/recurrence'
+import { budgetAmountForCycle, cycleEndAt, nextCycleFor } from './engine/engine'
 import type { CycleRule } from './engine/engine'
 import type { Frequency } from './engine/types'
 import { parseDate, formatDate, addDays } from './engine/dates'
@@ -388,7 +388,12 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
   // How cycles repeat — the same pick the engine makes: the flagged pay, else
   // the first certain one.
   const cycleIncome = primaryIncome ?? rawIncome.find((s: any) => !s.is_potential)
-  const cycleRule: CycleRule = { frequency: (cycleIncome?.frequency ?? 'fortnightly') as Frequency, everyN: cycleIncome?.every_n ?? 1 }
+  const cyclePay    = cycleIncome ? toEngineIncome([cycleIncome])[0] : undefined
+  // How pay repeats on a date, following any change to its schedule.
+  function ruleAt(onDate: string): CycleRule {
+    const s = cyclePay ? scheduleOn(cyclePay, onDate) : null
+    return { frequency: (s?.frequency ?? 'fortnightly') as Frequency, everyN: s?.everyN ?? 1 }
+  }
   // This cycle's own amount of pay, if one was set. One row per income per cycle.
   function incomeOverrideFor(incomeId: string, cycleStart: string) {
     return (forecastRows?.incomeOverrideRows ?? []).find((o: any) =>
@@ -442,7 +447,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     const cycle = activeCycle
 
     for (const src of rawIncome) {
-      const occs = getOccurrencesInRange(src.anchor_date, src.frequency, cycle.startDate, cycle.endDate, undefined, src.every_n ?? 1)
+      // The engine's own dates: schedule changes from a date and the end date included.
+      const occs = occurrencesOf(toEngineIncome([src])[0], cycle.startDate, cycle.endDate)
       if (!occs.length) continue
       // Each pay at the amount in force on its own date, as the engine does.
       // Before, the newest amount was used for every pay — so a "just this
@@ -479,7 +485,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
     for (const exp of rawExpenses) {
       const mode = exp.mode ?? 'fixed'
-      const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, cycle.startDate, cycle.endDate, exp.end_date ?? undefined, exp.every_n ?? 1)
+      const engExp = toEngineExpenses([exp])[0]
+      const occs = occurrencesOf(engExp, cycle.startDate, cycle.endDate)
 
       // A budget is a daily rate over the days it runs in the cycle — the
       // engine's own figure (budgetAmountForCycle), so the card, the section
@@ -492,7 +499,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
         if (to < from) continue
         amounts = {
           unit:  versionForDate(exp.expense_amount_versions, from)?.amount_cents ?? 0,
-          total: budgetAmountForCycle(toEngineExpenses([exp])[0], cycle.startDate, cycle.endDate, cycleRule),
+          total: budgetAmountForCycle(engExp, cycle.startDate, cycle.endDate, ruleAt(cycle.startDate)),
         }
       } else {
         if (!occs.length) continue
@@ -610,7 +617,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
 
     for (const exp of rawExpenses) {
       if ((exp.mode ?? 'fixed') !== 'fixed') continue
-      const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, activeCycle.startDate, activeCycle.endDate, exp.end_date ?? undefined, exp.every_n ?? 1)
+      const occs = occurrencesOf(toEngineExpenses([exp])[0], activeCycle.startDate, activeCycle.endDate)
       if (!occs.length) continue
       const isLayby = !!exp.lay_by_id
       const sortedVersions = [...(exp.expense_amount_versions ?? [])].sort(byOldest)
@@ -661,7 +668,7 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
     .map(exp => {
       // End date included, as everywhere else: an estimate that has stopped
       // isn't asked about at close.
-      const occs = getOccurrencesInRange(exp.anchor_date, exp.frequency, activeCycle.startDate, activeCycle.endDate, exp.end_date ?? undefined, exp.every_n ?? 1)
+      const occs = occurrencesOf(toEngineExpenses([exp])[0], activeCycle.startDate, activeCycle.endDate)
       if (!occs.length) return null
       // A figure confirmed during the cycle beats the estimate.
       const override = overrideFor(exp.id, activeCycle.startDate)
@@ -960,8 +967,8 @@ export default function Dashboard({ userId, accountId, variant }: { userId: stri
       // instead of drifting after February. It still starts the day after
       // this one ends, so the chain never has a gap.
       const nextStart = addOneDay(activeCycle.endDate)
-      const chained   = nextCycleDates(activeCycle.startDate, cycleRule, rawStoredCycles[0]?.start_date)
-      const nextEnd   = chained.start === nextStart ? chained.end : cycleEndAt(nextStart, cycleRule, 0)
+      const chained   = nextCycleFor(activeCycle.startDate, cyclePay, rawStoredCycles[0]?.start_date)
+      const nextEnd   = chained.start === nextStart ? chained.end : cycleEndAt(nextStart, ruleAt(nextStart), 0)
 
       // One call, one transaction — see closeCycle in repository.ts.
       //

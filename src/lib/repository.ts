@@ -66,7 +66,7 @@ export async function upsertProfile(userId: string, displayName: string) {
 export async function getIncomeSources(accountId: string) {
   const { data, error } = await supabase
     .from('income_sources')
-    .select(`*, income_amount_versions(*)`)
+    .select(`*, income_amount_versions(*), income_schedule_versions(*)`)
     .eq('account_id', accountId)
     .eq('is_active', true)
     .order('created_at')
@@ -203,7 +203,7 @@ export async function deactivateIncomeSource(incomeId: string) {
 export async function getExpenses(accountId: string) {
   const { data, error } = await supabase
     .from('expenses')
-    .select(`*, expense_amount_versions(*)`)
+    .select(`*, expense_amount_versions(*), expense_schedule_versions(*)`)
     .eq('account_id', accountId)
     .eq('is_active', true)
     .order('created_at')
@@ -272,6 +272,97 @@ export async function addExpenseAmount(
 export async function deactivateExpense(expenseId: string) {
   const { error } = await supabase.from('expenses').update({ is_active: false }).eq('id', expenseId)
   if (error) throw error
+}
+
+// --- SCHEDULE CHANGES FROM A DATE ---
+// From effectiveFrom on, the item repeats on a new schedule. Payments before
+// it never change, and the item stays one item: its spend log, places and
+// one-cycle amounts stay with it. Inserted first and older rows for the same
+// date removed second — the newest row on a date always wins anyway.
+export interface ScheduleChange {
+  effectiveFrom: string
+  frequency: string
+  everyN?: number
+  anchorDate: string
+}
+
+export async function setExpenseScheduleFrom(expenseId: string, accountId: string, change: ScheduleChange) {
+  const { data, error } = await supabase
+    .from('expense_schedule_versions')
+    .insert({
+      expense_id: expenseId, account_id: accountId, effective_from: change.effectiveFrom,
+      frequency: change.frequency, every_n: change.everyN ?? 1, anchor_date: change.anchorDate,
+    })
+    .select().single()
+  if (error) throw error
+  const { error: e2 } = await supabase
+    .from('expense_schedule_versions')
+    .delete()
+    .eq('expense_id', expenseId)
+    .eq('effective_from', change.effectiveFrom)
+    .neq('id', data.id)
+  if (e2) console.warn('older same-day schedule not removed:', e2.message)
+  return data
+}
+
+export async function setIncomeScheduleFrom(incomeId: string, accountId: string, change: ScheduleChange) {
+  const { data, error } = await supabase
+    .from('income_schedule_versions')
+    .insert({
+      income_source_id: incomeId, account_id: accountId, effective_from: change.effectiveFrom,
+      frequency: change.frequency, every_n: change.everyN ?? 1, anchor_date: change.anchorDate,
+    })
+    .select().single()
+  if (error) throw error
+  const { error: e2 } = await supabase
+    .from('income_schedule_versions')
+    .delete()
+    .eq('income_source_id', incomeId)
+    .eq('effective_from', change.effectiveFrom)
+    .neq('id', data.id)
+  if (e2) console.warn('older same-day schedule not removed:', e2.message)
+  return data
+}
+
+// --- ENDING, ARCHIVING, DELETING ---
+// Stop: the last date it can fall on (null = no end). Payments before it stay.
+export async function setExpenseEndDate(expenseId: string, endDate: string | null) {
+  const { error } = await supabase.from('expenses').update({ end_date: endDate }).eq('id', expenseId)
+  if (error) throw error
+}
+
+export async function setIncomeEndDate(incomeId: string, endDate: string | null) {
+  const { error } = await supabase.from('income_sources').update({ end_date: endDate }).eq('id', incomeId)
+  if (error) throw error
+}
+
+// Archive a budget: it stops after endDate and moves to the archived list.
+// Its spending history stays. Unarchive clears both.
+export async function archiveExpense(expenseId: string, endDate: string) {
+  const { error } = await supabase
+    .from('expenses')
+    .update({ end_date: endDate, archived_at: new Date().toISOString() })
+    .eq('id', expenseId)
+  if (error) throw error
+}
+
+export async function unarchiveExpense(expenseId: string) {
+  const { error } = await supabase
+    .from('expenses')
+    .update({ end_date: null, archived_at: null })
+    .eq('id', expenseId)
+  if (error) throw error
+}
+
+// Has anything been logged against this expense? Delete is only offered when
+// not — otherwise the choice is Stop (or Archive for a budget).
+export async function expenseSpendCount(expenseId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from('budget_spend_entries')
+    .select('id', { count: 'exact', head: true })
+    .eq('expense_id', expenseId)
+  if (error) throw error
+  return count ?? 0
 }
 
 // --- LAY-BYS ---
@@ -1215,6 +1306,45 @@ export async function getPayees(accountId: string) {
     .order('name')
   if (error) throw error
   return data
+}
+
+// Every place, archived ones included, for the Places page.
+export async function getAllPayees(accountId: string) {
+  const { data, error } = await supabase
+    .from('payees')
+    .select('*')
+    .eq('account_id', accountId)
+    .order('name')
+  if (error) throw error
+  return data
+}
+
+export async function setPayeeArchived(payeeId: string, archived: boolean) {
+  const { error } = await supabase.from('payees').update({ archived }).eq('id', payeeId)
+  if (error) throw error
+}
+
+// Merge one place into another: every entry moves across, then the empty
+// place is archived (not deleted, so nothing that still points at it breaks).
+export async function mergePayee(fromId: string, intoId: string) {
+  if (fromId === intoId) return
+  const { error } = await supabase.from('budget_spend_entries').update({ payee_id: intoId }).eq('payee_id', fromId)
+  if (error) throw error
+  await setPayeeArchived(fromId, true)
+}
+
+// Delete a place only when nothing was ever spent there. Returns false, and
+// deletes nothing, when entries still point at it — archive it instead.
+export async function deletePayeeIfUnused(payeeId: string): Promise<boolean> {
+  const { count, error } = await supabase
+    .from('budget_spend_entries')
+    .select('id', { count: 'exact', head: true })
+    .eq('payee_id', payeeId)
+  if (error) throw error
+  if ((count ?? 0) > 0) return false
+  const { error: e2 } = await supabase.from('payees').delete().eq('id', payeeId)
+  if (e2) throw e2
+  return true
 }
 
 // Find a place by name (any capitalisation, spaces trimmed) or create it.

@@ -30,7 +30,7 @@ import { projectCycles, budgetAmountForCycle } from '../engine/index'
 import type { CycleRule } from '../engine/index'
 import type {
   CycleResult, IncomeSource, Expense, CreditAccount, CreditExtraOverride,
-  BudgetSpendEntry, ExpenseOverride, SavingsGoal, CreditPayment, IncomeOverride,
+  BudgetSpendEntry, ExpenseOverride, SavingsGoal, CreditPayment, IncomeOverride, ScheduleVersion,
 } from '../engine/types'
 import { carriedCardBalance, confirmedPaymentsFrom, cycleDaysOf, planModeOf } from './creditSchedule'
 import { formatDate, parseDate } from '../engine/dates'
@@ -38,6 +38,22 @@ import { byNewest, latestVersion } from './versions'
 
 // Never toISOString() — this app runs at UTC+12 and that has caused real bugs.
 function todayStr() { return formatDate(new Date()) }
+
+/**
+ * Schedule changes from a date → what the engine expects. Newest written
+ * first, so of two saved for the same date the newest wins — the same rule
+ * as amounts.
+ */
+export function toEngineSchedules(rows: any[] | null | undefined): ScheduleVersion[] {
+  return [...(rows ?? [])]
+    .sort((a: any, b: any) => (a.created_at ?? '') > (b.created_at ?? '') ? -1 : (a.created_at ?? '') < (b.created_at ?? '') ? 1 : 0)
+    .map((v: any) => ({
+      effectiveFrom: v.effective_from,
+      frequency: v.frequency,
+      everyN: v.every_n ?? 1,
+      anchorDate: v.anchor_date,
+    }))
+}
 
 /**
  * Income rows → what the engine expects.
@@ -64,6 +80,8 @@ export function toEngineIncome(rows: any[]): IncomeSource[] {
       anchorDate: src.anchor_date,
       amountCents: latest?.amount_cents ?? 0,
       amountVersions: versions,
+      schedules: toEngineSchedules(src.income_schedule_versions),
+      endDate: src.end_date ?? undefined,
       isPotential: src.is_potential ?? false,
       isPrimary: src.is_primary ?? false,
     }
@@ -99,6 +117,7 @@ export function toEngineExpenses(rows: any[]): Expense[] {
       amountVersions: versions,
       mode: exp.mode ?? 'fixed',
       endDate: exp.end_date ?? undefined,
+      schedules: toEngineSchedules(exp.expense_schedule_versions),
     }
   })
 }

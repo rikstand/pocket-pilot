@@ -3,7 +3,8 @@ import type {
   ExpenseOverride, SavingsGoal, SavingsCycleLine, Expense, Frequency, IncomeOverride,
 } from './types'
 import { parseDate, formatDate, addDays, daysBetween } from './dates'
-import { getOccurrencesInRange, nthOccurrence, stepOf } from './recurrence'
+import { getOccurrencesInRange, nthOccurrence, stepOf, occurrencesOf, scheduleOn, scheduleSegments, changesInOrder } from './recurrence'
+import type { Scheduled, Schedule } from './recurrence'
 import { stepCredit } from './credit'
 
 /** How the pay cycle repeats: the primary income's frequency and every-N. */
@@ -126,12 +127,74 @@ export function budgetAmountForCycle(
   const from = exp.anchorDate > cycleStart ? exp.anchorDate : cycleStart
   const to   = exp.endDate && exp.endDate < cycleEnd ? exp.endDate : cycleEnd
   if (to < from) return 0
-  const activeDays = cycleDayCount(from, to)
-  const amount = getAmountOn(exp.amountVersions, exp.amountCents, from)
-  if (cycleRule && sameStep(exp, cycleRule)) {
-    return Math.round(amount * activeDays / cycleDayCount(cycleStart, cycleEnd))
+  // A budget changed to a different period from a date (weekly to monthly,
+  // say) counts each stretch of the cycle at the period in force then.
+  let total = 0
+  for (const seg of scheduleSegments(exp, from, to)) {
+    const days   = cycleDayCount(seg.from, seg.to)
+    const amount = getAmountOn(exp.amountVersions, exp.amountCents, seg.from)
+    total += cycleRule && sameStep(seg.schedule, cycleRule)
+      ? amount * days / cycleDayCount(cycleStart, cycleEnd)
+      : amount * days / (periodDays(seg.schedule.frequency, seg.schedule.everyN) ?? days)
   }
-  return Math.round(amount * activeDays / (periodDays(exp.frequency, exp.everyN) ?? activeDays))
+  return Math.round(total)
+}
+
+// ── the run of cycles ───────────────────────────────────────────────
+function ruleOf(s?: Schedule): CycleRule {
+  return { frequency: s?.frequency ?? 'fortnightly', everyN: s?.everyN ?? 1 }
+}
+
+/**
+ * `count` cycles from startDate: each one's start and last day.
+ *
+ * Cycles follow the main pay. Counted along the account's own chain (from
+ * cycleAnchorDate, its first cycle) so monthly cycles keep their day of the
+ * month. When the pay's schedule changes from a date, the cycle running then
+ * ends the day before, and new cycles follow the new schedule from that date.
+ *
+ * The forecast, closing a cycle and setting up an account all use this, so
+ * the dates they show and save can never disagree.
+ */
+export function cycleRun(
+  startDate: string,
+  primary: Scheduled | undefined,
+  count: number,
+  cycleAnchorDate?: string
+): { start: string; end: string }[] {
+  const changes = primary ? changesInOrder(primary.schedules) : []
+  let rule = ruleOf(primary ? scheduleOn(primary, startDate) : undefined)
+  // The chain in force at the start: from the latest pay change on or before
+  // it, or else from the account's first cycle.
+  const lastChange = changes.filter(v => v.effectiveFrom <= startDate).pop()
+  const tryAnchor = lastChange ? lastChange.effectiveFrom : cycleAnchorDate
+  const onChain = tryAnchor ? cycleIndexOf(tryAnchor, rule, startDate) : null
+  let anchor = onChain != null ? tryAnchor! : startDate
+  let k = onChain ?? 0
+
+  const out: { start: string; end: string }[] = []
+  let start = startDate
+  for (let i = 0; i < count; i++) {
+    let next = cycleStartAt(anchor, rule, k + 1)
+    const change = changes.find(v => v.effectiveFrom > start && v.effectiveFrom <= next)
+    if (change) {
+      next = change.effectiveFrom
+      anchor = next; k = 0; rule = ruleOf(change)
+    } else {
+      k++
+    }
+    out.push({ start, end: formatDate(addDays(parseDate(next), -1)) })
+    start = next
+  }
+  return out
+}
+
+/** The cycle after the one starting currentStart, following the main pay. */
+export function nextCycleFor(
+  currentStart: string, primary: Scheduled | undefined, cycleAnchorDate?: string
+): { start: string; end: string } {
+  const run = cycleRun(currentStart, primary, 2, cycleAnchorDate)
+  return run[1]
 }
 
 // The amount in force on one payment's date: the latest version whose
@@ -269,14 +332,9 @@ export function projectCycles(input: CycleInput): CycleResult[] {
   const primary = incomeSources.find(s => s.isPrimary && !s.isPotential)
     ?? incomeSources.find(s => !s.isPotential)
     ?? incomeSources[0]
-  const cycleRule: CycleRule = { frequency: primary?.frequency ?? 'fortnightly', everyN: primary?.everyN ?? 1 }
-
-  // Count cycles along the account's own chain when this projection starts on
-  // it, so monthly cycles keep their day of the month. Otherwise start fresh
-  // from startDate, exactly as before.
-  const onChain = input.cycleAnchorDate ? cycleIndexOf(input.cycleAnchorDate, cycleRule, startDate) : null
-  const chainAnchor = onChain != null ? input.cycleAnchorDate! : startDate
-  const chainOffset = onChain ?? 0
+  // Every cycle's dates, up front: they follow the main pay, including any
+  // change to its schedule from a date (cycleRun).
+  const run = cycleRun(startDate, primary, numCycles, input.cycleAnchorDate)
 
   // A card only reaches the forecast once its strategy is committed. Before
   // that the Credit page is a simulator and nothing here changes.
@@ -296,13 +354,17 @@ export function projectCycles(input: CycleInput): CycleResult[] {
   const plannedByGoal: Record<string, number> = {}
 
   for (let i = 0; i < numCycles; i++) {
-    const cycleEnd = cycleEndAt(chainAnchor, cycleRule, chainOffset + i)
+    const cycleEnd = run[i].end
+    // How pay repeats in this cycle — a budget that repeats the same way is
+    // its full amount per cycle.
+    const cycleRule = ruleOf(primary ? scheduleOn(primary, cycleStart) : undefined)
 
     // ── income ──────────────────────────────────────────────────────
     let committedIncomeCents = 0
     let potentialIncomeCents = 0
     for (const src of incomeSources) {
-      const occs  = getOccurrencesInRange(src.anchorDate, src.frequency, cycleStart, cycleEnd, undefined, src.everyN ?? 1)
+      // Follows any schedule change and stops at the pay's end date.
+      const occs  = occurrencesOf(src, cycleStart, cycleEnd)
       // Each pay at the amount in force on its own date; a one-cycle amount
       // replaces the lot, but only in a cycle the pay actually falls in.
       const usual = occs.reduce((sum, d) => sum + getAmountOn(src.amountVersions ?? [], src.amountCents, d), 0)
@@ -330,7 +392,7 @@ export function projectCycles(input: CycleInput): CycleResult[] {
           ? getOccurrencesInRange(exp.anchorDate, 'once', cycleStart, cycleEnd, exp.endDate).length > 0
           : from <= to
       } else {
-        const occs   = getOccurrencesInRange(exp.anchorDate, exp.frequency, cycleStart, cycleEnd, exp.endDate, exp.everyN ?? 1)
+        const occs   = occurrencesOf(exp, cycleStart, cycleEnd)
         // Each payment at the amount in force on its own date.
         usual        = occs.reduce((sum, d) => sum + getAmountOn(exp.amountVersions, exp.amountCents, d), 0)
         fallsInCycle = occs.length > 0
@@ -467,7 +529,7 @@ export function projectCycles(input: CycleInput): CycleResult[] {
     })
 
     committedBalance = committedClosingBalanceCents
-    cycleStart = cycleStartAt(chainAnchor, cycleRule, chainOffset + i + 1)
+    cycleStart = run[i + 1]?.start ?? formatDate(addDays(parseDate(cycleEnd), 1))
   }
 
   return results

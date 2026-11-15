@@ -3,6 +3,17 @@
 // caller behaves exactly as before.
 export type Frequency = 'once' | 'daily' | 'weekly' | 'fortnightly' | 'monthly' | 'annually'
 
+// A schedule from a date: from effectiveFrom on, the item repeats like this
+// instead. Before it, the item's own frequency, everyN and anchorDate apply.
+// The schedule twin of AmountVersion: a change from a date never rewrites
+// payments that already happened, and the item stays one item with one history.
+export interface ScheduleVersion {
+  effectiveFrom: string
+  frequency: Frequency
+  everyN?: number
+  anchorDate: string
+}
+
 // AmountVersion — a dated amount record. The engine picks the latest
 // version whose effectiveFrom <= the cycle start date, so you can have
 // per-cycle overrides and permanent changes on the same expense.
@@ -21,6 +32,9 @@ export interface IncomeSource {
   // own date. Optional so older callers still compile; missing means
   // amountCents for every pay, which is what the engine did before.
   amountVersions?: AmountVersion[]
+  // Schedules from a date, newest written first. Missing = one schedule.
+  schedules?: ScheduleVersion[]
+  endDate?: string      // last date a pay can fall on; missing = no end
   isPotential: boolean
   isPrimary: boolean    // identifies which income source drives cycle length —
                          // without this, projectCycles() falls back to array
@@ -37,6 +51,7 @@ export interface Expense {
   amountVersions: AmountVersion[]
   mode: 'fixed' | 'variable' | 'budget'
   endDate?: string             // last date this can occur on. undefined = recurs forever (default, unchanged behaviour). Powers lay-by self-retirement.
+  schedules?: ScheduleVersion[] // schedules from a date, newest written first. Missing = one schedule.
 }
 
 // ── credit ────────────────────────────────────────────────────────

@@ -318,3 +318,97 @@ describe('cycles counted from the first one', () => {
     expect(b).toEqual(a)
   })
 })
+
+// ── schedules from a date ───────────────────────────────────────────
+import { occurrencesOf, scheduleOn } from './recurrence'
+import { cycleRun, nextCycleFor } from './engine'
+
+describe('a schedule change from a date', () => {
+  const gym = bill({ id: 'gym', frequency: 'weekly', anchorDate: '2026-11-02', amountCents: 2000,
+    schedules: [{ effectiveFrom: '2026-12-01', frequency: 'monthly', anchorDate: '2026-12-15' }] })
+
+  it('the old schedule runs to the day before, the new one from the date', () => {
+    expect(occurrencesOf(gym, '2026-11-20', '2027-01-31'))
+      .toEqual(['2026-11-23', '2026-11-30', '2026-12-15', '2027-01-15'])
+  })
+
+  it('earlier payments never change', () => {
+    expect(occurrencesOf(gym, '2026-11-01', '2026-11-30'))
+      .toEqual(occurrencesOf({ ...gym, schedules: [] }, '2026-11-01', '2026-11-30'))
+  })
+
+  it('the schedule in force on a date', () => {
+    expect(scheduleOn(gym, '2026-11-30').frequency).toBe('weekly')
+    expect(scheduleOn(gym, '2026-12-01').frequency).toBe('monthly')
+  })
+
+  it('two changes saved for the same date: the newest written wins', () => {
+    const b = bill({ frequency: 'monthly', anchorDate: '2026-11-12', schedules: [
+      { effectiveFrom: '2026-12-01', frequency: 'monthly', anchorDate: '2026-12-20' },   // newest
+      { effectiveFrom: '2026-12-01', frequency: 'monthly', anchorDate: '2026-12-05' },
+    ] })
+    expect(occurrencesOf(b, '2026-12-01', '2026-12-31')).toEqual(['2026-12-20'])
+  })
+
+  it('the end date still stops it, under the new schedule too', () => {
+    expect(occurrencesOf({ ...gym, endDate: '2026-12-31' }, '2026-11-20', '2027-02-28'))
+      .toEqual(['2026-11-23', '2026-11-30', '2026-12-15'])
+  })
+
+  it('in the projection: the cycle the change falls in mixes both', () => {
+    const out = run({ expenses: [gym], numCycles: 4 })
+    // 5–18 Nov: 9, 16 · 19 Nov–2 Dec: 23, 30 · 3–16 Dec: 15 · 17–30 Dec: none
+    expect(out.map(c => c.fixedExpensesCents)).toEqual([4000, 4000, 2000, 0])
+  })
+
+  it('a budget changed to a different period counts each stretch at its own rate', () => {
+    // $100 a week until 12 Nov, then $300 a fortnight
+    const b = budget({ frequency: 'weekly', amountCents: 10000, amountVersions: [
+      { amountCents: 30000, effectiveFrom: '2026-11-12' },
+      { amountCents: 10000, effectiveFrom: '2026-01-01' },
+    ], schedules: [{ effectiveFrom: '2026-11-12', frequency: 'fortnightly', anchorDate: '2026-11-12' }] })
+    // 7 days at $100/7 days + 7 days at the full-cycle rate of $300/14 days
+    expect(budgetAmountForCycle(b, '2026-11-05', '2026-11-18', { frequency: 'fortnightly' })).toBe(25000)
+  })
+})
+
+describe('pay that ends', () => {
+  it('stops after its end date', () => {
+    const job = pay({ endDate: '2026-11-25' })
+    expect(run({ incomeSources: [job] }).map(c => c.committedIncomeCents)).toEqual([230000, 230000, 0])
+  })
+})
+
+describe('cycles when the pay schedule changes', () => {
+  const salary = pay({ schedules: [{ effectiveFrom: '2027-01-07', frequency: 'monthly', anchorDate: '2027-01-07' }] })
+
+  it('the running cycle ends the day before; monthly cycles from the date', () => {
+    const r = cycleRun('2026-12-03', salary, 4, '2026-11-05')
+    expect(r).toEqual([
+      { start: '2026-12-03', end: '2026-12-16' },
+      { start: '2026-12-17', end: '2026-12-30' },
+      { start: '2026-12-31', end: '2027-01-06' },   // a short last fortnightly cycle
+      { start: '2027-01-07', end: '2027-02-06' },
+    ])
+  })
+
+  it('closing a cycle uses the same dates', () => {
+    expect(nextCycleFor('2026-12-31', salary, '2026-11-05')).toEqual({ start: '2027-01-07', end: '2027-02-06' })
+  })
+
+  it('a projection starting after the change counts from it', () => {
+    expect(cycleRun('2027-03-07', salary, 1, '2026-11-05')).toEqual([{ start: '2027-03-07', end: '2027-04-06' }])
+  })
+
+  it('in the projection: pay follows the new schedule and the cycles move with it', () => {
+    const out = run({ incomeSources: [salary], startDate: '2026-12-03', numCycles: 4, cycleAnchorDate: '2026-11-05' })
+    expect(out.map(c => [c.startDate, c.committedIncomeCents])).toEqual([
+      ['2026-12-03', 230000], ['2026-12-17', 230000], ['2026-12-31', 230000], ['2027-01-07', 230000],
+    ])
+  })
+
+  it('no schedule changes: identical to before', () => {
+    const a = cycleRun('2026-11-05', pay(), 6, '2026-06-25')
+    expect(a.map(c => c.start)).toEqual(['2026-11-05', '2026-11-19', '2026-12-03', '2026-12-17', '2026-12-31', '2027-01-14'])
+  })
+})
