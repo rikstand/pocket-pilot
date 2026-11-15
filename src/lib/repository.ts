@@ -90,6 +90,8 @@ export async function addIncomeSource(
     amountCents: number
     isPotential?: boolean
     isPrimary?: boolean
+    everyN?: number          // every N of frequency (Journey 9's Custom)
+    endDate?: string | null  // last payment on or before
   }
 ) {
   const row: Record<string, unknown> = {
@@ -99,6 +101,8 @@ export async function addIncomeSource(
     frequency: income.frequency,
     anchor_date: income.anchorDate,
   }
+  if (income.everyN !== undefined) row.every_n = income.everyN
+  if (income.endDate) row.end_date = income.endDate
   if (income.isPotential !== undefined) row.is_potential = income.isPotential
   if (income.isPrimary !== undefined) row.is_primary = income.isPrimary
 
@@ -224,6 +228,8 @@ export async function addExpense(
     mode: 'fixed' | 'variable' | 'budget'
     amountCents: number
     icon?: string
+    everyN?: number          // every N of frequency (Journey 9's Custom)
+    endDate?: string | null  // last payment on or before
   }
 ) {
   const row: Record<string, unknown> = {
@@ -235,6 +241,8 @@ export async function addExpense(
     mode: expense.mode,
   }
   if (expense.icon !== undefined) row.icon = expense.icon
+  if (expense.everyN !== undefined) row.every_n = expense.everyN
+  if (expense.endDate) row.end_date = expense.endDate
 
   const { data: exp, error: e1 } = await supabase
     .from('expenses')
@@ -282,6 +290,17 @@ export async function reactivateExpense(expenseId: string) {
 
 export async function reactivateIncomeSource(incomeId: string) {
   const { error } = await supabase.from('income_sources').update({ is_active: true }).eq('id', incomeId)
+  if (error) throw error
+}
+
+// Undo for a schedule change from a date: remove the row it wrote.
+export async function deleteExpenseScheduleVersion(versionId: string) {
+  const { error } = await supabase.from('expense_schedule_versions').delete().eq('id', versionId)
+  if (error) throw error
+}
+
+export async function deleteIncomeScheduleVersion(versionId: string) {
+  const { error } = await supabase.from('income_schedule_versions').delete().eq('id', versionId)
   if (error) throw error
 }
 

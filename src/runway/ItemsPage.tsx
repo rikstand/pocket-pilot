@@ -11,7 +11,9 @@ import {
   setExpenseOverride, clearExpenseOverride, setIncomeOverride, clearIncomeOverride,
   setExpenseEndDate, setIncomeEndDate, deactivateExpense, deactivateIncomeSource,
   reactivateExpense, reactivateIncomeSource, archiveExpense, unarchiveExpense,
+  setExpenseScheduleFrom, setIncomeScheduleFrom, deleteExpenseScheduleVersion, deleteIncomeScheduleVersion,
 } from '../lib/repository'
+import { ScheduleFields, ruleOf, type Schedule, type How, type Unit } from './controls'
 import { versionForDate, byOldest } from '../lib/versions'
 import { occurrencesOf } from '../engine/index'
 import { parseDate, formatDate, addDays } from '../engine/dates'
@@ -195,8 +197,11 @@ export default function ItemsPage({ accountId, onNavigate }: { accountId: string
 
   return (
     <div className="rw-page">
-      <div className="rw-page-head">
+      <div className="rw-page-head rw-head-row">
         <div className="rw-page-title">Expenses &amp; income</div>
+        {logSheets && <button type="button" className="rw-addb" onClick={() => logSheets.add()}>+ Add</button>}
+      </div>
+      <div className="rw-page-head" style={{ paddingTop: 0 }}>
         <div className="rw-sub">Everything that repeats. One-offs live in their cycle.</div>
       </div>
 
@@ -258,7 +263,7 @@ function amountOn(row: any, date: string) {
 }
 
 /* ── the item sheet: change the amount, stop it, or delete it ──────── */
-type Mode = 'amount' | 'stop' | 'delete'
+type Mode = 'amount' | 'stop' | 'delete' | 'sched'
 
 function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
   item: Item; rows: ForecastResult; floorCents: number; accountId: string
@@ -286,6 +291,9 @@ function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
   const [from, setFrom] = useState(item.next[0] ?? t)
   const [stopAt, setStopAt] = useState<string>(item.next[0] ?? 'now')
   const [busy, setBusy] = useState(false)
+  const [sched, setSched] = useState<Schedule>(() => scheduleFromRow(r, item.next[0] ?? t))
+  const [schedFrom, setSchedFrom] = useState(item.next[0] ?? t)
+  const nextPays = rows.cycles.slice(1, 4).map(c => c.startDate)
 
   const cents = Math.max(0, Math.round((parseFloat(amt) || 0) * 100))
   const opts = more ? item.next.slice(0, 12) : item.next.slice(0, 3)
@@ -297,6 +305,12 @@ function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
       ? { ...rows, incomeRows: rows.incomeRows.map(x => x.id === r.id ? fn(x) : x).filter(Boolean) }
       : { ...rows, expenseRows: rows.expenseRows.map(x => x.id === r.id ? fn(x) : x).filter(Boolean) }
     if (mode === 'delete') return editRow(() => null)
+    if (mode === 'sched') {
+      const sKey = item.isIncome ? 'income_schedule_versions' : 'expense_schedule_versions'
+      const rule = ruleOf(sched)
+      return editRow(x => ({ ...x, [sKey]: [...(x[sKey] ?? []),
+        { effective_from: schedFrom, frequency: rule.frequency, every_n: rule.everyN, anchor_date: sched.first, created_at: '9999' }] }))
+    }
     if (mode === 'stop') return editRow(x => ({ ...x, end_date: stopAt === 'now' ? shift(t, -1) : stopAt }))
     if (scope === 'from') return editRow(x => ({ ...x, [vKey]: [...(x[vKey] ?? []), { effective_from: from, amount_cents: cents, created_at: '9999' }] }))
     const total = cents * inThisCycle.length
@@ -315,8 +329,11 @@ function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
   const anyway = st && st.level === 'under' && st.worse ? ' anyway' : ''
 
   // Where each payment lands, as a position between paydays on the preview.
-  const ticks = mode === 'amount'
-    ? (scope === 'one' ? inThisCycle : item.next.filter(d => d >= from)).flatMap(d => {
+  const tickDates = mode === 'sched'
+    ? occurrencesOf({ ...eng, schedules: [{ effectiveFrom: schedFrom, frequency: ruleOf(sched).frequency, everyN: ruleOf(sched).everyN, anchorDate: sched.first }, ...(eng.schedules ?? [])] } as any, schedFrom, far())
+    : mode === 'amount' ? (scope === 'one' ? inThisCycle : item.next.filter(d => d >= from)) : []
+  const ticks = tickDates.length
+    ? tickDates.flatMap(d => {
         const i = rows.cycles.findIndex(c => d >= c.startDate && d <= c.endDate)
         if (i < 0 || i >= PREVIEW_PAYS) return []
         const c = rows.cycles[i]
@@ -362,6 +379,26 @@ function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
       }
       onSaved()
     } catch (e: any) { alert('Could not save: ' + e.message) }
+    finally { setBusy(false) }
+  }
+
+  async function saveSched() {
+    setBusy(true)
+    const rule = ruleOf(sched)
+    const sKey = item.isIncome ? 'income_schedule_versions' : 'expense_schedule_versions'
+    const prev = (r[sKey] ?? []).find((v: any) => v.effective_from === schedFrom) ?? null
+    const change = { effectiveFrom: schedFrom, frequency: rule.frequency, everyN: rule.everyN, anchorDate: sched.first }
+    try {
+      const written = item.isIncome ? await setIncomeScheduleFrom(r.id, accountId, change) : await setExpenseScheduleFrom(r.id, accountId, change)
+      toast(`${r.name}: new schedule from ${short(schedFrom)}`, { undo: async () => {
+        if (prev) {
+          const back = { effectiveFrom: schedFrom, frequency: prev.frequency, everyN: prev.every_n ?? 1, anchorDate: prev.anchor_date }
+          if (item.isIncome) await setIncomeScheduleFrom(r.id, accountId, back); else await setExpenseScheduleFrom(r.id, accountId, back)
+        } else if (item.isIncome) await deleteIncomeScheduleVersion(written.id); else await deleteExpenseScheduleVersion(written.id)
+        notifyDataChanged()
+      } })
+      onSaved()
+    } catch (e: any) { alert('Could not change it: ' + e.message) }
     finally { setBusy(false) }
   }
 
@@ -449,7 +486,7 @@ function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
 
           {history.length > 0 && (
             <div className="rw-card">
-              <div className="rw-pv-k"><span>Real bills, last {history.length}</span>
+              <div className="rw-pv-k"><span>Confirmed amounts, last {history.length}</span>
                 <span>avg {money(history.reduce((s: number, o: any) => s + o.amount_cents, 0) / history.length)}</span></div>
               <HistoryBars values={history.map((o: any) => o.amount_cents)} line={item.amountCents} lineLabel={`estimate ${money(item.amountCents)}`} money={money} />
             </div>
@@ -457,6 +494,13 @@ function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
 
           {!isPrimary && (
             <div className="rw-group flush" style={{ marginTop: 12 }}>
+              <button type="button" className="rw-row" onClick={() => setMode('sched')}>
+                <div className="rw-tx">
+                  <div className="rw-row-name">Change how often</div>
+                  <div className="rw-sub">From a date. Earlier payments stay as they were</div>
+                </div>
+                <span className="rw-chev">›</span>
+              </button>
               <button type="button" className="rw-row" onClick={() => setMode(hasPast ? 'stop' : 'delete')}>
                 <div className="rw-tx">
                   <div className="rw-row-name rw-danger">{hasPast ? `Stop ${r.name}` : `Delete ${r.name}`}</div>
@@ -466,6 +510,24 @@ function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
               </button>
             </div>
           )}
+        </>}
+
+        {mode === 'sched' && <>
+          <div className="rw-note">Payments before the date you pick keep their old schedule, so your history stays as it was.</div>
+          <div className="rw-lab">Change from</div>
+          <div className="rw-chips">
+            {item.next.slice(0, 3).map(d => (
+              <button key={d} type="button" className={schedFrom === d ? 'on' : ''}
+                onClick={() => { setSchedFrom(d); if (sched.first < d) setSched({ ...sched, first: d }) }}>{dayName(d)}</button>
+            ))}
+          </div>
+          <ScheduleFields value={sched} onChange={setSched} today={t} payDates={nextPays} min={schedFrom}
+            firstLabel="First payment on the new schedule" repeatOnly />
+          {preview}
+          <div className="rw-ctas">
+            <button type="button" className="rw-cta sec" onClick={() => setMode('amount')}>Back</button>
+            <button type="button" className="rw-cta" disabled={busy} onClick={saveSched}>Change from {short(schedFrom)}{anyway}</button>
+          </div>
         </>}
 
         {mode === 'stop' && <>
@@ -520,4 +582,13 @@ export function HistoryBars({ values, line, lineLabel, money }: {
       <text x="294" y={ly - 4} fontSize="9" fill="var(--rw-muted)" textAnchor="end" fontWeight="700">{lineLabel}</text>
     </svg>
   )
+}
+
+/** The form's starting point: the item's schedule as it is now. */
+function scheduleFromRow(r: any, first: string): Schedule {
+  const n = Math.max(1, r.every_n ?? 1)
+  const simple: Record<string, How> = { weekly: 'weekly', fortnightly: 'fortnightly', monthly: 'monthly', annually: 'annually' }
+  const how: How = n === 1 && simple[r.frequency] ? simple[r.frequency] : 'custom'
+  const unit: Unit = r.frequency === 'fortnightly' ? 'weekly' : (['daily', 'weekly', 'monthly', 'annually'].includes(r.frequency) ? r.frequency : 'monthly')
+  return { how, n: r.frequency === 'fortnightly' ? n * 2 : n, unit, first, ends: 'never', endDate: first, count: 4 }
 }

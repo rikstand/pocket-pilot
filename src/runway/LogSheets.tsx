@@ -15,6 +15,7 @@ import { parseDate, formatDate, addDays } from '../engine/dates'
 import { notifyDataChanged } from '../lib/dataEvents'
 import { useToast } from './toastContext'
 import { LogContext, type LogApi } from './logContext'
+import AddSheet from './AddSheet'
 
 /**
  * Journey 5: one sheet to log spend, behind both + buttons, and a budget's
@@ -25,6 +26,7 @@ import { LogContext, type LogApi } from './logContext'
 type View =
   | { kind: 'log'; budgetId?: string; fromPlus: boolean; entry?: any; back?: string }
   | { kind: 'budget'; budgetId: string }
+  | { kind: 'add' }
 
 interface Data {
   start: string
@@ -51,10 +53,9 @@ const dayName = (d: string, month = true) => parseDate(d).toLocaleDateString('en
   month ? { weekday: 'short', day: 'numeric', month: 'short' } : { weekday: 'short', day: 'numeric' }).replace(',', '')
 const LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 
-export function LogSheetsProvider({ accountId, onAddOther, children }: {
+export function LogSheetsProvider({ accountId, userId, children }: {
   accountId: string
-  // "Add a bill, one-off or income": today's add flow until Journey 9.
-  onAddOther: () => void
+  userId: string
   children: ReactNode
 }) {
   const { activeAccount } = useAccount()
@@ -93,12 +94,14 @@ export function LogSheetsProvider({ accountId, onAddOther, children }: {
   }
 
   // Fresh data every time a sheet opens: spend may have changed elsewhere.
-  const opening = view !== null
+  // (The Add form loads its own.)
+  const opening = view !== null && view.kind !== 'add'
   useEffect(() => { if (opening) load() }, [opening, accountId])
 
   const api = useMemo<LogApi>(() => ({
     log: (budgetId?: string) => setView({ kind: 'log', budgetId, fromPlus: !budgetId }),
     budget: (budgetId: string) => setView({ kind: 'budget', budgetId }),
+    add: () => setView({ kind: 'add' }),
   }), [])
 
   const close = () => setView(null)
@@ -110,7 +113,8 @@ export function LogSheetsProvider({ accountId, onAddOther, children }: {
         <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget) close() }}>
           <div className="rw-sheet" role="dialog" aria-modal="true">
             <div className="rw-grab" />
-            {error ? <div className="rw-sd">{error}</div>
+            {view.kind === 'add' ? <AddSheet accountId={accountId} userId={userId} onClose={close} />
+              : error ? <div className="rw-sd">{error}</div>
               : !data ? <div className="rw-sd">Loading…</div>
               : view.kind === 'budget'
                 ? <BudgetSheet data={data} budgetId={view.budgetId} onClose={close} accountId={accountId}
@@ -123,7 +127,7 @@ export function LogSheetsProvider({ accountId, onAddOther, children }: {
                       notifyDataChanged()
                       if (view.back) { await load(); setView({ kind: 'budget', budgetId: view.back }) } else close()
                     }}
-                    onAddOther={() => { close(); onAddOther() }}
+                    onAddOther={() => setView({ kind: 'add' })}
                     currency={activeAccount?.currency_code} />}
           </div>
         </div>
@@ -510,7 +514,7 @@ function LogSheet({ data, accountId, view, onClose, onDone, onAddOther, currency
       <div className="rw-sh-h"><div className="rw-sheet-title">Log spend</div>
         <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>
       <div className="rw-sd" style={{ padding: '12px 2px' }}>No budgets this cycle. Spend is logged against a budget, such as Groceries.</div>
-      <button type="button" className="rw-addo" onClick={onAddOther}>Add a bill, one-off or income ›</button>
+      <button type="button" className="rw-addo" onClick={onAddOther}>Add an expense or income ›</button>
     </>
   )
 
@@ -633,7 +637,7 @@ function LogSheet({ data, accountId, view, onClose, onDone, onAddOther, currency
         </button>
       </div>
       {!e && view.fromPlus && (
-        <button type="button" className="rw-addo" onClick={onAddOther}>Add a bill, one-off or income ›</button>
+        <button type="button" className="rw-addo" onClick={onAddOther}>Add an expense or income ›</button>
       )}
     </>
   )

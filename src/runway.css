@@ -500,3 +500,48 @@ body.is-runway #root { border-inline: none; }
 .rw-row:disabled { cursor: default; opacity: .6; }
 .rw-tkl { display: flex; align-items: center; gap: 5px; padding: 2px 0 0; font: var(--rw-text-sub); font-size: 9.5px; color: var(--rw-muted); }
 .rw-tkl i { width: 2.4px; height: 7px; border-radius: 2px; background: var(--rw-line); }
+
+/* ═══ Add and change how often (Journey 9) ═══════════════════════════ */
+.rw-head-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.rw-addb { border: none; border-radius: var(--rw-radius-pill); padding: 7px 12px; cursor: pointer; background: var(--rw-action); font: var(--rw-text-row-name); font-size: 12px; font-weight: 700; }
+.rw .rw-addb { color: var(--rw-action-ink); }
+.rw-type-line { display: flex; align-items: center; gap: 6px; margin: 6px 2px 0; font: var(--rw-text-sub); color: var(--rw-muted); }
+
+/* Text field: a name or label. Same surface and radius as the amount field. */
+.rw-field {
+  width: 100%; margin-top: 10px; border: 1.5px solid var(--rw-hairline); background: var(--rw-surface);
+  border-radius: var(--rw-radius-md); padding: 11px 12px; outline: none; color: var(--rw-ink); font: var(--rw-text-row-name); font-size: 14px;
+}
+.rw-field:focus { border-color: var(--rw-ink); }
+.rw-field::placeholder { color: var(--rw-muted); font-weight: 500; }
+
+.rw-seg.sm button { padding: 5px 7px; font-size: 11px; }
+
+/* Stepper: small square buttons in a grey pill. */
+.rw-stepper { display: inline-flex; align-items: center; gap: 2px; background: var(--rw-surface-2); border-radius: var(--rw-radius-pill); padding: 3px; }
+.rw-stepper button { width: 28px; height: 28px; border: none; border-radius: 8px; background: var(--rw-surface); cursor: pointer; font-size: 15px; }
+.rw-stepper button:disabled { opacity: .4; cursor: default; }
+.rw-stepper b { min-width: 26px; text-align: center; font: var(--rw-text-tile); }
+.rw-every { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; font: var(--rw-text-row-name); }
+
+/* Date chips: two lines, the date then what it is. radius-md, the one
+   exception to pill chips. Custom opens the phone's own date picker. */
+.rw-dchips { display: flex; flex-wrap: wrap; gap: 6px; }
+.rw-dchips > button, .rw-dchip-custom {
+  position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; cursor: pointer;
+  border: 1px solid var(--rw-hairline); background: var(--rw-surface); border-radius: var(--rw-radius-md); padding: 6px 10px; text-align: left;
+}
+.rw-dchips b { font: var(--rw-text-row-name); font-size: 12px; }
+.rw-dchips span { font: var(--rw-text-label); font-size: 9.5px; font-weight: 600; color: var(--rw-muted); }
+.rw .rw-dchips .on { background: var(--rw-ink); border-color: var(--rw-ink); color: var(--rw-bg); }
+.rw-dchips .on span { color: var(--rw-bg); opacity: .7; }
+.rw-dchip-custom input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+
+.rw-next { margin-top: 10px; font: var(--rw-text-sub); font-size: 11.5px; color: var(--rw-muted); }
+
+/* Set money aside for it: a suggestion with a switch, never on by default. */
+.rw-sug { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 9px 11px; border-radius: var(--rw-radius-md);
+  background: var(--rw-surface); border: 1.5px dashed var(--rw-hairline); font: var(--rw-text-body); font-size: 12px; }
+.rw-sug > div { flex: 1; }
+.rw-sug b { font: var(--rw-text-row-name); }
+.rw-sug small { display: block; font: var(--rw-text-sub); font-size: 10.5px; color: var(--rw-muted); margin-top: 1px; }

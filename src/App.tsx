@@ -98,7 +98,7 @@ function AuthedApp({ userId }: { userId: string }) {
   )
 
   if (newLook) return (
-    <LogSheetsProvider accountId={activeAccount.id} onAddOther={addFromShell}>
+    <LogSheetsProvider accountId={activeAccount.id} userId={userId}>
     <RunwayShell
       active={shown}
       onNavigate={navigate}

@@ -10,6 +10,8 @@ export interface LogApi {
   log: (budgetId?: string) => void
   /** A budget's spend this cycle. */
   budget: (budgetId: string) => void
+  /** Add an expense or income (Journey 9). */
+  add: () => void
 }
 
 export const LogContext = createContext<LogApi | null>(null)
