@@ -13,7 +13,7 @@ import { useToast } from './toastContext'
 import { Segmented, DateChips, TextField } from './controls'
 import Preview from './Preview'
 import CardSheet, { type CardMode } from './CardSheet'
-import { KeyDone } from './LegendKeys'
+import { KeyDone, KeyLands } from './LegendKeys'
 
 /**
  * Journey 2: Plan › Credit in the new look. What's owing, when it's cleared,
@@ -107,10 +107,8 @@ export default function CreditPlan({ accountId }: { accountId: string }) {
       <div className="rw-cp-hero">
         <div>
           <div className="k">Owing</div>
-          <button type="button" className="rw-cp-bal" aria-label="Update the card balance" onClick={() => setSheet({ kind: 'card', mode: 'balance' })}>
-            {money(owingToday)}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z" /></svg>
-          </button>
-          <div className="s">{lastSnap ? <>Updated <b>{short(lastSnap.as_of_date)}</b></> : 'Tap to update'}</div>
+          <div className="rw-cp-bal">{money(owingToday)}</div>
+          <div className="s">{lastSnap ? <>Updated <b>{short(lastSnap.as_of_date)}</b></> : 'Not updated yet'}</div>
         </div>
         <div className="r"><div className="k">Debt free</div><div className="v">{debtFree}</div></div>
       </div>
@@ -144,6 +142,12 @@ export default function CreditPlan({ accountId }: { accountId: string }) {
             <span className="rw-chev">›</span>
           </button>
         )}
+        <button type="button" className="rw-row" onClick={() => setSheet({ kind: 'card', mode: 'balance' })}>
+          <span className="rw-cp-cal" />
+          <div className="rw-tx"><div className="rw-row-name">Update card balance</div>
+            <div className="rw-sub">What your banking app shows now{lastSnap ? ` · last ${short(lastSnap.as_of_date)}` : ''}</div></div>
+          <span className="rw-chev">›</span>
+        </button>
         <button type="button" className="rw-row" onClick={() => setSheet({ kind: 'details' })}>
           <span className="rw-cp-gear" />
           <div className="rw-tx"><div className="rw-row-name">Card details</div>
@@ -253,7 +257,7 @@ function CardChart({ rows, k0, snaps, committed, ahead, money }: {
         <span><i className="ln" style={{ borderTopColor: 'var(--rw-ink)' }} />your updates</span>
         <span><i className="ln" />your plan</span>
         {clearedAt >= 0 && <span><KeyDone />cleared</span>}
-        {changeIdx.length > 0 && <span><i className="fl" style={{ borderTopColor: 'var(--rw-ink)' }} />plan changes</span>}
+        {changeIdx.length > 0 && <span><KeyLands />plan changes</span>}
       </div>
     </div>
   )

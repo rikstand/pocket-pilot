@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { parseDate } from '../engine/dates'
-import { KeyDone } from './LegendKeys'
+import { KeyDone, KeyLands } from './LegendKeys'
 
 /**
  * The universal preview: what a change does to each payday. One component
@@ -70,7 +70,6 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
       <div className="rw-card rw-pv">
         <div className="rw-pv-k">
           <span>{title ?? 'Left before each payday'}</span>
-          <span className="rw-pv-lg"><i className="gh" />now<i className="nw" />new<i className="fl" />floor</span>
         </div>
         <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Left before each payday, now and with this change" className="rw-pv-svg"
           onPointerMove={e => {
@@ -99,7 +98,7 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
               <path d={`M${cx - 2.6} ${cy}l1.8 1.9 3.4-3.6`} fill="none" stroke="var(--rw-surface)" strokeWidth="1.6" strokeLinecap="round" /></g>
           })()}
           {ticks.filter(f => f >= 0 && f <= n - 1).map((f, k) => (
-            <line key={'t' + k} x1={X(f)} x2={X(f)} y1={B + 1} y2={B + 7} stroke="var(--rw-line)" strokeWidth="2.4" strokeLinecap="round" />
+            <line key={'t' + k} x1={X(f)} x2={X(f)} y1={T} y2={B} stroke="var(--rw-ink)" strokeWidth="1.2" strokeDasharray="2 3" opacity=".45" />
           ))}
           {scrub != null && (() => {
             const sx = X(scrub), left = scrub > (n - 1) / 2
@@ -118,8 +117,14 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
               textAnchor={k === 0 ? 'start' : k === axis.length - 1 ? 'end' : 'middle'}>{short(payDates[i])}</text>
           ))}
         </svg>
-        {ticks.some(f => f >= 0 && f <= n - 1) && <div className="rw-tkl"><i />when it lands</div>}
-        {done?.next != null && <div className="rw-tkl"><KeyDone />card cleared</div>}
+        {/* One legend row under the chart, as on Forecast and the card chart. */}
+        <div className="rw-legend">
+          <span><i className="ln" style={{ borderTopColor: 'var(--rw-ink)', opacity: .3 }} />now</span>
+          <span><i className="ln" />new</span>
+          <span><i className="fl" />floor</span>
+          {ticks.some(f => f >= 0 && f <= n - 1) && <span><KeyLands />when it lands</span>}
+          {done?.next != null && <span><KeyDone />card cleared</span>}
+        </div>
       </div>
 
       <div className="rw-tiles">

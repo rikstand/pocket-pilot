@@ -686,10 +686,7 @@ body.is-runway #root { border-inline: none; }
 .rw-cp-hero .s b { color: var(--rw-ink); font-weight: 650; }
 .rw-cp-hero .r { text-align: right; }
 .rw-cp-hero .r .v { font: var(--rw-text-tile); font-size: 17px; letter-spacing: -.02em; }
-.rw-cp-bal { display: flex; align-items: center; gap: 6px; background: none; border: none; padding: 0; cursor: pointer;
-  font: var(--rw-text-amount); font-size: 32px; letter-spacing: -.045em; line-height: 1.05; }
-.rw .rw-cp-bal { color: var(--rw-ink); }
-.rw-cp-bal svg { width: 15px; height: 15px; color: var(--rw-muted); }
+.rw-cp-bal { font: var(--rw-text-amount); font-size: 32px; letter-spacing: -.045em; line-height: 1.05; }
 .rw-cp-scrub { display: flex; align-items: center; gap: 8px; padding: 4px 10px 2px; min-height: 22px; font: var(--rw-text-sub); font-size: 11.5px; }
 .rw-cp-scrub b { font-weight: 650; }
 .rw-cp-scrub span { color: var(--rw-muted); font-size: 10.5px; }

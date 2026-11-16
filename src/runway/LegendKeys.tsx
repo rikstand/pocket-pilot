@@ -21,3 +21,12 @@ export function KeyDone() {
     </svg>
   )
 }
+
+/** "When it lands" / "plan changes": the dashed upright line drawn on the chart. */
+export function KeyLands() {
+  return (
+    <svg className="rw-key" width="7" height="12" viewBox="0 0 7 12" aria-hidden="true">
+      <line x1="3.5" x2="3.5" y1="0.5" y2="11.5" stroke="var(--rw-ink)" strokeWidth="1.4" strokeDasharray="2 2" opacity=".6" />
+    </svg>
+  )
+}
