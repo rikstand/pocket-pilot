@@ -82,7 +82,7 @@ export interface CreditAccount {
   minPaymentFloorCents: number   // e.g. 1000 = $10
   assumedSpendCents: number      // expected new spending per cycle
   strategyExtraCents: number     // committed extra above the minimum
-  strategyCommitted: boolean     // nothing reaches the forecast until true
+  strategyCommitted: boolean     // false = no plan chosen yet: the forecast pays the minimum only
 
   // How the committed plan pays, chosen by the user on the Credit page:
   //   'minimum' — only what the card agreement asks

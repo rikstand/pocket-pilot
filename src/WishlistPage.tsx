@@ -6,6 +6,7 @@ import {
   commitWishlistItem, uncommitWishlistItem, deleteWishlistItem,
 } from './lib/repository'
 import { loadForecast, cycleTickLabel, cycleDateLabel, baseYearOf } from './lib/forecast'
+import { savedSoFarCents } from './lib/savings'
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
 import { parseDate, formatDate, addDays, addMonths, addYears } from './engine/dates'
@@ -225,6 +226,7 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
   const [items,     setItems]     = useState<any[]>([])
   const [goals,     setGoals]     = useState<any[]>([])
   const [contribs,  setContribs]  = useState<any[]>([])
+  const [savOverrides, setSavOverrides] = useState<any[]>([])
   const [cycles,    setCycles]    = useState<any[]>([])
   const [loading,   setLoading]   = useState(true)
   const [error,     setError]     = useState('')
@@ -267,6 +269,7 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
         setItems(wishlist)
         setGoals(goalRows ?? [])
         setContribs(contribRows ?? [])
+        setSavOverrides(forecast.savingsOverrideRows ?? [])
         setCycles(forecast.cycles)
       } catch (e: any) { setError(e.message) }
       finally { setLoading(false) }
@@ -298,9 +301,8 @@ export default function WishlistPage({ userId, accountId }: { userId: string; ac
     return goals.find((g: any) => g.id === item.savings_goal_id && g.status === 'active') ?? null
   }
   function savedFor(goal: any) {
-    if (!goal) return 0
-    if (goal.adjusted_total_cents != null) return goal.adjusted_total_cents
-    return contribs.filter((c: any) => c.savings_goal_id === goal.id).length * goal.per_cycle_cents
+    // The same sum the forecast uses (lib/savings), so the two can't disagree.
+    return savedSoFarCents(goal, contribs, savOverrides)
   }
 
   const committedWithRisk = committedItems.map(item => {

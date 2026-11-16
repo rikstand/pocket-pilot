@@ -79,7 +79,15 @@ export default function CloseSheet(p: Props) {
         closingCents: opening,
         enteredCents: real,
         payIn: landed === 'yes',
-        actuals: p.estimates.map(e => ({ expense_id: e.id, actual_amount_cents: e.confirmed ? e.estimatedCents : cents(actuals[e.id] ?? '') })),
+        // $0 is a real answer ("it didn't come this cycle") and is saved. A
+        // field left blank is not an answer: it stays unconfirmed, and can be
+        // corrected later in Past cycles.
+        actuals: p.estimates.flatMap(e => {
+          if (e.confirmed) return [{ expense_id: e.id, actual_amount_cents: Math.max(0, e.estimatedCents) }]
+          const typed = (actuals[e.id] ?? '').trim()
+          if (typed === '' || isNaN(parseFloat(typed))) return []
+          return [{ expense_id: e.id, actual_amount_cents: Math.max(0, cents(typed)) }]
+        }),
       })
       setDone(true)
     } catch (e: any) {

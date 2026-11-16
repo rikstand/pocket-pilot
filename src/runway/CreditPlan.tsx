@@ -92,7 +92,7 @@ export default function CreditPlan({ accountId }: { accountId: string }) {
   const saved = committed ? interest(minRun) - interest(cycles) : 0
 
   const planWords = (m: Mode, x: number) => m === 'spare' ? 'Whatever’s spare' : m === 'minimum' || !x ? 'Minimum only' : `Min + ${money(x)} a cycle`
-  const nowWords = committed ? planWords(planModeOf(inForce), inForce.strategy_extra_cents ?? 0) : 'Not set · nothing reaches your forecast yet'
+  const nowWords = committed ? planWords(planModeOf(inForce), inForce.strategy_extra_cents ?? 0) : 'Not set · only the minimum is in your forecast'
   const nextChange = ahead[0]
   const isMonthly = (card.payment_frequency ?? 'per_cycle') === 'monthly' && !!card.payment_anchor_date
   const dueDay = card.payment_anchor_date ? parseDate(card.payment_anchor_date).getDate() : null

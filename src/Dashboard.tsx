@@ -31,6 +31,7 @@ import {
 } from './lib/creditSchedule'
 import { loadForecast, projectFromRows, cardWithPlanOn, cycleTickLabel, cycleDateLabel, baseYearOf, baselineChecks, previewBudgetChange, toEngineExpenses, toEngineIncome } from './lib/forecast'
 import type { ForecastResult } from './lib/forecast'
+import { savedSoFarCents } from './lib/savings'
 import { nthOccurrence, occurrencesOf, scheduleOn } from './engine/recurrence'
 import { budgetAmountForCycle, cycleEndAt, nextCycleFor } from './engine/engine'
 import type { CycleRule } from './engine/engine'
@@ -1253,12 +1254,8 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
 
   /** What has actually been confirmed, or a corrected figure if one was given. */
   function savedSoFar(goalId: string): number {
-    const g = goalRow(goalId)
-    if (!g) return 0
-    if (g.adjusted_total_cents != null) return g.adjusted_total_cents
-    return savingsDone
-      .filter((c: any) => c.savings_goal_id === goalId)
-      .reduce((sum: number) => sum + g.per_cycle_cents, 0)
+    // The same sum the forecast uses (lib/savings), so the two can't disagree.
+    return savedSoFarCents(goalRow(goalId), savingsDone, forecastRows?.savingsOverrideRows ?? [])
   }
 
   function isSetAside(goalId: string): boolean {

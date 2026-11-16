@@ -320,6 +320,9 @@ function savingsForCycle(
  * the same way the forecast uses it.
  */
 export function creditPlanOn(card: CreditAccount, cycleStart: string): { mode: 'minimum' | 'extra' | 'spare'; extraCents: number } {
+  // No plan chosen yet: the minimum still goes out. It is due under the card
+  // agreement whether or not a plan has been picked.
+  if (!card.strategyCommitted) return { mode: 'minimum', extraCents: 0 }
   let best: CreditPlanVersion | null = null
   for (const v of card.planVersions ?? []) {
     if (v.effectiveFrom <= cycleStart && (!best || v.effectiveFrom > best.effectiveFrom)) best = v
@@ -380,14 +383,11 @@ export function projectCycles(input: CycleInput): CycleResult[] {
     }
   }
 
-  // A card only reaches the forecast once its strategy is committed. Before
-  // that the Credit page is a simulator and nothing here changes.
-  //
-  // WORTH CONFIRMING: this also means an uncommitted card leaves the minimum
-  // payment out of the forecast, even though a minimum is contractually due.
-  // That overstates available money for anyone who adds a card and never
-  // commits a strategy.
-  const creditActive = !!creditAccount && creditAccount.strategyCommitted
+  // A card is in the forecast as soon as it exists. Until a plan is committed
+  // it pays the minimum only (creditPlanOn): the minimum is due under the card
+  // agreement, so leaving it out made the account look better off than it was
+  // for anyone who added a card and hadn't picked a plan yet (17 Nov 2026).
+  const creditActive = !!creditAccount
 
   let cycleStart       = startDate
   let committedBalance = openingBalanceCents

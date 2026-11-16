@@ -35,6 +35,7 @@ import type {
 import { carriedCardBalance, confirmedPaymentsFrom, cycleDaysOf, planModeOf } from './creditSchedule'
 import { formatDate, parseDate, addDays } from '../engine/dates'
 import { byNewest, latestVersion, versionForDate } from './versions'
+import { savedSoFarCents } from './savings'
 
 // Never toISOString() — this app runs at UTC+12 and that has caused real bugs.
 function todayStr() { return formatDate(new Date()) }
@@ -283,14 +284,15 @@ export function toEngineSavings(
         }
       }
 
-      const confirmed = mine.reduce((sum: number, c: any) => sum + amountOf(c), 0)
       return {
         id: g.id,
         name: g.name,
         targetCents: g.target_cents,
         perCycleCents: g.per_cycle_cents,
         startCycleStart: g.start_cycle_start,
-        savedSoFarCents: g.adjusted_total_cents ?? confirmed,
+        // One shared sum (lib/savings): a corrected total, plus every cycle
+        // confirmed after it.
+        savedSoFarCents: savedSoFarCents(g, contributionRows, overrideRows),
         overrides,
       }
     })
