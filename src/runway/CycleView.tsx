@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { parseDate, addDays, formatDate } from '../engine/dates'
 import type { Runway } from './runwaySeries'
 
@@ -369,6 +369,15 @@ function RunwayChart({ runway, todayIdx, ended, floorCents, items, money, onDot 
   const solidTo = ended ? n : todayIdx + 1                       // point index of the end of today
   const line = (from: number, to: number) => pts.slice(from, to + 1).map((c, k) => `${X(from + k)},${Y(c)}`).join(' ')
   const below0 = pts.some(c => c < 0)
+  // Drag across to read the balance at the end of any day (as on Forecast).
+  // A tap on a dot still jumps to its item.
+  const svgRef = useRef<SVGSVGElement>(null)
+  const [scrub, setScrub] = useState<number | null>(null)
+  const dayAt = (clientX: number) => {
+    const r = svgRef.current!.getBoundingClientRect()
+    const x = (clientX - r.left) / r.width * W
+    return Math.max(0, Math.min(n - 1, Math.floor((x - X0) / (X1 - X0) * n)))
+  }
 
   // One dot per day with something on it.
   const byDay = new Map<number, DayItem[]>()
@@ -380,7 +389,8 @@ function RunwayChart({ runway, todayIdx, ended, floorCents, items, money, onDot 
 
   return (
     <>
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Your balance each day this cycle">
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Your balance each day this cycle" className="rw-rw-svg"
+        onPointerMove={e => setScrub(dayAt(e.clientX))} onPointerLeave={() => setScrub(null)} onPointerCancel={() => setScrub(null)}>
         <polygon points={`${line(0, n)} ${X(n)},${B} ${X0},${B}`} fill="var(--rw-line)" opacity=".07" />
         {below0 && <line x1={X0} x2={X1} y1={Y(0)} y2={Y(0)} stroke="var(--rw-under-floor)" strokeWidth="1.2" />}
         <line x1={X0} x2={X1} y1={Y(floorCents)} y2={Y(floorCents)} stroke="var(--rw-under-floor)" strokeDasharray="3 3" />
@@ -410,6 +420,17 @@ function RunwayChart({ runway, todayIdx, ended, floorCents, items, money, onDot 
           )
         })}
         <text x={X(n)} y={Y(pts[n]) - 9} fontSize="10" fontWeight="700" textAnchor="end" fill="var(--rw-ink)">{money(pts[n])}</text>
+        {scrub != null && (() => {
+          const sx = X(scrub + 1), left = scrub > n / 2
+          const label = parseDate(runway.days[scrub]).toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric' }).replace(',', '')
+          return <g pointerEvents="none">
+            <line x1={sx} x2={sx} y1={T} y2={B} stroke="var(--rw-ink)" opacity=".3" />
+            <circle cx={sx} cy={Y(runway.balances[scrub])} r="4" fill="var(--rw-surface)" stroke="var(--rw-ink)" strokeWidth="2" />
+            <rect x={left ? sx - 92 : sx + 4} y={T - 2} width="88" height="15" rx="4" fill="var(--rw-surface)" opacity=".92" />
+            <text x={left ? sx - 7 : sx + 7} y={T + 9} fontSize="10" fontWeight="700" fill="var(--rw-ink)" textAnchor={left ? 'end' : 'start'}>
+              {label} · {money(runway.balances[scrub])}</text>
+          </g>
+        })()}
         {runway.days.map((d, i) => (
           <text key={d} x={X(i + 0.5)} y={B + 13} fontSize="8.5" textAnchor="middle"
             fontWeight={i === todayIdx ? 700 : 500} fill={i === todayIdx ? 'var(--rw-ink)' : 'var(--rw-muted)'}>

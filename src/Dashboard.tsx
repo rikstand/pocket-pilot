@@ -40,13 +40,14 @@ import { byOldest, versionForDate } from './lib/versions'
 import { ExpenseIcon, guessIcon } from './lib/icons'
 import { useViewport } from './lib/useViewport'
 import { useNewLook } from './lib/look'
-import { useDataChanged } from './lib/dataEvents'
+import { useDataChanged, notifyDataChanged } from './lib/dataEvents'
 import { useLog } from './runway/logContext'
 import CycleView, { type DayItem, type BudgetRow } from './runway/CycleView'
 import CloseSheet from './runway/CloseSheet'
 import PastCycles from './runway/PastCycles'
 import CatchUpSheet from './runway/CatchUpSheet'
 import ForecastPage, { type ForecastPoint } from './runway/ForecastPage'
+import { ItemSheet, itemFor } from './runway/ItemsPage'
 import { buildRunway, type RunwayEvent } from './runway/runwaySeries'
 import { budgetHistory, budgetFlag } from './runway/budgetHistory'
 
@@ -170,6 +171,9 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
   const [rwCatchOpen,        setRwCatchOpen]        = useState(false)
   // The new look's Forecast (Journey 6): a payday opened as its own cycle.
   const [fcOpen,             setFcOpen]             = useState(false)
+  // An item opened from a cycle in the new look: the Journey 9 item sheet,
+  // set to that cycle (Journey 6).
+  const [rwItem,             setRwItem]             = useState<{ id: string; isIncome: boolean } | null>(null)
   const [closeVarActuals,  setCloseVarActuals]  = useState<Record<string, string>>({})
   const [closePayLanded,   setClosePayLanded]   = useState<boolean | null>(null)
   const [closePayAmount,   setClosePayAmount]   = useState('')
@@ -2383,6 +2387,9 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
     const items: DayItem[] = []
     const events: RunwayEvent[] = []
     const cardFor = (pred: (cd: any) => boolean) => [...incomeCards, ...fixedCards, ...varCards].find(pred)
+    // The new look opens the item sheet for this cycle, when the forecast knows it.
+    const inRows = !!forecastRows?.cycles.some((x: any) => x.startDate === c.startDate)
+    const openItem = (id: string, isIncome: boolean) => inRows ? () => setRwItem({ id, isIncome }) : undefined
     // A one-cycle amount is a total for the cycle: spread over its payments,
     // any leftover cent on the last one.
     const spread = (total: number, occs: string[], i: number) => {
@@ -2401,7 +2408,8 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
         items.push({
           key: `inc-${src.id}-${d}`, date: d, name: src.name, mark: 'income', amountCents: cents, isIn: true,
           sub: src.is_potential ? 'Not certain yet' : ov ? 'This cycle only' : howOften(src),
-          onOpen: cd ? () => (src.frequency === 'once' ? openOneOff(cd, !(cd.isPotential ?? true)) : openIncomeEdit(cd)) : undefined,
+          onOpen: src.frequency !== 'once' && !src.is_potential && openItem(src.id, true)
+            || (cd ? () => (src.frequency === 'once' ? openOneOff(cd, !(cd.isPotential ?? true)) : openIncomeEdit(cd)) : undefined),
         })
       })
     }
@@ -2435,10 +2443,11 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
           needs: open && d < t, needsText: 'not confirmed',
           action: open && cd ? { label: 'Confirm', run: () => openVar(cd) } : undefined,
           donePill: isEstimate && ov ? '✓' : undefined,
-          onOpen: !cd ? undefined
+          onOpen: !isLayby && exp.frequency !== 'once' && cd?.act !== 'oneoff' && openItem(exp.id, false)
+            || (!cd ? undefined
             : cd.act === 'oneoff' ? () => openOneOff(cd, false)
             : isEstimate ? () => openVar(cd)
-            : cd.act === 'edit' ? () => openEdit(cd) : undefined,
+            : cd.act === 'edit' ? () => openEdit(cd) : undefined),
         })
       })
     }
@@ -2627,6 +2636,14 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
           onSubmit={({ lastCloseCents, enteredCents, payIn }) => submitCatchUp(missed, lastCloseCents, enteredCents, payIn)}
         />
       )}
+      {rwItem && forecastRows && (() => {
+        const row = (rwItem.isIncome ? rawIncome : rawExpenses).find((x: any) => x.id === rwItem.id)
+        const k = forecastRows.cycles.findIndex((x: any) => x.startDate === activeCycle.startDate)
+        if (!row || k < 0) return null
+        return <ItemSheet item={itemFor(forecastRows, row, rwItem.isIncome)} rows={forecastRows} cycleIdx={k} fromCycle
+          floorCents={floorCents} accountId={accountId}
+          onClose={() => setRwItem(null)} onSaved={() => { setRwItem(null); notifyDataChanged() }} />
+      })()}
     </>)
   })() : null
 

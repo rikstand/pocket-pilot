@@ -636,3 +636,4 @@ body.is-runway #root { border-inline: none; }
 .rw-am.chosen { color: var(--rw-muted); }
 .rw-tile .v.chosen { color: var(--rw-muted); }
 .rw-fc-how p { font: var(--rw-text-body); font-size: 12.5px; margin-top: 8px; line-height: 1.45; }
+.rw-rw-svg { touch-action: pan-y; }

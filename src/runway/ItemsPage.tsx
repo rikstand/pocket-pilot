@@ -62,7 +62,7 @@ export function Mark({ kind }: { kind: Kind }) {
   }
 }
 
-interface Item {
+export interface Item {
   id: string
   row: any
   isIncome: boolean
@@ -71,6 +71,21 @@ interface Item {
   amountCents: number       // per payment now (a budget: per pay)
   perPayCents: number
   next: string[]            // the next payments, from today
+}
+
+/** One item for the sheet, built the same way the page builds them. Not for budgets. */
+export function itemFor(rows: ForecastResult, r: any, isIncome: boolean): Item {
+  const t = todayStr()
+  const rule = cycleRuleOn(rows.incomeRows, t)
+  const paysPerYear = (PER_YEAR[rule.frequency] ?? 26.09) / Math.max(1, rule.everyN ?? 1)
+  const kind = kindOf(r, isIncome)
+  const eng = isIncome ? toEngineIncome([r])[0] : toEngineExpenses([r])[0]
+  const amount = versionForDate(isIncome ? r.income_amount_versions : r.expense_amount_versions, t)?.amount_cents ?? r.amount_cents ?? 0
+  return {
+    id: r.id, row: r, isIncome, kind, name: r.name, amountCents: amount,
+    perPayCents: Math.round(amount * perYear(r) / paysPerYear),
+    next: occurrencesOf(eng, t, far()).slice(0, 12),
+  }
 }
 
 export default function ItemsPage({ accountId, onNavigate }: { accountId: string; onNavigate: (p: Page) => void }) {
@@ -265,9 +280,13 @@ function amountOn(row: any, date: string) {
 /* ── the item sheet: change the amount, stop it, or delete it ──────── */
 type Mode = 'amount' | 'stop' | 'delete' | 'sched' | 'pay'
 
-function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
+export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved, cycleIdx = 0, fromCycle = false }: {
   item: Item; rows: ForecastResult; floorCents: number; accountId: string
   onClose: () => void; onSaved: () => void
+  // Which of rows.cycles "Just this cycle" means, and where the preview
+  // starts (Journey 6: opened from the Cycle screen or a future cycle).
+  cycleIdx?: number
+  fromCycle?: boolean          // opened from a cycle: starts on "Just this cycle"
 }) {
   const { activeAccount } = useAccount()
   const toast = useToast()
@@ -276,19 +295,28 @@ function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
   const money = (c: number) => (c < 0 ? '−' : '') + fmt(Math.abs(c), false)
   const t = todayStr()
   const r = item.row
-  const cycle = rows.cycles[0]
+  const cycle = rows.cycles[cycleIdx] ?? rows.cycles[0]
   const isPrimary = item.isIncome && r.is_primary
 
   const eng = item.isIncome ? toEngineIncome([r])[0] : toEngineExpenses([r])[0]
   const inThisCycle = cycle ? occurrencesOf(eng, cycle.startDate, cycle.endDate) : []
+  // What one payment comes to in that cycle now: its own amount if it has one.
+  const ownOv = cycle ? (item.isIncome
+    ? (rows.incomeOverrideRows ?? []).find((o: any) => o.income_source_id === r.id && o.cycle_start === cycle.startDate)
+    : (rows.expenseOverrideRows ?? []).find((o: any) => o.expense_id === r.id && o.cycle_start === cycle.startDate)) : null
+  const cycleNow = inThisCycle.length
+    ? (ownOv ? Math.round(ownOv.amount_cents / inThisCycle.length) : amountAt(r, item.isIncome, inThisCycle[0]))
+    : item.amountCents
+  // "From a date" starts at the cycle you came from, never before today.
+  const fromDates = cycle && cycle.startDate > t ? occurrencesOf(eng, cycle.startDate, far()).slice(0, 12) : item.next
   // Nothing has gone out (or come in) yet: deleting it loses nothing.
   const hasPast = r.anchor_date < t
 
   const [mode, setMode] = useState<Mode>('amount')
-  const [amt, setAmt] = useState(String(item.amountCents / 100))
-  const [scope, setScope] = useState<'one' | 'from'>('from')
+  const [scope, setScope] = useState<'one' | 'from'>(fromCycle && inThisCycle.length ? 'one' : 'from')
+  const [amt, setAmt] = useState(String((fromCycle && inThisCycle.length ? cycleNow : item.amountCents) / 100))
   const [more, setMore] = useState(false)
-  const [from, setFrom] = useState(item.next[0] ?? t)
+  const [from, setFrom] = useState(fromDates[0] ?? t)
   const [stopAt, setStopAt] = useState<string>(item.next[0] ?? 'now')
   const [busy, setBusy] = useState(false)
   const [sched, setSched] = useState<Schedule>(() => scheduleFromRow(r, item.next[0] ?? t))
@@ -296,7 +324,7 @@ function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
   const nextPays = rows.cycles.slice(1, 4).map(c => c.startDate)
 
   const cents = Math.max(0, Math.round((parseFloat(amt) || 0) * 100))
-  const opts = more ? item.next.slice(0, 12) : item.next.slice(0, 3)
+  const opts = more ? fromDates.slice(0, 12) : fromDates.slice(0, 3)
 
   // The forecast as it is, and with this change: the same rows with one edit.
   function withChange(): ForecastResult {
@@ -321,22 +349,26 @@ function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
           { expense_id: r.id, cycle_start: cycle.startDate, amount_cents: total }] }
   }
 
-  const changed = mode !== 'amount' || (scope === 'one' ? cents !== item.amountCents && inThisCycle.length > 0 : cents !== amountAt(r, item.isIncome, from))
-  const now = rows.cycles.slice(0, PREVIEW_PAYS).map(c => c.committedClosingBalanceCents)
-  const after = changed && amt.trim() ? projectFromRows(withChange(), floorCents, PREVIEW_PAYS + 1).slice(0, PREVIEW_PAYS).map(c => c.committedClosingBalanceCents) : []
-  const payDates = rows.cycles.slice(0, PREVIEW_PAYS).map(c => shift(c.endDate, 1))
+  const changed = mode !== 'amount' || (scope === 'one' ? cents !== cycleNow && inThisCycle.length > 0 : cents !== amountAt(r, item.isIncome, from))
+  // The preview starts at the cycle the sheet was opened from.
+  const k0 = rows.cycles.indexOf(cycle) >= 0 ? rows.cycles.indexOf(cycle) : 0
+  const span = k0 + PREVIEW_PAYS
+  const base = k0 + PREVIEW_PAYS <= rows.cycles.length ? rows.cycles : projectFromRows(rows, floorCents, span + 1)
+  const now = base.slice(k0, span).map(c => c.committedClosingBalanceCents)
+  const after = changed && amt.trim() ? projectFromRows(withChange(), floorCents, span + 1).slice(k0, span).map(c => c.committedClosingBalanceCents) : []
+  const payDates = base.slice(k0, span).map(c => shift(c.endDate, 1))
   const st = after.length ? previewStats(now, after, floorCents) : null
   const anyway = st && st.level === 'under' && st.worse ? ' anyway' : ''
 
   // Where each payment lands, as a position between paydays on the preview.
   const tickDates = mode === 'sched'
     ? occurrencesOf({ ...eng, schedules: [{ effectiveFrom: schedFrom, frequency: ruleOf(sched).frequency, everyN: ruleOf(sched).everyN, anchorDate: sched.first }, ...(eng.schedules ?? [])] } as any, schedFrom, far())
-    : mode === 'amount' ? (scope === 'one' ? inThisCycle : item.next.filter(d => d >= from)) : []
+    : mode === 'amount' ? (scope === 'one' ? inThisCycle : fromDates.filter(d => d >= from)) : []
   const ticks = tickDates.length
     ? tickDates.flatMap(d => {
-        const i = rows.cycles.findIndex(c => d >= c.startDate && d <= c.endDate)
+        const i = base.findIndex(c => d >= c.startDate && d <= c.endDate) - k0
         if (i < 0 || i >= PREVIEW_PAYS) return []
-        const c = rows.cycles[i]
+        const c = base[i + k0]
         const len = (parseDate(c.endDate).getTime() - parseDate(c.startDate).getTime()) / 864e5 + 1
         const f = ((parseDate(d).getTime() - parseDate(c.startDate).getTime()) / 864e5 + 0.5) / len
         return [i - 1 + f]
@@ -453,18 +485,19 @@ function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved }: {
 
         {mode === 'amount' && <>
           <div className="rw-card">
-            <div className="rw-lab" style={{ marginTop: 0 }}>{item.kind === 'estimate' ? 'Usual estimate' : 'Amount'}</div>
+            <div className="rw-lab" style={{ marginTop: 0 }}>{scope === 'one' ? `${short(cycle.startDate)} – ${short(cycle.endDate)} cycle` : item.kind === 'estimate' ? 'Usual estimate' : 'Amount'}</div>
             <div className="rw-amt-row"><div className="rw-amt"><span>{sym}</span>
               <input type="number" inputMode="decimal" aria-label="Amount" value={amt} onChange={e => setAmt(e.target.value)} />
             </div></div>
             <div className="rw-seg flush">
-              <button type="button" className={scope === 'one' ? 'on' : ''} disabled={inThisCycle.length === 0} onClick={() => setScope('one')}>Just this cycle</button>
+              <button type="button" className={scope === 'one' ? 'on' : ''} disabled={inThisCycle.length === 0}
+                onClick={() => setScope('one')}>Just this cycle</button>
               <button type="button" className={scope === 'from' ? 'on' : ''} onClick={() => setScope('from')}>From a date</button>
             </div>
             {scope === 'from' ? (
               <div className="rw-chips" style={{ marginTop: 8 }}>
                 {opts.map(d => <button key={d} type="button" className={from === d ? 'on' : ''} onClick={() => setFrom(d)}>{dayName(d)}</button>)}
-                {!more && item.next.length > 3 && <button type="button" className="dash" onClick={() => setMore(true)}>More dates</button>}
+                {!more && fromDates.length > 3 && <button type="button" className="dash" onClick={() => setMore(true)}>More dates</button>}
               </div>
             ) : (
               <div className="rw-hint">
