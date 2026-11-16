@@ -1093,6 +1093,41 @@ export async function addCreditSnapshot(
 // minimum only), or 'spare' — whatever this cycle has above the floor, kept
 // live. There is deliberately no way to plan below the minimum: it is
 // contractual. What actually went out is recorded by confirming the payment.
+// --- CARD PLAN FROM A DATE (credit_plan_versions) ---
+// The plan on credit_accounts is the plan from the start; each row here
+// replaces it from its cycle onwards. Oldest first.
+export async function getCreditPlanVersions(creditAccountId: string) {
+  const { data, error } = await supabase
+    .from('credit_plan_versions')
+    .select('*')
+    .eq('credit_account_id', creditAccountId)
+    .order('effective_from')
+  if (error) throw error
+  return data ?? []
+}
+
+/** One plan per card per date: setting a date again replaces that row. */
+export async function setCreditPlanFrom(
+  creditAccountId: string, accountId: string, effectiveFrom: string,
+  mode: 'minimum' | 'extra' | 'spare', extraCents: number
+) {
+  const { data, error } = await supabase
+    .from('credit_plan_versions')
+    .upsert({
+      credit_account_id: creditAccountId, account_id: accountId, effective_from: effectiveFrom,
+      mode, extra_cents: mode === 'extra' ? Math.max(0, Math.round(extraCents)) : 0,
+    }, { onConflict: 'credit_account_id,effective_from' })
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function deleteCreditPlanVersion(id: string) {
+  const { error } = await supabase.from('credit_plan_versions').delete().eq('id', id)
+  if (error) throw error
+}
+
 export async function getCreditExtraOverrides(creditAccountId: string) {
   const { data, error } = await supabase
     .from('credit_extra_overrides')

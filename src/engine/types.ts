@@ -68,6 +68,12 @@ export interface Expense {
 // because each cycle's card payment depends on the previous cycle's closing
 // card balance. projectCycles() already iterates in order, so this is safe —
 // but anything that projects a single cycle standalone is not.
+export interface CreditPlanVersion {
+  effectiveFrom: string                       // a cycle start
+  mode: 'minimum' | 'extra' | 'spare'
+  extraCents: number
+}
+
 export interface CreditAccount {
   id: string
   name: string
@@ -86,6 +92,12 @@ export interface CreditAccount {
   // Optional so older callers still compile: missing means 'extra', which is
   // exactly what the engine did before plans had a mode.
   strategyMode?: 'minimum' | 'extra' | 'spare'
+
+  // The plan from a date (feat/credit-plan-dates). Each version replaces the
+  // plan above from the cycle starting on effectiveFrom onwards; the newest
+  // one on or before a cycle's start wins. Missing or empty: the plan above
+  // applies to every cycle, as before.
+  planVersions?: CreditPlanVersion[]
 
   // On a card with a monthly due date: does the extra go out with every pay
   // cycle, or only in the cycle that holds the due date? The user's choice,

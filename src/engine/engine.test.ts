@@ -466,7 +466,7 @@ describe('BNPL: change, pay off early, missed one', () => {
 })
 
 // ── saving for a bill (Journey 4) ───────────────────────────────────
-import { billPrompts } from './engine'
+import { billPrompts, creditPlanOn } from './engine'
 import type { SavingsGoal, CreditAccount } from './types'
 
 describe('a pot for a bill', () => {
@@ -622,5 +622,61 @@ describe('changing how often you are paid', () => {
   it('closing this cycle opens the first one on the new schedule', () => {
     expect(nextCycleFor('2026-12-03', changed('weekly', P), '2026-11-05')).toEqual({ start: P, end: '2026-12-23' })
     expect(nextCycleFor('2026-12-03', changed('monthly', P), '2026-11-05')).toEqual({ start: P, end: '2027-01-16' })
+  })
+})
+
+// ── the card plan from a date (feat/credit-plan-dates) ──────────────
+// Paid $2,300 fortnightly from 5 Nov; cycles start 5 Nov, 19 Nov, 3 Dec, 17 Dec.
+// A card with no interest and no minimum, so every payment is the plan's extra.
+describe('a card plan from a date', () => {
+  const card = (over: Partial<CreditAccount> = {}): CreditAccount => ({
+    id: 'c', name: 'Card', aprBasisPoints: 0, minPaymentPct: 0, minPaymentFloorCents: 0, assumedSpendCents: 0,
+    strategyExtraCents: 10000, strategyCommitted: true, strategyMode: 'extra', currentBalanceCents: 1000000,
+    paymentFrequency: 'per_cycle', ...over,
+  })
+  const pays = (c: CreditAccount, over: Partial<CycleInput> = {}) =>
+    run({ numCycles: 4, creditAccount: c, ...over }).map(x => x.creditPaymentCents)
+
+  it('with no dated plan, every cycle follows the card plan (as before)', () => {
+    expect(pays(card())).toEqual([10000, 10000, 10000, 10000])
+  })
+
+  it('a plan from 3 Dec changes that cycle and every one after, not before', () => {
+    const c = card({ planVersions: [{ effectiveFrom: '2026-12-03', mode: 'extra', extraCents: 30000 }] })
+    expect(pays(c)).toEqual([10000, 10000, 30000, 30000])
+  })
+
+  it('the newest dated plan on or before a cycle wins', () => {
+    const c = card({ planVersions: [
+      { effectiveFrom: '2026-12-17', mode: 'minimum', extraCents: 0 },
+      { effectiveFrom: '2026-11-19', mode: 'extra', extraCents: 20000 },
+    ] })
+    expect(pays(c)).toEqual([10000, 20000, 20000, 0])
+    expect(creditPlanOn(c, '2026-12-03')).toEqual({ mode: 'extra', extraCents: 20000 })
+    expect(creditPlanOn(c, '2026-11-05')).toEqual({ mode: 'extra', extraCents: 10000 })
+  })
+
+  it('a dated "whatever is spare" plan sweeps everything above the floor from its cycle', () => {
+    const c = card({ planVersions: [{ effectiveFrom: '2026-11-19', mode: 'spare', extraCents: 0 }] })
+    const r = run({ numCycles: 2, creditAccount: c })
+    expect(r[0].creditPaymentCents).toBe(10000)
+    // $1,000 opening + $2,300 − $100 = $3,200 closes cycle 1; then + $2,300, keep the $500 floor.
+    expect(r[1].creditPaymentCents).toBe(500000)
+    expect(r[1].committedClosingBalanceCents).toBe(50000)
+  })
+
+  it('a choice made for one cycle still beats a dated plan in that cycle', () => {
+    const c = card({ planVersions: [{ effectiveFrom: '2026-11-19', mode: 'extra', extraCents: 30000 }] })
+    expect(pays(c, { creditOverrides: [{ cycleStart: '2026-12-03', extraCents: 5000, choice: 'extra' }] }))
+      .toEqual([10000, 30000, 5000, 30000])
+  })
+
+  it('on a monthly card that pays extra only in the due cycle, a dated plan keeps that timing', () => {
+    const c = card({
+      paymentFrequency: 'monthly', paymentAnchorDate: '2026-01-12', extraTiming: 'due_cycle',
+      planVersions: [{ effectiveFrom: '2026-12-03', mode: 'extra', extraCents: 30000 }],
+    })
+    // The 12th falls in the 5 Nov and 3 Dec cycles only.
+    expect(pays(c)).toEqual([10000, 0, 30000, 0])
   })
 })

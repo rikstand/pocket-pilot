@@ -22,7 +22,7 @@
 // everything a page might want.
 
 import {
-  getIncomeSources, getExpenses, getCycles, getCreditAccount, getCreditExtraOverrides,
+  getIncomeSources, getExpenses, getCycles, getCreditAccount, getCreditExtraOverrides, getCreditPlanVersions,
   getBudgetSpendEntries, getSavingsGoals, getAllSavingsContributions, getAllSavingsOverrides,
   getAllExpenseOverrides, getCreditCyclePayments, getAllIncomeOverrides, getAcceptedDips,
 } from './repository'
@@ -30,7 +30,7 @@ import { projectCycles, budgetAmountForCycle, billPrompts, occurrencesOf, schedu
 import type { CycleRule, BillPrompt } from '../engine/index'
 import type {
   CycleResult, IncomeSource, Expense, CreditAccount, CreditExtraOverride,
-  BudgetSpendEntry, ExpenseOverride, SavingsGoal, CreditPayment, IncomeOverride, ScheduleVersion,
+  BudgetSpendEntry, ExpenseOverride, SavingsGoal, CreditPayment, IncomeOverride, ScheduleVersion, CreditPlanVersion,
 } from '../engine/types'
 import { carriedCardBalance, confirmedPaymentsFrom, cycleDaysOf, planModeOf } from './creditSchedule'
 import { formatDate, parseDate, addDays } from '../engine/dates'
@@ -132,19 +132,42 @@ export function toEngineExpenses(rows: any[]): Expense[] {
  * to be right either way — a missing paymentFrequency makes the whole object
  * fail to typecheck, which is how this was caught the first time.
  */
+/** Dated card plans, oldest first. */
+export function toEnginePlanVersions(rows: any[]): CreditPlanVersion[] {
+  return (rows ?? [])
+    .filter((r: any) => r.mode === 'minimum' || r.mode === 'extra' || r.mode === 'spare')
+    .map((r: any) => ({ effectiveFrom: r.effective_from, mode: r.mode, extraCents: Number(r.extra_cents ?? 0) }))
+    .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))
+}
+
+/**
+ * The card row with the plan in force on a date written into its plan
+ * columns, for code that reads those columns (the Credit page's working, the
+ * balance carried to the first cycle). The engine reads dated plans itself.
+ */
+export function cardWithPlanOn(card: any, planRows: any[], date: string): any {
+  if (!card) return card
+  let best: any = null
+  for (const v of planRows ?? []) if (v.effective_from <= date && (!best || v.effective_from > best.effective_from)) best = v
+  return best ? { ...card, strategy_mode: best.mode, strategy_extra_cents: best.mode === 'extra' ? Number(best.extra_cents ?? 0) : 0 } : card
+}
+
 export function toEngineCredit(
   card: any | null,
   projectFrom?: any | null,
-  paymentRows: any[] = []
+  paymentRows: any[] = [],
+  planRows: any[] = []
 ): CreditAccount | null {
   if (!card) return null
   // The engine runs whole cycles from the start of the first open one, so it
   // needs the card balance AT that start — not the last figure typed in, which
   // may be from an earlier cycle or from partway through this one. Same
   // working as the Credit page, so the two show the same balance.
+  // Between the last balance typed and that start, the plan in force at the
+  // start is the best guess for what went out.
   const startBalance = projectFrom?.start_date
     ? carriedCardBalance(
-        card, projectFrom.start_date,
+        cardWithPlanOn(card, planRows, projectFrom.start_date), projectFrom.start_date,
         cycleDaysOf({ startDate: projectFrom.start_date, endDate: projectFrom.end_date ?? projectFrom.start_date }),
         confirmedPaymentsFrom(paymentRows)
       ).balanceCents
@@ -160,6 +183,7 @@ export function toEngineCredit(
     strategyCommitted: card.strategy_committed,
     strategyMode: planModeOf(card),
     extraTiming: card.extra_timing === 'due_cycle' ? ('due_cycle' as const) : ('every_cycle' as const),
+    planVersions: toEnginePlanVersions(planRows),
     currentBalanceCents: startBalance,
     paymentFrequency: card.payment_frequency ?? 'per_cycle',
     paymentAnchorDate: card.payment_anchor_date ?? undefined,
@@ -281,6 +305,8 @@ export interface ForecastResult {
   creditCard: any | null
   creditOverrideRows: any[]
   creditPaymentRows: any[]
+  /** The card plan from a date (credit_plan_versions). Optional, as below. */
+  creditPlanRows?: any[]
   budgetSpendRows: any[]
   expenseOverrideRows: any[]
   /** Optional so callers that build rows by hand still compile. */
@@ -337,17 +363,17 @@ export async function loadForecast(
     getAcceptedDips(accountId),
   ])
 
-  // Overrides and confirmed payments only exist once a card does, so this is
-  // a second round trip rather than part of the batch above.
-  const [creditOverrideRows, creditPaymentRows] = creditCard
-    ? await Promise.all([getCreditExtraOverrides(creditCard.id), getCreditCyclePayments(creditCard.id)])
-    : [[], []]
+  // Overrides, confirmed payments and dated plans only exist once a card
+  // does, so this is a second round trip rather than part of the batch above.
+  const [creditOverrideRows, creditPaymentRows, creditPlanRows] = creditCard
+    ? await Promise.all([getCreditExtraOverrides(creditCard.id), getCreditCyclePayments(creditCard.id), getCreditPlanVersions(creditCard.id)])
+    : [[], [], []]
 
   const openCycles  = storedCycles.filter((c: any) => !c.is_closed)
   const projectFrom = openCycles[0] ?? storedCycles[storedCycles.length - 1] ?? null
 
   const rows = {
-    incomeRows, expenseRows, storedCycles, creditCard, creditOverrideRows, creditPaymentRows,
+    incomeRows, expenseRows, storedCycles, creditCard, creditOverrideRows, creditPaymentRows, creditPlanRows,
     budgetSpendRows, expenseOverrideRows, incomeOverrideRows,
     savingsGoalRows, savingsContributionRows, savingsOverrideRows, acceptedDipRows, projectFrom,
   }
@@ -363,6 +389,7 @@ export async function loadForecast(
     creditCard,
     creditOverrideRows,
     creditPaymentRows,
+    creditPlanRows,
     budgetSpendRows,
     expenseOverrideRows,
     incomeOverrideRows,
@@ -408,7 +435,7 @@ function engineInputFromRows(
     startDate,
     numCycles,
     safetyFloorCents,
-    creditAccount: toEngineCredit(rows.creditCard, rows.projectFrom, rows.creditPaymentRows ?? []),
+    creditAccount: toEngineCredit(rows.creditCard, rows.projectFrom, rows.creditPaymentRows ?? [], rows.creditPlanRows ?? []),
     creditOverrides: toEngineCreditOverrides(rows.creditOverrideRows),
     creditPayments: toEngineCreditPayments(rows.creditPaymentRows ?? []),
     budgetSpend: toEngineBudgetSpend(rows.budgetSpendRows),

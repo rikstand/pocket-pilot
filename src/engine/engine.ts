@@ -1,6 +1,7 @@
 import type {
   CycleInput, CycleResult, AmountVersion, CreditExtraOverride, BudgetSpendEntry,
   ExpenseOverride, SavingsGoal, SavingsCycleLine, Expense, Frequency, IncomeOverride,
+  CreditAccount, CreditPlanVersion,
 } from './types'
 import { parseDate, formatDate, addDays, daysBetween } from './dates'
 import { getOccurrencesInRange, nthOccurrence, stepOf, occurrencesOf, scheduleOn, scheduleSegments, changesInOrder } from './recurrence'
@@ -313,6 +314,20 @@ function savingsForCycle(
   }
 }
 
+/**
+ * The card plan in force for a cycle: the newest dated version starting on or
+ * before it, else the card's own plan. Exported so screens describe the plan
+ * the same way the forecast uses it.
+ */
+export function creditPlanOn(card: CreditAccount, cycleStart: string): { mode: 'minimum' | 'extra' | 'spare'; extraCents: number } {
+  let best: CreditPlanVersion | null = null
+  for (const v of card.planVersions ?? []) {
+    if (v.effectiveFrom <= cycleStart && (!best || v.effectiveFrom > best.effectiveFrom)) best = v
+  }
+  if (best) return { mode: best.mode, extraCents: best.mode === 'extra' ? best.extraCents : 0 }
+  return { mode: card.strategyMode ?? 'extra', extraCents: card.strategyExtraCents }
+}
+
 export function projectCycles(input: CycleInput): CycleResult[] {
   const {
     incomeSources, expenses, openingBalanceCents, startDate, numCycles,
@@ -518,12 +533,14 @@ export function projectCycles(input: CycleInput): CycleResult[] {
       creditSpareCents = Math.max(0, beforeCardCents - spareFloorCents)
 
       // The extra for this cycle. A choice made for this cycle wins; otherwise
-      // the plan decides, at the timing the user picked in card settings.
+      // the plan in force for this cycle decides, at the timing the user
+      // picked in card settings.
       const ov = overrideForCycle(creditOverrides, cycleStart)
+      const plan = creditPlanOn(card, cycleStart)
       const planExtraApplies = !isMonthly || card.extraTiming !== 'due_cycle' || minimumIsDue
       const useSpare = ov
         ? ov.choice === 'spare'
-        : (card.strategyMode ?? 'extra') === 'spare' && planExtraApplies
+        : plan.mode === 'spare' && planExtraApplies
       let extraForCycle: number
       if (useSpare) {
         // Minimum first, then whatever is left above the floor. If the spare is
@@ -533,8 +550,8 @@ export function projectCycles(input: CycleInput): CycleResult[] {
         extraForCycle = Math.max(0, creditSpareCents - minOnly.minimumCents)
       } else if (ov) {
         extraForCycle = ov.extraCents
-      } else if ((card.strategyMode ?? 'extra') === 'extra' && planExtraApplies) {
-        extraForCycle = card.strategyExtraCents
+      } else if (plan.mode === 'extra' && planExtraApplies) {
+        extraForCycle = plan.extraCents
       } else {
         extraForCycle = 0
       }
