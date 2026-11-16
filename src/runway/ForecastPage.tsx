@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { parseDate, formatDate, addMonths } from '../engine/dates'
 import { useToast } from './toastContext'
 import { Segmented } from './controls'
+import { KeyUnder, KeyDone } from './LegendKeys'
 
 /**
  * Journey 6: the Forecast tab in the new look. One point per payday: what's
@@ -111,17 +112,19 @@ export default function ForecastPage(p: Props) {
 
       <div className="rw-fc-chart">
         <div className="rw-fc-ct"><span>Before each payday</span>
-          <button type="button" className="rw-qm" aria-label="How to read this" onClick={() => setSheet({ kind: 'how' })}>?</button></div>
+          <span className="rw-fc-ct-r">
+            {nextOutside >= 0 && (
+              <button type="button" className="rw-fc-edge" onClick={() => setSheet({ kind: 'dip', k: nextOutside })}>! {short(p.points[nextOutside].payDate)} ›</button>
+            )}
+            <button type="button" className="rw-qm" aria-label="How to read this" onClick={() => setSheet({ kind: 'how' })}>?</button>
+          </span></div>
         <Chart pts={pts} floorCents={p.floorCents} level={level} paidOff={paidOff != null && paidOff < n ? paidOff : null}
           money={money} onOpen={k => p.onOpen(pts[k].idx)} onMarker={k => setSheet({ kind: 'dip', k })} />
-        {nextOutside >= 0 && (
-          <button type="button" className="rw-fc-edge" onClick={() => setSheet({ kind: 'dip', k: nextOutside })}>! {short(p.points[nextOutside].payDate)} ›</button>
-        )}
         <div className="rw-legend">
           <span><i className="ln" />left before pay</span>
           <span><i className="fl" />floor {money(p.floorCents)}</span>
-          <span><span className="rw-fc-key near">!</span>under floor</span>
-          {p.card && <span><span className="rw-fc-key good">✓</span>card paid off</span>}
+          <span><KeyUnder />under floor</span>
+          {p.card && <span><KeyDone />card paid off</span>}
         </div>
       </div>
 
@@ -232,16 +235,17 @@ function Chart({ pts, floorCents, level, paidOff, money, onOpen, onMarker }: {
   const col = (l: Level) => l === 'under' ? 'var(--rw-under-floor)' : l === 'near' ? 'var(--rw-near-floor)' : l === 'chosen' ? 'var(--rw-muted)' : 'var(--rw-line)'
 
   // Month labels, thinned when there are many.
-  const labels: { i: number; t: string }[] = []
-  let lastM = ''
+  // One label per month where they fit, else every second or third month,
+  // evenly. A first month with only a few days left gives way to the next.
+  let months: { i: number; t: string }[] = []
   pts.forEach((x, i) => {
     const m = monShort(x.payDate)
-    if (m === lastM) return
-    lastM = m
-    const prev = labels[labels.length - 1]
-    if (!prev || X(i) - X(prev.i) >= 22) labels.push({ i, t: m })
+    if (!months.length || months[months.length - 1].t !== m) months.push({ i, t: m })
   })
-  const step = labels.length > 7 ? 2 : 1
+  if (months.length > 1 && X(months[1].i) - X(months[0].i) < 30) months = months.slice(1)
+  const gap = months.length > 1 ? (X(months[months.length - 1].i) - X(months[0].i)) / (months.length - 1) : 99
+  const step = Math.max(1, Math.ceil(30 / gap))
+  const labels = months
 
   // Under-floor paydays, clustered when their markers would touch.
   const under = pts.map((x, i) => (level(x) !== 'ok' ? i : -1)).filter(i => i >= 0)
@@ -294,8 +298,8 @@ function Chart({ pts, floorCents, level, paidOff, money, onOpen, onMarker }: {
       })}
       {paidOff != null && (() => {
         const cx = X(paidOff), cy = Y(v[paidOff])
-        return <g><circle cx={cx} cy={cy} r="6" fill="var(--rw-good)" stroke="var(--rw-surface)" strokeWidth="2" />
-          <path d={`M${cx - 2.6} ${cy}l1.8 1.9 3.4-3.6`} fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" /></g>
+        return <g><circle cx={cx} cy={cy} r="6" fill="var(--rw-line)" stroke="var(--rw-surface)" strokeWidth="2" />
+          <path d={`M${cx - 2.6} ${cy}l1.8 1.9 3.4-3.6`} fill="none" stroke="var(--rw-surface)" strokeWidth="1.6" strokeLinecap="round" /></g>
       })()}
       {scrub != null && (() => {
         const sx = X(scrub), left = scrub > n / 2

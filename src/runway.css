@@ -619,12 +619,11 @@ body.is-runway #root { border-inline: none; }
 .rw-qm { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--rw-hairline); background: var(--rw-surface); cursor: pointer; font-size: 11px; font-weight: 700; }
 .rw .rw-qm { color: var(--rw-muted); }
 .rw-fc-svg { display: block; width: 100%; height: auto; touch-action: pan-y; cursor: pointer; }
-.rw-fc-edge { position: absolute; right: 10px; top: 32px; border: none; border-radius: var(--rw-radius-pill); padding: 4px 9px; cursor: pointer; font: var(--rw-text-label); font-size: 10.5px;
+.rw-fc-ct-r { display: flex; align-items: center; gap: 6px; }
+.rw-fc-edge { border: none; border-radius: var(--rw-radius-pill); padding: 4px 9px; cursor: pointer; font: var(--rw-text-label); font-size: 10.5px;
   background: color-mix(in srgb, var(--rw-near-floor) 14%, transparent); }
 .rw .rw-fc-edge { color: var(--rw-near-floor-text); }
-.rw-fc-key { display: inline-grid; place-items: center; width: 12px; height: 12px; border-radius: 50%; font-size: 8px; font-weight: 800; color: #fff; }
-.rw-fc-key.near { background: var(--rw-near-floor); }
-.rw-fc-key.good { background: var(--rw-good); }
+.rw-key { flex: 0 0 11px; display: block; }
 .rw-fc-tiles { margin: 8px var(--rw-space-3) 0; }
 .rw-fc-mh { padding: 12px 18px 5px; font: var(--rw-text-label); font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--rw-muted); }
 .rw-fc-pill { margin-left: 6px; font: var(--rw-text-label); font-size: 10px; padding: 2px 7px; border-radius: var(--rw-radius-pill); vertical-align: 1px; }
@@ -677,3 +676,4 @@ body.is-runway #root { border-inline: none; }
 .rw-pb-row i { display: block; height: 100%; border-radius: 2px; background: var(--rw-ink); opacity: .75; }
 .rw .rw-sl input[type=range] { border: 0; padding: 0; border-radius: 0; box-shadow: none; background: transparent; height: 20px; min-height: 0; outline: none; }
 .rw .rw-sl input[type=range]::-webkit-slider-runnable-track { background: transparent; border: 0; height: 20px; }
+.rw-pv-svg { touch-action: pan-y; }

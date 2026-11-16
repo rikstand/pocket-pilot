@@ -1,4 +1,6 @@
+import { useRef, useState } from 'react'
 import { parseDate } from '../engine/dates'
+import { KeyDone } from './LegendKeys'
 
 /**
  * The universal preview: what a change does to each payday. One component
@@ -45,6 +47,9 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
   third?: { k: string; v: string; d: string; cls?: string }
 }) {
   const n = newCents.length
+  // Drag across to read any payday, as on the runway and Forecast.
+  const svgRef = useRef<SVGSVGElement>(null)
+  const [scrub, setScrub] = useState<number | null>(null)
   if (!n) return null
   const st = previewStats(nowCents, newCents, floorCents)
   const all = [...nowCents, ...newCents, floorCents, 0]
@@ -67,7 +72,13 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
           <span>{title ?? 'Left before each payday'}</span>
           <span className="rw-pv-lg"><i className="gh" />now<i className="nw" />new<i className="fl" />floor</span>
         </div>
-        <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Left before each payday, now and with this change">
+        <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Left before each payday, now and with this change" className="rw-pv-svg"
+          onPointerMove={e => {
+            const r = svgRef.current!.getBoundingClientRect()
+            const x = (e.clientX - r.left) / r.width * W
+            setScrub(Math.max(0, Math.min(n - 1, Math.round((x - X0) / (X1 - X0) * Math.max(1, n - 1)))))
+          }}
+          onPointerLeave={() => setScrub(null)} onPointerCancel={() => setScrub(null)}>
           {below0 && <>
             <rect x={X0} y={Y(0)} width={X1 - X0} height={Math.max(0, B - Y(0))} fill="var(--rw-under-floor)" opacity=".07" />
             <line x1={X0} x2={X1} y1={Y(0)} y2={Y(0)} stroke="var(--rw-under-floor)" strokeWidth="1.2" />
@@ -90,13 +101,25 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
           {ticks.filter(f => f >= 0 && f <= n - 1).map((f, k) => (
             <line key={'t' + k} x1={X(f)} x2={X(f)} y1={B + 1} y2={B + 7} stroke="var(--rw-line)" strokeWidth="2.4" strokeLinecap="round" />
           ))}
+          {scrub != null && (() => {
+            const sx = X(scrub), left = scrub > (n - 1) / 2
+            const was = nowCents[scrub]
+            const label = `${short(payDates[scrub])} · ${money(newCents[scrub])}${was != null && Math.round((was - newCents[scrub]) / 100) !== 0 ? ` · was ${money(was)}` : ''}`
+            const w = label.length * 5.6 + 10
+            return <g pointerEvents="none">
+              <line x1={sx} x2={sx} y1={T} y2={B} stroke="var(--rw-ink)" opacity=".3" />
+              <circle cx={sx} cy={Y(newCents[scrub])} r="4" fill="var(--rw-surface)" stroke="var(--rw-ink)" strokeWidth="2" />
+              <rect x={left ? sx - w - 4 : sx + 4} y={T - 2} width={w} height="15" rx="4" fill="var(--rw-surface)" opacity=".94" />
+              <text x={left ? sx - 9 : sx + 9} y={T + 9} fontSize="10" fontWeight="700" fill="var(--rw-ink)" textAnchor={left ? 'end' : 'start'}>{label}</text>
+            </g>
+          })()}
           {axis.map((i, k) => (
             <text key={k} x={X(i)} y={B + 14} fontSize="8.5" fill="var(--rw-muted)" fontWeight="600"
               textAnchor={k === 0 ? 'start' : k === axis.length - 1 ? 'end' : 'middle'}>{short(payDates[i])}</text>
           ))}
         </svg>
         {ticks.some(f => f >= 0 && f <= n - 1) && <div className="rw-tkl"><i />when it lands</div>}
-        {done?.next != null && <div className="rw-tkl"><span className="rw-fc-key good">✓</span>card cleared</div>}
+        {done?.next != null && <div className="rw-tkl"><KeyDone />card cleared</div>}
       </div>
 
       <div className="rw-tiles">
