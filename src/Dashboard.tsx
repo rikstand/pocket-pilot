@@ -21,7 +21,7 @@ import {
   addExpense, updateExpense, addExpenseAmount, deactivateExpense,
   addIncomeSource, updateIncomeSource, addIncomeAmount, deactivateIncomeSource,
   setIncomeOverride, clearIncomeOverride, setIncomeAmountFrom,
-  closeCycle, catchUp, addCreditSnapshot,
+  closeCycle, catchUp, addCreditSnapshot, acceptDip, clearAcceptedDip,
 } from './lib/repository'
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
@@ -46,6 +46,7 @@ import CycleView, { type DayItem, type BudgetRow } from './runway/CycleView'
 import CloseSheet from './runway/CloseSheet'
 import PastCycles from './runway/PastCycles'
 import CatchUpSheet from './runway/CatchUpSheet'
+import ForecastPage, { type ForecastPoint } from './runway/ForecastPage'
 import { buildRunway, type RunwayEvent } from './runway/runwaySeries'
 import { budgetHistory, budgetFlag } from './runway/budgetHistory'
 
@@ -167,6 +168,8 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
   // Looking back at closed cycles (Journey 10), new look only.
   const [showPast,           setShowPast]           = useState(false)
   const [rwCatchOpen,        setRwCatchOpen]        = useState(false)
+  // The new look's Forecast (Journey 6): a payday opened as its own cycle.
+  const [fcOpen,             setFcOpen]             = useState(false)
   const [closeVarActuals,  setCloseVarActuals]  = useState<Record<string, string>>({})
   const [closePayLanded,   setClosePayLanded]   = useState<boolean | null>(null)
   const [closePayAmount,   setClosePayAmount]   = useState('')
@@ -298,7 +301,9 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
           // The Cycle page renders only the focused cycle, so a longer projection
           // costs nothing on screen — but the adjust sheet needs it. A payment
           // running fifteen cycles was being judged against six.
-          loadForecast(accountId, floorCents, { numCycles: variant === 'forecast' ? horizonCycles : 20 }),
+          // The new look's Forecast counts real months, not cycles, so it loads
+          // enough for a year of weekly pay and cuts by date on screen.
+          loadForecast(accountId, floorCents, { numCycles: variant === 'forecast' ? (newLook ? 60 : horizonCycles) : 20 }),
         ])
 
         const {
@@ -369,7 +374,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
       finally { setLoading(false) }
     }
     load()
-  }, [accountId, reloadKey, horizonCycles, variant])
+  }, [accountId, reloadKey, horizonCycles, variant, newLook])
 
   // Spend logged from the tab bar's + saves while this screen sits underneath.
   useDataChanged(() => setReloadKey(k => k + 1))
@@ -2509,15 +2514,77 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
   }
 
   const money = (cents: number) => (cents < 0 ? '−' : '') + fmt(Math.abs(cents), false)
+
+  // Journey 6: one point per payday from this cycle on, each with the cost
+  // most behind it. "Not every cycle" = in fewer than half the cycles shown.
+  function forecastPoints(): { points: ForecastPoint[]; card: { name: string; paidOffIdx: number | null } | null } {
+    const t = today()
+    const fc = cycles.map((c: any, idx: number) => ({ c, idx })).filter(({ c }: any) => !c.isHistorical && c.endDate >= t)
+    const nonBudget = rawExpenses.filter((e: any) => (e.mode ?? 'fixed') !== 'budget')
+    const occ = new Map<string, string[][]>()
+    for (const e of nonBudget) occ.set(e.id, fc.map(({ c }: any) => occurrencesOf(toEngineExpenses([e])[0], c.startDate, c.endDate)))
+    const share = (id: string) => { const o = occ.get(id) ?? []; return o.length ? o.filter(d => d.length).length / o.length : 0 }
+    const dips = forecastRows?.acceptedDipRows ?? []
+
+    const points: ForecastPoint[] = fc.map(({ c, idx }: any, k: number) => {
+      const costs: { name: string; expenseId: string | null; cents: number; date: string; irregular: boolean }[] = []
+      for (const e of nonBudget) {
+        const ds = occ.get(e.id)![k]
+        if (!ds.length) continue
+        const ov = e.lay_by_id ? null : overrideFor(e.id, c.startDate)
+        const sorted = e.lay_by_id ? [...(e.expense_amount_versions ?? [])].sort(byOldest) : []
+        const cents = ov ? ov.amount_cents : ds.reduce((sum: number, d: string) => sum + (e.lay_by_id
+          ? (sorted.find((v: any) => v.effective_from === d)?.amount_cents ?? 0)
+          : (versionForDate(e.expense_amount_versions, d)?.amount_cents ?? 0)), 0)
+        costs.push({ name: e.name, expenseId: e.id, cents, date: ds[0], irregular: share(e.id) < 0.5 })
+      }
+      for (const line of (c.savingsLines ?? []) as any[]) {
+        costs.push({ name: goalRow(line.goalId)?.name ?? 'Savings', expenseId: null, cents: line.amountCents, date: c.startDate, irregular: false })
+      }
+      if (rawCredit && c.creditPaymentCents > 0) {
+        const days = Math.round((parseDate(c.endDate).getTime() - parseDate(c.startDate).getTime()) / 86400000) + 1
+        costs.push({ name: rawCredit.name ?? 'Card', expenseId: null, cents: c.creditPaymentCents,
+          date: dueDateInCycle(rawCredit, c.startDate, days) ?? c.endDate, irregular: false })
+      }
+      const irregular = costs.filter(x => x.irregular)
+      const pool = irregular.length ? irregular : costs
+      const driver = pool.length ? pool.reduce((a, b) => (b.cents > a.cents ? b : a)) : null
+      return {
+        idx, start: c.startDate, end: c.endDate, payDate: addOneDay(c.endDate),
+        closeCents: c.committedClosingBalanceCents, driver,
+        accepted: dips.some((a: any) => a.cycle_start === c.startDate),
+      }
+    })
+    const first = fc[0]?.c
+    const card = rawCredit && first && first.creditOpeningBalanceCents > 0
+      ? { name: rawCredit.name ?? 'Card',
+          paidOffIdx: (() => { const i = fc.findIndex(({ c }: any) => c.creditClosingBalanceCents <= 0); return i >= 0 ? i : null })() }
+      : null
+    return { points, card }
+  }
+
   const hasClosed = rawStoredCycles.some((x: any) => x.is_closed)
+  const PAY_WORD: Record<string, string> = { weekly: 'weekly', fortnightly: 'fortnightly', monthly: 'monthly' }
   const cycleView = variant === 'cycle' && newLook && showPast
     ? <PastCycles accountId={accountId} onBackToNow={() => setShowPast(false)} />
-    : variant === 'cycle' && newLook && !activeCycle.isHistorical ? (() => {
+    : variant === 'forecast' && newLook && !fcOpen ? (() => {
+    const f = forecastPoints()
+    if (!f.points.length) return null
+    return (
+      <ForecastPage points={f.points} card={f.card} floorCents={floorCents} today={today()} money={money}
+        payWord={(cycleIncome?.every_n ?? 1) === 1 ? (PAY_WORD[cycleIncome?.frequency] ?? '') : ''}
+        onOpen={idx => { setActiveIdx(idx); setFcOpen(true); window.scrollTo(0, 0) }}
+        onLetDip={async (expenseId, cycleStart) => { await acceptDip(accountId, expenseId, cycleStart); reload() }}
+        onUndoDip={async (expenseId, cycleStart) => { await clearAcceptedDip(expenseId, cycleStart); reload() }} />
+    )
+  })()
+    : (variant === 'cycle' || variant === 'forecast') && newLook && !activeCycle.isHistorical ? (() => {
     const d = cycleViewData()
     // Cycles that ended without being closed, before this one (Journey 10).
     // The oldest is the open cycle in the database; the rest are only forecast.
     const t = today()
-    const missed = status === 'now' ? cycles.filter((c: any) => !c.isHistorical && c.endDate < t) : []
+    const isForecast = variant === 'forecast'
+    const missed = status === 'now' && !isForecast ? cycles.filter((c: any) => !c.isHistorical && c.endDate < t) : []
     // Only from a clean chain: the open cycle is the oldest missed one and
     // nothing is stored after it. Anything else needs repairing first.
     const canCatchUp = missed.length > 0 && !!missed[0].id
@@ -2528,12 +2595,17 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
         payDate={nextCycleStartDate} payName={primaryIncome?.name ?? cycleIncome?.name ?? 'Pay'}
         floorCents={floorCents} closingCents={activeCycle.committedClosingBalanceCents}
         cardLine={d.cardLine} runway={d.runway} items={d.items} budgets={d.budgets}
-        showClose={missed.length === 0 && (status === 'overdue' || (status === 'now' && today() === activeCycle.endDate))}
+        showClose={!isForecast && missed.length === 0 && (status === 'overdue' || (status === 'now' && today() === activeCycle.endDate))}
         catchUp={canCatchUp ? { count: missed.length, from: missed[0].startDate, to: missed[missed.length - 1].endDate, onOpen: () => setRwCatchOpen(true) } : undefined}
         ended={status === 'overdue'}
         onClose={() => setRwCloseOpen(true)}
         onForecast={() => onForecast?.()}
-        onPast={hasClosed ? () => setShowPast(true) : undefined}
+        onPast={hasClosed && !isForecast ? () => setShowPast(true) : undefined}
+        forecastNav={isForecast ? {
+          onPrev: activeIdx > currentIdx ? () => setActiveIdx(activeIdx - 1) : undefined,
+          onNext: activeIdx < cycles.length - 1 ? () => setActiveIdx(activeIdx + 1) : undefined,
+          onBack: () => { setFcOpen(false); setActiveIdx(currentIdx) },
+        } : undefined}
         onAddToCycle={openAddToCycle}
         byType={cycleBody}
         money={money}

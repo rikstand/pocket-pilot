@@ -612,3 +612,27 @@ body.is-runway #root { border-inline: none; }
 .rw-wf b { white-space: nowrap; }
 .rw-wf.tot { border: none; font-weight: 700; font-size: 13.5px; }
 .rw-ban.warn .rw-ban-i { background: var(--rw-near-floor); color: #fff; }
+
+/* ═══ Forecast (Journey 6) ═══════════════════════════════════════════ */
+.rw-fc-chart { margin: 10px var(--rw-space-3) 0; background: var(--rw-surface); border-radius: var(--rw-radius-lg); padding: 8px 4px 4px; position: relative; }
+.rw-fc-ct { display: flex; justify-content: space-between; align-items: center; padding: 0 8px 0 10px; font: var(--rw-text-sub); font-weight: 600; color: var(--rw-muted); }
+.rw-qm { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--rw-hairline); background: var(--rw-surface); cursor: pointer; font-size: 11px; font-weight: 700; }
+.rw .rw-qm { color: var(--rw-muted); }
+.rw-fc-svg { display: block; width: 100%; height: auto; touch-action: pan-y; cursor: pointer; }
+.rw-fc-edge { position: absolute; right: 10px; top: 32px; border: none; border-radius: var(--rw-radius-pill); padding: 4px 9px; cursor: pointer; font: var(--rw-text-label); font-size: 10.5px;
+  background: color-mix(in srgb, var(--rw-near-floor) 14%, transparent); }
+.rw .rw-fc-edge { color: var(--rw-near-floor-text); }
+.rw-fc-key { display: inline-grid; place-items: center; width: 12px; height: 12px; border-radius: 50%; font-size: 8px; font-weight: 800; color: #fff; }
+.rw-fc-key.near { background: var(--rw-near-floor); }
+.rw-fc-key.good { background: var(--rw-good); }
+.rw-fc-tiles { margin: 8px var(--rw-space-3) 0; }
+.rw-fc-mh { padding: 12px 18px 5px; font: var(--rw-text-label); font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--rw-muted); }
+.rw-fc-pill { margin-left: 6px; font: var(--rw-text-label); font-size: 10px; padding: 2px 7px; border-radius: var(--rw-radius-pill); vertical-align: 1px; }
+.rw-fc-pill.near { background: color-mix(in srgb, var(--rw-near-floor) 16%, transparent); color: var(--rw-near-floor-text); }
+.rw-fc-pill.under { background: color-mix(in srgb, var(--rw-under-floor) 14%, transparent); color: var(--rw-under-floor); }
+.rw-fc-pill.chosen { background: var(--rw-surface-2); color: var(--rw-muted); }
+.rw-am.near { color: var(--rw-near-floor-text); }
+.rw-am.under { color: var(--rw-under-floor); }
+.rw-am.chosen { color: var(--rw-muted); }
+.rw-tile .v.chosen { color: var(--rw-muted); }
+.rw-fc-how p { font: var(--rw-text-body); font-size: 12.5px; margin-top: 8px; line-height: 1.45; }

@@ -59,6 +59,9 @@ interface Props {
   onClose: () => void
   onForecast: () => void
   onPast?: () => void            // ‹ to closed cycles (Journey 10), when there are any
+  // A future cycle opened from Forecast (Journey 6): ‹ › step between cycles,
+  // and a way back to the Forecast page.
+  forecastNav?: { onPrev?: () => void; onNext?: () => void; onBack: () => void }
   onAddToCycle: () => void
   byType: ReactNode
   money: (cents: number) => string
@@ -173,13 +176,26 @@ export default function CycleView(p: Props) {
   const daysLeft = inCycle ? n - 1 - todayIdx : 0
   const budgetSpent = p.budgets.reduce((s, b) => s + b.spentCents, 0)
   const budgetPlanned = p.budgets.reduce((s, b) => s + b.plannedCents, 0)
-  const pace = inCycle ? (todayIdx + 1) / n : 1
+  const future = n > 0 && runway.days[0] > today      // a forecast cycle, opened from Forecast
+  const pace = inCycle ? (todayIdx + 1) / n : future ? 0 : 1
   const shownBudgets = allBudgets ? p.budgets : p.budgets.slice(0, 3)
 
   return (
     <div className="rw-page">
       {/* ── which cycle ── */}
+      {p.forecastNav ? <>
       <div className="rw-cnav">
+        <button type="button" className="rw-cnav-b" aria-label="Earlier cycle" disabled={!p.forecastNav.onPrev} onClick={p.forecastNav.onPrev}>‹</button>
+        <div className="rw-cnav-t">
+          <b>{day(p.start)} – {day(p.end, true)}</b>
+          <span>{inCycle ? `This cycle · day ${todayIdx + 1} of ${n} · ` : 'Forecast · '}{p.payName} {day(p.payDate)}</span>
+        </div>
+        <button type="button" className="rw-cnav-b" aria-label="Later cycle" disabled={!p.forecastNav.onNext} onClick={p.forecastNav.onNext}>›</button>
+      </div>
+      <div style={{ textAlign: 'center', marginTop: 6 }}>
+        <button type="button" className="rw-today" onClick={p.forecastNav.onBack}>Back to Forecast</button>
+      </div>
+      </> : <div className="rw-cnav">
         {p.onPast
           ? <button type="button" className="rw-cnav-b" aria-label="Earlier cycles" onClick={p.onPast}>‹</button>
           : <span className="rw-cnav-gap" />}
@@ -188,7 +204,7 @@ export default function CycleView(p: Props) {
           <span>{inCycle ? `day ${todayIdx + 1} of ${n} · ` : 'ended · '}{p.payName} {day(p.payDate)}</span>
         </div>
         <button type="button" className="rw-cnav-b" aria-label="Next cycles (Forecast)" onClick={p.onForecast}>›</button>
-      </div>
+      </div>}
 
       {/* ── hero E ── */}
       <div className="rw-hero-card">
@@ -259,7 +275,7 @@ export default function CycleView(p: Props) {
           {p.budgets.length > 0 && (
             <>
               <div className="rw-dl"><span className="rw-dl-k">Budgets</span>
-                <span>{money(budgetSpent)} of {money(budgetPlanned)} · {daysLeft ? `${daysLeft} day${daysLeft > 1 ? 's' : ''} left` : 'last day'}</span></div>
+                <span>{money(budgetSpent)} of {money(budgetPlanned)} · {future ? `${n} days` : daysLeft ? `${daysLeft} day${daysLeft > 1 ? 's' : ''} left` : 'last day'}</span></div>
               <div className="rw-group">
                 {shownBudgets.map(b => {
                   const pct = b.plannedCents > 0 ? b.spentCents / b.plannedCents : 0
