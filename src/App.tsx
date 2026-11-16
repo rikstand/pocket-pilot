@@ -9,6 +9,7 @@ import ExpensesPage from './ExpensesPage'
 import AppShell, { type Page } from './AppShell'
 import WishlistPage from './WishlistPage'
 import CreditPage from './CreditPage'
+import CreditPlan from './runway/CreditPlan'
 import SettingsPage from './SettingsPage'
 import RunwayShell from './runway/RunwayShell'
 import { LogSheetsProvider } from './runway/LogSheets'
@@ -89,7 +90,9 @@ function AuthedApp({ userId }: { userId: string }) {
         <WishlistPage userId={userId} accountId={activeAccount.id} />
       )}
       {shown === 'credit' && (
-        <CreditPage key={'credit-' + dataVersion} userId={userId} accountId={activeAccount.id} />
+        newLook
+          ? <CreditPlan key={'credit-' + dataVersion} accountId={activeAccount.id} />
+          : <CreditPage key={'credit-' + dataVersion} userId={userId} accountId={activeAccount.id} />
       )}
       {shown === 'settings' && (
         <SettingsPage key={'settings-' + dataVersion} userId={userId} accountId={activeAccount.id} />

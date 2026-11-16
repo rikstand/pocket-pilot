@@ -29,7 +29,7 @@ import {
   dueDateInCycle, committedPlanCheck, confirmedPaymentsFrom, predictedBalanceOn,
   planModeOf, isMonthlyCard,
 } from './lib/creditSchedule'
-import { loadForecast, projectFromRows, cycleTickLabel, cycleDateLabel, baseYearOf, baselineChecks, previewBudgetChange, toEngineExpenses, toEngineIncome } from './lib/forecast'
+import { loadForecast, projectFromRows, cardWithPlanOn, cycleTickLabel, cycleDateLabel, baseYearOf, baselineChecks, previewBudgetChange, toEngineExpenses, toEngineIncome } from './lib/forecast'
 import type { ForecastResult } from './lib/forecast'
 import { nthOccurrence, occurrencesOf, scheduleOn } from './engine/recurrence'
 import { budgetAmountForCycle, cycleEndAt, nextCycleFor } from './engine/engine'
@@ -1284,12 +1284,19 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
   const showCredit = !activeCycle.isHistorical
     && (creditPaymentCents > 0 || (activeCycle.creditOpeningBalanceCents ?? 0) > 0)
 
+  // The card with the plan in force for this cycle written into its plan
+  // columns: a plan set from a later date (credit_plan_versions) takes over
+  // when its cycle comes. Everything below that describes the plan reads it.
+  const creditPlanCard = rawCredit && forecastRows
+    ? cardWithPlanOn(rawCredit, forecastRows.creditPlanRows ?? [], activeCycle.startDate)
+    : rawCredit
+
   // Does the committed card plan still fit? Committing stores the extra as a
   // number, and the forecast keeps moving. Same check, same inputs as the
   // Credit page (committedPlanCheck), so the two can never disagree.
   const creditPlanCheck = rawCredit?.strategy_committed && forecastRows
     ? committedPlanCheck(
-        rawCredit,
+        creditPlanCard,
         projectFromRows({ ...forecastRows, creditCard: null, creditOverrideRows: [] }, floorCents, 24),
         floorCents,
         confirmedPaymentsFrom(forecastRows.creditPaymentRows)
@@ -1320,7 +1327,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
   // The plan (Credit page) decides every cycle by default; any single cycle
   // can be changed here to the minimum, whatever is spare, or your own
   // amount. A change here is for this cycle only.
-  const planMode = rawCredit ? planModeOf(rawCredit) : 'minimum'
+  const planMode = creditPlanCard ? planModeOf(creditPlanCard) : 'minimum'
   const extraOnDueOnly = !!rawCredit && isMonthlyCard(rawCredit) && rawCredit.extra_timing === 'due_cycle'
   // Does the plan's extra go out in this cycle? Not in a cycle without the
   // due date when the user chose to pay extra once a month.
@@ -1528,7 +1535,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
     const row = adjRow()
     // The plan, or an amount the plan already pays here: nothing to keep,
     // so drop any exception rather than storing a copy of the plan.
-    const standing = rawCredit.strategy_extra_cents ?? 0
+    const standing = creditPlanCard.strategy_extra_cents ?? 0
     const sameAsPlan = !row ||
       (row.extra_cents === 0 && (planMode === 'minimum' || !planExtraHere)) ||
       (planMode === 'extra' && planExtraHere && row.extra_cents === standing)
@@ -2535,7 +2542,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
     // paid from a savings pot, say); the line still ends on the forecast.
     if (Math.abs(runway.gapCents) >= 100) console.warn('Runway differs from the forecast by', runway.gapCents, 'cents')
 
-    const spareCard = !!rawCredit?.strategy_committed && planModeOf(rawCredit) === 'spare'
+    const spareCard = !!rawCredit?.strategy_committed && planModeOf(creditPlanCard) === 'spare'
     return { items, budgets, runway, events, cardLine: spareCard ? { cents: creditExtraCents, name: rawCredit?.name ?? 'your card' } : null }
   }
 
@@ -2654,7 +2661,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
         />
       )}
       {rwCard && rawCredit && forecastRows && (
-        <CardSheet mode={rwCard} rows={forecastRows} cycleStart={activeCycle.startDate} card={rawCredit} accountId={accountId}
+        <CardSheet mode={rwCard} rows={forecastRows} cycleStart={activeCycle.startDate} card={creditPlanCard} accountId={accountId}
           floorCents={floorCents} today={t} dueDate={creditDueDate} paidCents={creditState === 'paid' ? creditPaidCents : null}
           predictedTodayCents={isCurrentCycle ? predictedCardToday() : null} sym={sym} money={money}
           onPlan={onCredit} onClose={() => setRwCard(null)} />

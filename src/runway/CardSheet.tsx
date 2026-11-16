@@ -198,6 +198,14 @@ export default function CardSheet(p: Props) {
   /* ── update the balance ── */
   const [bal, setBal] = useState(p.predictedTodayCents != null ? String(dollars(p.predictedTodayCents)) : '')
   const balC = Math.max(0, Math.round((parseFloat(bal) || 0) * 100))
+  // The forecast as it would run with this balance saved: the latest balance
+  // is what the card reads, so this is exactly what saving does.
+  const balRun = useMemo(() => mode !== 'balance' || !bal.trim() ? base : projectFromRows({
+    ...p.rows, creditOverrideRows: p.rows.creditOverrideRows ?? [],
+    creditCard: { ...p.rows.creditCard, current_balance_cents: balC, balance_as_of: p.today, balance_recorded_at: new Date().toISOString(), balance_source: 'manual' },
+  }, p.floorCents, HORIZON), [mode, balC, base])
+  const clearLabel = (run: typeof base) => { const i = cleared(run); return i >= 0 ? monYr(nextDay(run[i].endDate)) : 'Later' }
+  const fromBase = useMemo(() => mode === 'balance' ? projectFromRows(p.rows, p.floorCents, HORIZON) : base, [mode, p.rows])
   async function saveBalance() {
     if (busy || !bal.trim()) return
     setBusy(true)
@@ -334,6 +342,12 @@ export default function CardSheet(p: Props) {
               {Math.abs(balC - p.predictedTodayCents) < 100 ? 'That matches.'
                 : balC > p.predictedTodayCents ? `${money(balC - p.predictedTodayCents)} more owing.` : `${money(p.predictedTodayCents - balC)} less owing.`}
               {' '}The plan re-runs from today.
+            </div>
+          )}
+          {p.card?.strategy_committed && bal.trim() && (
+            <div className="rw-tiles two">
+              <div className="rw-tile"><div className="k">Card cleared</div><div className="v">{clearLabel(balRun)}</div><div className="d">was {clearLabel(fromBase)}</div></div>
+              <div className="rw-tile"><div className="k">Interest</div><div className="v">{money(interest(balRun))}</div><div className="d">was {money(interest(fromBase))}</div></div>
             </div>
           )}
           <div className="rw-ctas">
