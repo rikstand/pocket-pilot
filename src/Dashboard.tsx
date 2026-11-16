@@ -2518,14 +2518,17 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
     // The oldest is the open cycle in the database; the rest are only forecast.
     const t = today()
     const missed = status === 'now' ? cycles.filter((c: any) => !c.isHistorical && c.endDate < t) : []
+    // Only from a clean chain: the open cycle is the oldest missed one and
+    // nothing is stored after it. Anything else needs repairing first.
     const canCatchUp = missed.length > 0 && !!missed[0].id
+      && !rawStoredCycles.some((x: any) => x.start_date > missed[0].startDate)
     return (<>
       <CycleView
         start={activeCycle.startDate} end={activeCycle.endDate} today={today()}
         payDate={nextCycleStartDate} payName={primaryIncome?.name ?? cycleIncome?.name ?? 'Pay'}
         floorCents={floorCents} closingCents={activeCycle.committedClosingBalanceCents}
         cardLine={d.cardLine} runway={d.runway} items={d.items} budgets={d.budgets}
-        showClose={!canCatchUp && (status === 'overdue' || (status === 'now' && today() === activeCycle.endDate))}
+        showClose={missed.length === 0 && (status === 'overdue' || (status === 'now' && today() === activeCycle.endDate))}
         catchUp={canCatchUp ? { count: missed.length, from: missed[0].startDate, to: missed[missed.length - 1].endDate, onOpen: () => setRwCatchOpen(true) } : undefined}
         ended={status === 'overdue'}
         onClose={() => setRwCloseOpen(true)}

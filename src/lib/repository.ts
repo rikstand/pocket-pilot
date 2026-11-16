@@ -678,6 +678,10 @@ export async function closeCycle(
     payIn?: boolean | null         // whether next cycle's pay was in it
   }
 ) {
+  // A cycle with no row is only forecast: an earlier one is still open. Closing
+  // it anyway made close_cycle skip the close and open a second cycle beside
+  // the old one (found 16 Nov 2026 on a test account).
+  if (!close.cycleId) throw new Error('An earlier cycle hasn\u2019t been closed yet. Close that one first.')
   if (close.cycleId && close.projectedCents != null && Number.isFinite(close.projectedCents)) {
     const { error: pErr } = await supabase
       .from('cycles')
