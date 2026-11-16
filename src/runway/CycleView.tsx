@@ -26,6 +26,7 @@ export interface DayItem {
   donePill?: string
   onOpen?: () => void
   payday?: boolean             // the pay that starts the next cycle
+  progress?: number            // 0–1, a thin bar under the row (the card paid down)
 }
 
 export interface BudgetRow {
@@ -167,6 +168,7 @@ export default function CycleView(p: Props) {
         <div className="rw-tx">
           <div className="rw-row-name">{i.name}</div>
           <div className="rw-sub">{sub}</div>
+          {i.progress != null && <div className="rw-pb-row"><i style={{ width: Math.round(Math.min(1, Math.max(0, i.progress)) * 100) + '%' }} /></div>}
         </div>
         {right}
       </div>

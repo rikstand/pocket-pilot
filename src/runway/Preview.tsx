@@ -28,7 +28,7 @@ export function previewStats(nowCents: number[], newCents: number[], floorCents:
 
 const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
 
-export default function Preview({ nowCents, newCents, payDates, floorCents, money, ticks = [] }: {
+export default function Preview({ nowCents, newCents, payDates, floorCents, money, ticks = [], title, done, third }: {
   nowCents: number[]
   newCents: number[]
   payDates: string[]           // the payday each closing balance is "before"
@@ -37,6 +37,12 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
   // When the item lands: positions in payday units (1.5 = halfway between
   // the second and third paydays). Drawn as ticks on the axis.
   ticks?: number[]
+  title?: string
+  // Where something finishes (a card cleared): a ringed tick on the new line,
+  // a faint ring where it would have finished as things stand. Payday indexes.
+  done?: { now: number | null; next: number | null }
+  // The third tile, when the change has a better one than "By <date>".
+  third?: { k: string; v: string; d: string; cls?: string }
 }) {
   const n = newCents.length
   if (!n) return null
@@ -58,7 +64,7 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
     <>
       <div className="rw-card rw-pv">
         <div className="rw-pv-k">
-          <span>Left before each payday</span>
+          <span>{title ?? 'Left before each payday'}</span>
           <span className="rw-pv-lg"><i className="gh" />now<i className="nw" />new<i className="fl" />floor</span>
         </div>
         <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Left before each payday, now and with this change">
@@ -73,6 +79,14 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
           {newCents.map((c, i) => c < floorCents
             ? <circle key={i} cx={X(i)} cy={Y(c)} r="3.4" fill={c < 0 ? 'var(--rw-under-floor)' : 'var(--rw-near-floor)'} />
             : null)}
+          {done?.now != null && done.now !== done.next && done.now < n && (
+            <circle cx={X(done.now)} cy={Y(nowCents[done.now])} r="4.5" fill="var(--rw-surface)" stroke="var(--rw-ink)" strokeWidth="1.4" opacity=".45" />
+          )}
+          {done?.next != null && done.next < n && (() => {
+            const cx = X(done.next), cy = Y(newCents[done.next])
+            return <g><circle cx={cx} cy={cy} r="6" fill="var(--rw-line)" stroke="var(--rw-surface)" strokeWidth="2" />
+              <path d={`M${cx - 2.6} ${cy}l1.8 1.9 3.4-3.6`} fill="none" stroke="var(--rw-surface)" strokeWidth="1.6" strokeLinecap="round" /></g>
+          })()}
           {ticks.filter(f => f >= 0 && f <= n - 1).map((f, k) => (
             <line key={'t' + k} x1={X(f)} x2={X(f)} y1={B + 1} y2={B + 7} stroke="var(--rw-line)" strokeWidth="2.4" strokeLinecap="round" />
           ))}
@@ -82,6 +96,7 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
           ))}
         </svg>
         {ticks.some(f => f >= 0 && f <= n - 1) && <div className="rw-tkl"><i />when it lands</div>}
+        {done?.next != null && <div className="rw-tkl"><span className="rw-fc-key good">✓</span>card cleared</div>}
       </div>
 
       <div className="rw-tiles">
@@ -95,11 +110,19 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
           <div className="v">{signed(d0)}</div>
           <div className="d">before pay {short(payDates[0])}</div>
         </div>
-        <div className="rw-tile">
-          <div className="k">By {short(payDates[n - 1])}</div>
-          <div className="v">{signed(dN)}</div>
-          <div className="d">compared with now</div>
-        </div>
+        {third ? (
+          <div className="rw-tile">
+            <div className="k">{third.k}</div>
+            <div className="v">{third.v}</div>
+            <div className={`d ${third.cls ?? ''}`}>{third.d}</div>
+          </div>
+        ) : (
+          <div className="rw-tile">
+            <div className="k">By {short(payDates[n - 1])}</div>
+            <div className="v">{signed(dN)}</div>
+            <div className="d">compared with now</div>
+          </div>
+        )}
       </div>
 
       {st.worse && (st.level === 'under'

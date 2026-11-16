@@ -47,6 +47,7 @@ import CloseSheet from './runway/CloseSheet'
 import PastCycles from './runway/PastCycles'
 import CatchUpSheet from './runway/CatchUpSheet'
 import ForecastPage, { type ForecastPoint } from './runway/ForecastPage'
+import CardSheet, { type CardMode } from './runway/CardSheet'
 import { ItemSheet, itemFor } from './runway/ItemsPage'
 import { buildRunway, type RunwayEvent } from './runway/runwaySeries'
 import { budgetHistory, budgetFlag } from './runway/budgetHistory'
@@ -104,10 +105,12 @@ const PERIOD_WORD: Record<string, string> = {
   daily: 'day', weekly: 'week', fortnightly: 'fortnight', monthly: 'month', annually: 'year',
 }
 
-export default function Dashboard({ userId, accountId, variant, onForecast }: {
+export default function Dashboard({ userId, accountId, variant, onForecast, onCredit }: {
   userId: string, accountId: string, variant: 'cycle' | 'forecast'
   // The new look's Cycle screen links to Forecast with its › button.
   onForecast?: () => void
+  // The card sheet's "Change my plan" (Journey 1), to Plan › Credit.
+  onCredit?: () => void
 }) {
   const { activeAccount } = useAccount()
 
@@ -174,6 +177,8 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
   // An item opened from a cycle in the new look: the Journey 9 item sheet,
   // set to that cycle (Journey 6).
   const [rwItem,             setRwItem]             = useState<{ id: string; isIncome: boolean } | null>(null)
+  // The card's sheet in the new look (Journey 1), on what the cycle needs.
+  const [rwCard,             setRwCard]             = useState<CardMode | null>(null)
   const [closeVarActuals,  setCloseVarActuals]  = useState<Record<string, string>>({})
   const [closePayLanded,   setClosePayLanded]   = useState<boolean | null>(null)
   const [closePayAmount,   setClosePayAmount]   = useState('')
@@ -2470,17 +2475,29 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
       }
     }
 
-    // The card payment, on its due date when the cycle has one.
-    if (showCredit && creditPaymentCents > 0) {
+    // The card payment, on its due date when the cycle has one. Shown while
+    // the card has a balance, even with nothing due: that's where you'd pay
+    // extra anyway (Journey 1).
+    if (showCredit && rawCredit) {
       const d = creditDueDate ?? c.endDate
-      events.push({ date: d, cents: -creditPaymentCents, name: rawCredit?.name ?? 'Card' })
+      const sheetHere = !!forecastRows?.cycles.some((x: any) => x.startDate === c.startDate)
+      if (creditPaymentCents > 0) events.push({ date: d, cents: -creditPaymentCents, name: rawCredit.name ?? 'Card' })
+      const paidHere = creditState === 'paid'
+      const parts = [
+        creditPaymentCents <= 0 ? 'Nothing due this cycle'
+          : creditExtraCents > 0 ? `Min ${fmt(creditMinimumCents, false)} + extra ${fmt(creditExtraCents, false)}` : 'Minimum',
+        `${fmt(Math.max(0, creditLeftCents), false)} left`,
+        ...(cycleOverride && !paidHere ? ['this cycle only'] : []),
+      ]
       items.push({
-        key: 'card', date: d, name: rawCredit?.name ?? 'Card', mark: 'credit', amountCents: creditPaymentCents,
-        sub: creditExtraCents > 0 ? `Min ${fmt(creditMinimumCents, false)} + extra ${fmt(creditExtraCents, false)}` : 'Minimum',
+        key: 'card', date: d, name: rawCredit.name ?? 'Card', mark: 'credit',
+        amountCents: paidHere ? creditPaidCents : creditPaymentCents,
+        sub: parts.join(' · '),
+        progress: creditPct / 100,
         needs: creditState === 'due', needsText: 'not confirmed',
-        action: creditState === 'due' ? { label: 'Confirm', run: openConfirmPay } : undefined,
-        donePill: creditState === 'paid' ? 'Paid ✓' : undefined,
-        onOpen: openCreditAdjust,
+        action: creditState === 'due' ? { label: 'Confirm', run: sheetHere ? () => setRwCard('confirm') : openConfirmPay } : undefined,
+        donePill: paidHere ? 'Paid ✓' : undefined,
+        onOpen: sheetHere ? () => setRwCard(paidHere ? 'paid' : 'pay') : openCreditAdjust,
       })
     }
 
@@ -2635,6 +2652,12 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
           onCancel={() => { setRwCatchOpen(false); reload() }}
           onSubmit={({ lastCloseCents, enteredCents, payIn }) => submitCatchUp(missed, lastCloseCents, enteredCents, payIn)}
         />
+      )}
+      {rwCard && rawCredit && forecastRows && (
+        <CardSheet mode={rwCard} rows={forecastRows} cycleStart={activeCycle.startDate} card={rawCredit} accountId={accountId}
+          floorCents={floorCents} today={t} dueDate={creditDueDate} paidCents={creditState === 'paid' ? creditPaidCents : null}
+          predictedTodayCents={isCurrentCycle ? predictedCardToday() : null} sym={sym} money={money}
+          onPlan={onCredit} onClose={() => setRwCard(null)} />
       )}
       {rwItem && forecastRows && (() => {
         const row = (rwItem.isIncome ? rawIncome : rawExpenses).find((x: any) => x.id === rwItem.id)

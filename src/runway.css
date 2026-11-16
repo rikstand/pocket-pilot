@@ -637,3 +637,43 @@ body.is-runway #root { border-inline: none; }
 .rw-tile .v.chosen { color: var(--rw-muted); }
 .rw-fc-how p { font: var(--rw-text-body); font-size: 12.5px; margin-top: 8px; line-height: 1.45; }
 .rw-rw-svg { touch-action: pan-y; }
+
+/* ═══ Card payment (Journey 1): Gain bar and Slider with chips ═══════ */
+.rw-tile .d.good { color: var(--rw-good); }
+.rw-tile .d.near { color: var(--rw-near-floor-text); }
+.rw-sl-card { margin-top: 10px; }
+.rw-gain { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; padding: 7px 10px; border-radius: 11px;
+  background: color-mix(in srgb, var(--rw-good) 13%, transparent); }
+.rw-gain b { font: var(--rw-text-tile); font-size: 16px; letter-spacing: -.02em; color: var(--rw-good); white-space: nowrap; }
+.rw-gain span { font: var(--rw-text-sub); font-size: 11px; color: var(--rw-muted); line-height: 1.3; }
+.rw-gain span b { font: inherit; font-weight: 650; color: var(--rw-ink); font-size: inherit; }
+.rw-gain.flat { background: var(--rw-surface-2); }
+.rw-gain.flat > b { color: var(--rw-ink); }
+.rw-sl-tag { font: var(--rw-text-sub); font-size: 11px; margin-top: 2px; }
+.rw-sl-tag .w { color: var(--rw-near-floor-text); font-weight: 650; }
+.rw-sl-tag .n { color: var(--rw-under-floor); font-weight: 700; }
+.rw-sl { position: relative; margin: 12px 2px 0; height: 28px; }
+.rw-sl .sl-rail, .rw-sl .sl-fill, .rw-sl .sl-zone { position: absolute; top: 12px; height: 4px; border-radius: 2px; }
+.rw-sl .sl-rail { left: 0; right: 0; background: var(--rw-surface-2); }
+.rw-sl .sl-fill { left: 0; background: var(--rw-ink); }
+.rw-sl .sl-zone { background: repeating-linear-gradient(45deg, var(--rw-near-floor), var(--rw-near-floor) 3px, transparent 3px, transparent 6px); opacity: .7; }
+.rw-sl .sl-zone.neg { background: repeating-linear-gradient(45deg, var(--rw-under-floor), var(--rw-under-floor) 3px, transparent 3px, transparent 6px); opacity: .9; }
+.rw-sl .sl-mk { position: absolute; top: 7px; width: 2px; height: 14px; background: var(--rw-ink); opacity: .35; transform: translateX(-1px); z-index: 1; }
+.rw-sl .sl-mk.on { opacity: 1; height: 18px; top: 5px; }
+.rw-sl input[type=range] { position: absolute; left: 0; right: 0; top: 4px; width: 100%; margin: 0; -webkit-appearance: none; appearance: none; background: transparent; height: 20px; z-index: 3; }
+.rw-sl input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 24px; height: 24px; border-radius: 50%; background: var(--rw-surface); border: 2.5px solid var(--rw-ink); box-shadow: 0 1px 5px rgba(0,0,0,.2); cursor: pointer; }
+.rw-sl input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 50%; background: var(--rw-surface); border: 2.5px solid var(--rw-ink); cursor: pointer; }
+.rw-snaps { display: flex; gap: 5px; margin: 8px 0 6px; }
+.rw-snaps button { flex: 1 1 auto; white-space: nowrap; border: 1px solid var(--rw-hairline); background: var(--rw-surface); border-radius: var(--rw-radius-pill);
+  padding: 7px 4px; font: var(--rw-text-sub); font-size: 11px; font-weight: 600; cursor: pointer; }
+.rw .rw-snaps button { color: var(--rw-muted); }
+.rw .rw-snaps button.on { background: var(--rw-ink); color: var(--rw-surface); border-color: var(--rw-ink); }
+.rw-ends { display: flex; justify-content: space-between; margin: 0 2px 2px; }
+.rw-ends button { background: none; border: none; padding: 0; cursor: pointer; text-align: left; font: var(--rw-text-sub); font-size: 9.5px; }
+.rw .rw-ends button { color: var(--rw-muted); }
+.rw-ends button b { display: block; font-size: 12px; font-weight: 650; color: var(--rw-ink); }
+.rw-ends button.r { text-align: right; }
+.rw-pb-row { height: 4px; border-radius: 2px; background: var(--rw-surface-2); margin-top: 6px; overflow: hidden; }
+.rw-pb-row i { display: block; height: 100%; border-radius: 2px; background: var(--rw-ink); opacity: .75; }
+.rw .rw-sl input[type=range] { border: 0; padding: 0; border-radius: 0; box-shadow: none; background: transparent; height: 20px; min-height: 0; outline: none; }
+.rw .rw-sl input[type=range]::-webkit-slider-runnable-track { background: transparent; border: 0; height: 20px; }
