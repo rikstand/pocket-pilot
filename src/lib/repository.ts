@@ -711,6 +711,21 @@ export async function closeCycle(
   }
 }
 
+/** Journey 10: close every missed cycle in one go (catch_up runs close_cycle for
+ *  each, so all close or none do). Returns the new open cycle's id. */
+export async function catchUp(accountId: string, cycleId: string, closes: {
+  start_date: string; end_date: string; closing_cents: number; projected_cents: number
+  next_start: string; next_end: string; on_forecast: boolean
+  actuals: { expense_id: string; actual_amount_cents: number }[]
+}[], enteredCents: number | null, payIn: boolean | null): Promise<string> {
+  const { data, error } = await supabase.rpc('catch_up', {
+    p_account_id: accountId, p_cycle_id: cycleId, p_closes: closes,
+    p_entered_cents: enteredCents, p_pay_in: payIn,
+  })
+  if (error) throw error
+  return data as string
+}
+
 /** Journey 10: change the most recent close and the next cycle's opening, together.
  *  Returns how much every payday after moved. */
 export async function fixLastClose(accountId: string, cycleId: string, closingCents: number,

@@ -21,7 +21,7 @@ import {
   addExpense, updateExpense, addExpenseAmount, deactivateExpense,
   addIncomeSource, updateIncomeSource, addIncomeAmount, deactivateIncomeSource,
   setIncomeOverride, clearIncomeOverride, setIncomeAmountFrom,
-  closeCycle, addCreditSnapshot,
+  closeCycle, catchUp, addCreditSnapshot,
 } from './lib/repository'
 import { useAccount } from './lib/AccountContext'
 import { moneyFormatter, currencySymbol } from './lib/money'
@@ -45,6 +45,7 @@ import { useLog } from './runway/logContext'
 import CycleView, { type DayItem, type BudgetRow } from './runway/CycleView'
 import CloseSheet from './runway/CloseSheet'
 import PastCycles from './runway/PastCycles'
+import CatchUpSheet from './runway/CatchUpSheet'
 import { buildRunway, type RunwayEvent } from './runway/runwaySeries'
 import { budgetHistory, budgetFlag } from './runway/budgetHistory'
 
@@ -165,6 +166,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
   const [rwCloseOpen,        setRwCloseOpen]        = useState(false)
   // Looking back at closed cycles (Journey 10), new look only.
   const [showPast,           setShowPast]           = useState(false)
+  const [rwCatchOpen,        setRwCatchOpen]        = useState(false)
   const [closeVarActuals,  setCloseVarActuals]  = useState<Record<string, string>>({})
   const [closePayLanded,   setClosePayLanded]   = useState<boolean | null>(null)
   const [closePayAmount,   setClosePayAmount]   = useState('')
@@ -998,6 +1000,31 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
       enteredCents:   close.enteredCents,
       payIn:          close.payIn,
     })
+  }
+
+  // Journey 10: every missed cycle closes in one call. The earlier ones on their
+  // forecast, the last on the real figure; estimates confirmed during a cycle
+  // are kept as its actuals, the rest stay unconfirmed.
+  async function submitCatchUp(missed: any[], lastCloseCents: number, enteredCents: number | null, payIn: boolean | null) {
+    const closes = missed.map((c: any, i: number) => {
+      const next = cycles[cycles.indexOf(c) + 1]
+      const isLast = i === missed.length - 1
+      const actuals = rawExpenses
+        .filter((e: any) => e.mode === 'variable')
+        .flatMap((e: any) => {
+          const ov = overrideFor(e.id, c.startDate)
+          if (!ov || !occurrencesOf(toEngineExpenses([e])[0], c.startDate, c.endDate).length) return []
+          return [{ expense_id: e.id, actual_amount_cents: ov.amount_cents }]
+        })
+      return {
+        start_date: c.startDate, end_date: c.endDate,
+        closing_cents: isLast ? lastCloseCents : c.committedClosingBalanceCents,
+        projected_cents: c.committedClosingBalanceCents,
+        next_start: next.startDate, next_end: next.endDate,
+        on_forecast: !isLast, actuals,
+      }
+    })
+    await catchUp(accountId, missed[0].id, closes, enteredCents, payIn)
   }
 
   async function applyFreeze() {
@@ -2365,7 +2392,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
       const cd = cardFor(x => x.incomeId === src.id)
       occs.forEach((d: string, i: number) => {
         const cents = ov ? spread(ov.amount_cents, occs, i) : (versionForDate(src.income_amount_versions, d)?.amount_cents ?? 0)
-        if (!src.is_potential) events.push({ date: d, cents })
+        if (!src.is_potential) events.push({ date: d, cents, name: src.name })
         items.push({
           key: `inc-${src.id}-${d}`, date: d, name: src.name, mark: 'income', amountCents: cents, isIn: true,
           sub: src.is_potential ? 'Not certain yet' : ov ? 'This cycle only' : howOften(src),
@@ -2388,7 +2415,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
         const cents = ov ? spread(ov.amount_cents, occs, i)
           : isLayby ? (sorted.find((v: any) => v.effective_from === d)?.amount_cents ?? 0)
           : (versionForDate(exp.expense_amount_versions, d)?.amount_cents ?? 0)
-        events.push({ date: d, cents: -cents })
+        events.push({ date: d, cents: -cents, name: exp.name })
         const isEstimate = mode === 'variable'
         const open = isEstimate && !ov
         let sub = howOften(exp)
@@ -2414,7 +2441,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
     // Savings leave at the start of the cycle; set aside any day of it.
     if (showSavings) {
       for (const line of savingsLines) {
-        events.push({ date: c.startDate, cents: -line.amountCents })
+        events.push({ date: c.startDate, cents: -line.amountCents, name: goalRow(line.goalId)?.name ?? 'Savings' })
         const goal = goalRow(line.goalId)
         if (!goal) continue
         const done = isSetAside(line.goalId)
@@ -2432,7 +2459,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
     // The card payment, on its due date when the cycle has one.
     if (showCredit && creditPaymentCents > 0) {
       const d = creditDueDate ?? c.endDate
-      events.push({ date: d, cents: -creditPaymentCents })
+      events.push({ date: d, cents: -creditPaymentCents, name: rawCredit?.name ?? 'Card' })
       items.push({
         key: 'card', date: d, name: rawCredit?.name ?? 'Card', mark: 'credit', amountCents: creditPaymentCents,
         sub: creditExtraCents > 0 ? `Min ${fmt(creditMinimumCents, false)} + extra ${fmt(creditExtraCents, false)}` : 'Minimum',
@@ -2478,7 +2505,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
     if (Math.abs(runway.gapCents) >= 100) console.warn('Runway differs from the forecast by', runway.gapCents, 'cents')
 
     const spareCard = !!rawCredit?.strategy_committed && planModeOf(rawCredit) === 'spare'
-    return { items, budgets, runway, cardLine: spareCard ? { cents: creditExtraCents, name: rawCredit?.name ?? 'your card' } : null }
+    return { items, budgets, runway, events, cardLine: spareCard ? { cents: creditExtraCents, name: rawCredit?.name ?? 'your card' } : null }
   }
 
   const money = (cents: number) => (cents < 0 ? '−' : '') + fmt(Math.abs(cents), false)
@@ -2487,13 +2514,19 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
     ? <PastCycles accountId={accountId} onBackToNow={() => setShowPast(false)} />
     : variant === 'cycle' && newLook && !activeCycle.isHistorical ? (() => {
     const d = cycleViewData()
-    return (
+    // Cycles that ended without being closed, before this one (Journey 10).
+    // The oldest is the open cycle in the database; the rest are only forecast.
+    const t = today()
+    const missed = status === 'now' ? cycles.filter((c: any) => !c.isHistorical && c.endDate < t) : []
+    const canCatchUp = missed.length > 0 && !!missed[0].id
+    return (<>
       <CycleView
         start={activeCycle.startDate} end={activeCycle.endDate} today={today()}
         payDate={nextCycleStartDate} payName={primaryIncome?.name ?? cycleIncome?.name ?? 'Pay'}
         floorCents={floorCents} closingCents={activeCycle.committedClosingBalanceCents}
         cardLine={d.cardLine} runway={d.runway} items={d.items} budgets={d.budgets}
-        showClose={status === 'overdue' || (status === 'now' && today() === activeCycle.endDate)}
+        showClose={!canCatchUp && (status === 'overdue' || (status === 'now' && today() === activeCycle.endDate))}
+        catchUp={canCatchUp ? { count: missed.length, from: missed[0].startDate, to: missed[missed.length - 1].endDate, onOpen: () => setRwCatchOpen(true) } : undefined}
         ended={status === 'overdue'}
         onClose={() => setRwCloseOpen(true)}
         onForecast={() => onForecast?.()}
@@ -2502,7 +2535,24 @@ export default function Dashboard({ userId, accountId, variant, onForecast }: {
         byType={cycleBody}
         money={money}
       />
-    )
+      {rwCatchOpen && canCatchUp && (
+        <CatchUpSheet
+          missed={missed.map((c: any) => ({ start: c.startDate, end: c.endDate, forecastCents: c.committedClosingBalanceCents }))}
+          current={{ start: activeCycle.startDate, end: activeCycle.endDate,
+            openingCents: activeCycle.openingBalanceCents, closingCents: activeCycle.committedClosingBalanceCents }}
+          today={t}
+          payName={primaryIncome?.name ?? cycleIncome?.name ?? 'Pay'}
+          ins={d.events.filter(e => e.date <= t && e.cents > 0).map(e => ({ name: e.name ?? '', date: e.date, cents: e.cents }))}
+          outs={d.events.filter(e => e.date <= t && e.cents < 0).map(e => ({ name: e.name ?? '', date: e.date, cents: -e.cents }))}
+          spentCents={d.budgets.reduce((sum, b) => sum + b.spentCents, 0)}
+          floorCents={floorCents}
+          currencySymbol={sym}
+          money={money}
+          onCancel={() => { setRwCatchOpen(false); reload() }}
+          onSubmit={({ lastCloseCents, enteredCents, payIn }) => submitCatchUp(missed, lastCloseCents, enteredCents, payIn)}
+        />
+      )}
+    </>)
   })() : null
 
   const rwClose = rwCloseOpen && cycleView ? (

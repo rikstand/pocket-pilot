@@ -64,7 +64,8 @@ export default function PastCycles({ accountId, onBackToNow }: { accountId: stri
   const i = idx ?? closed.length - 1
   const c = closed[i]
   const view = describe(c, data, floorCents)
-  const hasForecast = c.projected_close_cents != null
+  const onForecast = !!c.closed_on_forecast
+  const hasForecast = c.projected_close_cents != null && !onForecast
   const vsForecast = hasForecast ? c.closing_balance_cents - Number(c.projected_close_cents) : null
   const isLatest = i === closed.length - 1
   const stored = data.rows.storedCycles ?? []
@@ -89,6 +90,7 @@ export default function PastCycles({ accountId, onBackToNow }: { accountId: stri
           <div><span>vs forecast</span><b className={vsForecast == null ? 'none' : vsForecast >= 0 ? 'good' : 'near'}>
             {vsForecast == null ? '—' : (vsForecast > 0 ? '+' : '') + money(vsForecast)}</b></div>
         </div>
+        {onForecast && <div className="rw-ob">Caught up: no balance was checked, so it closed on its forecast.</div>}
         {c.fixed_from_cents != null && c.fixed_at && (
           <div className="rw-ob">Fixed {short(String(c.fixed_at).slice(0, 10))}: was {money(Number(c.fixed_from_cents))}</div>
         )}
@@ -99,7 +101,9 @@ export default function PastCycles({ accountId, onBackToNow }: { accountId: stri
       </div>
 
       {tab === 'avf' ? (
-        !hasForecast
+        onForecast
+          ? <div className="rw-card rw-inset rw-sd">This cycle closed on its forecast during a catch-up, so there's nothing to compare.</div>
+          : !hasForecast
           ? <div className="rw-card rw-inset rw-sd">No forecast was saved for this cycle. Cycles closed before forecasts were saved show what happened only.</div>
           : <>
               <div className="rw-card rw-inset">

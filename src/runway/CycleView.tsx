@@ -54,6 +54,8 @@ interface Props {
   budgets: BudgetRow[]
   showClose: boolean
   ended: boolean
+  // Cycles that ended without being closed (Journey 10). Takes the close banner's place.
+  catchUp?: { count: number; from: string; to: string; onOpen: () => void }
   onClose: () => void
   onForecast: () => void
   onPast?: () => void            // ‹ to closed cycles (Journey 10), when there are any
@@ -67,6 +69,7 @@ const day = (d: string, month = false) =>
     ? { weekday: 'short', day: 'numeric', month: 'short' }
     : { weekday: 'short', day: 'numeric' }).replace(',', '')
 const nextDay = (d: string) => formatDate(addDays(parseDate(d), 1))
+const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
 const LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 
 /* ── type marks: 9px shapes, never icons ── */
@@ -197,7 +200,14 @@ export default function CycleView(p: Props) {
         <div className="rw-hero-sub"><span>Before pay {day(p.payDate)}</span><b>{money(p.closingCents)}</b></div>
       </div>
 
-      {p.showClose && (
+      {p.catchUp ? (
+        <div className="rw-ban warn">
+          <span className="rw-ban-i">!</span>
+          <span className="rw-ban-tx"><b>{p.catchUp.count === 1 ? '1 cycle wasn\u2019t closed' : `${p.catchUp.count} cycles weren\u2019t closed`}</b>
+            <small>{short(p.catchUp.from)} – {short(p.catchUp.to)}</small></span>
+          <button type="button" onClick={p.catchUp.onOpen}>Catch up</button>
+        </div>
+      ) : p.showClose && (
         <div className="rw-ban">
           <span className="rw-ban-i">✓</span>
           <span className="rw-ban-tx"><b>{p.ended ? 'This cycle has ended' : 'Last day of this cycle'}</b>

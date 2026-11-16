@@ -602,3 +602,13 @@ body.is-runway #root { border-inline: none; }
 .rw-savmark { width: 9px; height: 9px; flex: 0 0 9px; background: var(--rw-line); transform: rotate(45deg) scale(.75); }
 .rw-cardmark { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 2px; background: var(--rw-credit); }
 .rw-ob { font: var(--rw-text-sub); font-size: 11px; color: var(--rw-muted); margin-top: 8px; }
+
+/* ═══ Catch up (Journey 10) ═════════════════════════════════════════ */
+.rw-lnk { display: block; margin: 12px auto 0; border: none; background: none; cursor: pointer; text-decoration: underline; font: var(--rw-text-sub); font-weight: 650; }
+.rw .rw-lnk { color: var(--rw-muted); }
+.rw-card.rw-wfc { margin-top: 10px; padding: 4px 12px; }
+.rw-wf { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--rw-hairline); font: var(--rw-text-body); font-size: 12.5px; }
+.rw-wf small { display: block; font: var(--rw-text-sub); font-size: 10px; color: var(--rw-muted); }
+.rw-wf b { white-space: nowrap; }
+.rw-wf.tot { border: none; font-weight: 700; font-size: 13.5px; }
+.rw-ban.warn .rw-ban-i { background: var(--rw-near-floor); color: #fff; }

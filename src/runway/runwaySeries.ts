@@ -11,7 +11,7 @@ import { addDays, formatDate, parseDate } from '../engine/dates'
  * So the line ends where the forecast does (left before pay), and doesn't
  * look better than it is until the last day.
  */
-export interface RunwayEvent { date: string; cents: number }   // + in, − out
+export interface RunwayEvent { date: string; cents: number; name?: string }   // + in, − out; name for lists
 export interface RunwayBudget { plannedCents: number; entries: RunwayEvent[] } // entries: cents spent, positive
 
 export interface RunwayInput {
