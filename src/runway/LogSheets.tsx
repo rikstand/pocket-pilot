@@ -161,7 +161,7 @@ function BudgetSheet({ data, budgetId, accountId, onClose, onLog, onEdit, onChan
     <>
       <div className="rw-sh-h">
         <div>
-          <div className="rw-sheet-title">{b?.name ?? 'Budget'}</div>
+          <h2 className="rw-sheet-title">{b?.name ?? 'Budget'}</h2>
           <div className="rw-sd">{money(spent)} of {fmt(planned, false)} this cycle · {planned - spent >= 0 ? `${money(planned - spent)} left` : `${money(spent - planned)} over`}</div>
         </div>
         <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button>
@@ -527,7 +527,7 @@ function LogSheet({ data, accountId, view, onClose, onDone, onAddOther, currency
 
   if (!data.budgets.length) return (
     <>
-      <div className="rw-sh-h"><div className="rw-sheet-title">Log spend</div>
+      <div className="rw-sh-h"><h2 className="rw-sheet-title">Log spend</h2>
         <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>
       <div className="rw-sd" style={{ padding: '12px 2px' }}>No budgets this cycle. Spend is logged against a budget, such as Groceries.</div>
       <button type="button" className="rw-addo" onClick={onAddOther}>Add an expense or income ›</button>
@@ -542,7 +542,7 @@ function LogSheet({ data, accountId, view, onClose, onDone, onAddOther, currency
     <>
       <div className="rw-sh-h">
         <div>
-          <div className="rw-sheet-title">{e ? 'Edit spend' : 'Log spend'}</div>
+          <h2 className="rw-sheet-title">{e ? 'Edit spend' : 'Log spend'}</h2>
           <div className="rw-sd">
             {!cents ? <>{money(planned - before)} left in {budget?.name}</>
               : left >= 0 ? <><b>{money(left)}</b> left in {budget?.name} after this</>

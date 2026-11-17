@@ -68,7 +68,7 @@ export default function CatchUpSheet(p: Props) {
   }
 
   const head = (title: string, sub?: string) => (
-    <div className="rw-sh-h"><div><div className="rw-sheet-title">{title}</div>{sub && <div className="rw-sd">{sub}</div>}</div>
+    <div className="rw-sh-h"><div><h2 className="rw-sheet-title">{title}</h2>{sub && <div className="rw-sd">{sub}</div>}</div>
       <button type="button" className="rw-x" aria-label="Close" onClick={p.onCancel}>×</button></div>
   )
 
@@ -79,7 +79,7 @@ export default function CatchUpSheet(p: Props) {
           <>
             <div className="rw-done">
               <div className="ck">✓</div>
-              <div className="rw-sheet-title">{n === 1 ? '1 cycle closed' : `${n} cycles closed`}</div>
+              <h2 className="rw-sheet-title">{n === 1 ? '1 cycle closed' : `${n} cycles closed`}</h2>
               <div className="rw-sd">This cycle opens at {p.money(lastClose)}</div>
             </div>
             <div className="rw-ctas"><button type="button" className="rw-cta" onClick={p.onCancel}>Done</button></div>

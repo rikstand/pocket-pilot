@@ -144,7 +144,7 @@ export default function AddSheet({ accountId, userId, onClose }: { accountId: st
   return (
     <>
       <div className="rw-sh-h">
-        <div className="rw-sheet-title">Add</div>
+        <h2 className="rw-sheet-title">Add</h2>
         <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button>
       </div>
 

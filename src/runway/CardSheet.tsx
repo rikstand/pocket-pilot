@@ -244,7 +244,7 @@ export default function CardSheet(p: Props) {
   })()
   const cycleEnd = here?.endDate ?? p.cycleStart
   const head = (title: string, sub: ReactNode) => (
-    <div className="rw-sh-h"><div><div className="rw-sheet-title">{title}</div><div className="rw-sd">{sub}</div></div>
+    <div className="rw-sh-h"><div><h2 className="rw-sheet-title">{title}</h2><div className="rw-sd">{sub}</div></div>
       <button type="button" className="rw-x" aria-label="Close" onClick={p.onClose}>×</button></div>
   )
 
@@ -270,7 +270,7 @@ export default function CardSheet(p: Props) {
               {zero == null && <div className="sl-zone neg" style={{ left: 0, right: 0 }} />}
               <div className="sl-fill" style={{ width: pct(Math.min(hi, Math.max(lo, payC))) + '%' }} />
               {marks.map(m => <div key={m.k} className={`sl-mk${Math.abs(payC - m.v) < 100 ? ' on' : ''}`} style={{ left: pct(m.v) + '%' }} />)}
-              <input type="range" aria-label="Pay this cycle" min={lo / 100} max={hi / 100} step={1}
+              <input type="range" aria-label="Pay this cycle" aria-valuetext={`${money(Math.min(hi, Math.max(lo, payC)))} this cycle`} min={lo / 100} max={hi / 100} step={1}
                 value={dollars(Math.min(hi, Math.max(lo, payC)))} onChange={e => setAmt(e.target.value)} />
             </div>
             <div className="rw-snaps">

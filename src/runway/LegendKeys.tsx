@@ -6,8 +6,9 @@ export function KeyUnder({ level = 'near' }: { level?: 'near' | 'under' }) {
   return (
     <svg className="rw-key" width="11" height="11" viewBox="0 0 11 11" aria-hidden="true">
       <circle cx="5.5" cy="5.5" r="5.5" fill={level === 'under' ? 'var(--rw-under-floor)' : 'var(--rw-near-floor)'} />
-      <path d="M5.5 2.6v3.4" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" />
-      <circle cx="5.5" cy="8.1" r=".9" fill="#fff" />
+      {/* A mark on amber is ink: white on it is 3.2:1 at best (design system). */}
+      <path d="M5.5 2.6v3.4" stroke={level === 'under' ? '#fff' : '#0e1116'} strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="5.5" cy="8.1" r=".9" fill={level === 'under' ? '#fff' : '#0e1116'} />
     </svg>
   )
 }

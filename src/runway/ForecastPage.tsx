@@ -103,7 +103,7 @@ export default function ForecastPage(p: Props) {
   return (
     <div className="rw-page">
       <div className="rw-page-head">
-        <div className="rw-page-title">Forecast</div>
+        <h1 className="rw-page-title">Forecast</h1>
         <div className="rw-sd">What's left in your account just before each {p.payWord ? `${p.payWord} ` : ''}pay</div>
       </div>
       <div style={{ margin: '10px 12px 0' }}>
@@ -141,10 +141,10 @@ export default function ForecastPage(p: Props) {
         )}
       </div>
 
-      <div className="rw-dl"><span className="rw-dl-k">Left before each payday</span><span>tap to open</span></div>
+      <div role="heading" aria-level={2} className="rw-dl"><span className="rw-dl-k">Left before each payday</span><span>tap to open</span></div>
       {groups.map(g => (
         <div key={g.label}>
-          <div className="rw-fc-mh">{g.label}</div>
+          <div role="heading" aria-level={2} className="rw-fc-mh">{g.label}</div>
           <div className="rw-group">
             {g.rows.map(x => {
               const lv = level(x)
@@ -167,7 +167,7 @@ export default function ForecastPage(p: Props) {
         <Sheet onClose={() => setSheet(null)} busy={busy}>
             <div className="rw-grab" />
             {sheet.kind === 'how' ? <>
-              <div className="rw-sh-h"><div className="rw-sheet-title">How to read this</div>
+              <div className="rw-sh-h"><h2 className="rw-sheet-title">How to read this</h2>
                 <button type="button" className="rw-x" aria-label="Close" onClick={() => setSheet(null)}>×</button></div>
               <div className="rw-fc-how">
                 <p>Each point is <b>what's left in your account just before your pay lands</b>, after that cycle's items, budgets, card and savings come out.</p>
@@ -181,7 +181,7 @@ export default function ForecastPage(p: Props) {
               const by = p.floorCents - x.closeCents
               return <>
                 <div className="rw-sh-h"><div>
-                  <div className="rw-sheet-title">{d ? d.name : `Before pay ${short(x.payDate)}`}</div>
+                  <h2 className="rw-sheet-title">{d ? d.name : `Before pay ${short(x.payDate)}`}</h2>
                   {d && <div className="rw-sd">{money(d.cents)} on {short(d.date)}{d.irregular ? ' · not every cycle' : ''} · biggest cost in this cycle</div>}
                 </div>
                   <button type="button" className="rw-x" aria-label="Close" onClick={() => setSheet(null)}>×</button></div>
@@ -290,7 +290,7 @@ function Chart({ pts, floorCents, level, paidOff, money, onOpen, onMarker }: {
               role="button" aria-label={`Under your floor before pay ${short(pts[k].payDate)}`}>
               <line x1={px} x2={px} y1={T - 6} y2={py - 5} stroke={c} strokeWidth="1.2" strokeDasharray="2 2" />
               <circle cx={px} cy={T - 13} r="9" fill={c} />
-              <text x={px} y={T - 9.5} fontSize={g.length > 1 ? 10 : 11} fontWeight="800" textAnchor="middle" fill="#fff">{g.length > 1 ? g.length : '!'}</text>
+              <text x={px} y={T - 9.5} fontSize={g.length > 1 ? 10 : 11} fontWeight="800" textAnchor="middle" className="rw-mk" fill={c === 'var(--rw-near-floor)' ? '#0e1116' : '#fff'}>{g.length > 1 ? g.length : '!'}</text>
             </g>
           </g>
         )

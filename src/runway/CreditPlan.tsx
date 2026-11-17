@@ -112,7 +112,7 @@ export default function CreditPlan({ accountId }: { accountId: string }) {
   return (
     <div className="rw-page">
       <div className="rw-page-head">
-        <div className="rw-page-title">Credit</div>
+        <h1 className="rw-page-title">Credit</h1>
         <div className="rw-sd">{card.name}</div>
       </div>
 
@@ -135,7 +135,7 @@ export default function CreditPlan({ accountId }: { accountId: string }) {
 
       <CardChart rows={rows} k0={k0} snaps={snaps} committed={committed} ahead={ahead} money={money} />
 
-      <div className="rw-dl"><span className="rw-dl-k">Paying it off</span></div>
+      <div role="heading" aria-level={2} className="rw-dl"><span className="rw-dl-k">Paying it off</span></div>
       <div className="rw-group">
         <button type="button" className="rw-row" onClick={() => setSheet({ kind: 'plan' })}>
           <span className="rw-cardmark" />
@@ -171,7 +171,7 @@ export default function CreditPlan({ accountId }: { accountId: string }) {
       </div>
 
       {ahead.length > 0 && <>
-        <div className="rw-dl"><span className="rw-dl-k">Plan changes ahead</span>{!committed && <span>paused until you set a plan</span>}</div>
+        <div role="heading" aria-level={2} className="rw-dl"><span className="rw-dl-k">Plan changes ahead</span>{!committed && <span>paused until you set a plan</span>}</div>
         <div className="rw-group">
           {ahead.map(v => (
             <button key={v.id} type="button" className="rw-row" onClick={() => setSheet({ kind: 'ahead', v })}>
@@ -397,7 +397,7 @@ function PlanSheet({ rows, k0, card, accountId, floorCents, money, sym, onThisCy
   if (confirmStop) return (
     <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
-        <div className="rw-sh-h"><div><div className="rw-sheet-title">Stop using a plan?</div>
+        <div className="rw-sh-h"><div><h2 className="rw-sheet-title">Stop using a plan?</h2>
           <div className="rw-sd">{card.name} · now: {planModeOf(was) === 'spare' ? 'whatever’s spare' : planModeOf(was) === 'minimum' ? 'minimum only' : `min + ${money(wasExtra)} a cycle`}</div></div>
           <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>
         <div className="rw-card" style={{ font: 'var(--rw-text-body)' }}>
@@ -413,7 +413,7 @@ function PlanSheet({ rows, k0, card, accountId, floorCents, money, sym, onThisCy
   return (
     <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
-        <div className="rw-sh-h"><div><div className="rw-sheet-title">{card.name} · your plan</div>
+        <div className="rw-sh-h"><div><h2 className="rw-sheet-title">{card.name} · your plan</h2>
           <div className="rw-sd">{committed ? `Now: ${planModeOf(was) === 'spare' ? 'whatever’s spare' : planModeOf(was) === 'minimum' ? 'minimum only' : `min + ${money(wasExtra)} a cycle`}` : 'No plan yet: only the minimum is in your forecast'}</div></div>
           <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>
 
@@ -439,7 +439,7 @@ function PlanSheet({ rows, k0, card, accountId, floorCents, money, sym, onThisCy
             {fits == null && <div className="sl-zone" style={{ left: 0, right: 0 }} />}
             <div className="sl-fill" style={{ width: (spare ? 100 : pct(extra)) + '%' }} />
             {chips.map(c => <div key={c.k} className={`sl-mk${!spare && Math.abs(extra - c.v) < 100 ? ' on' : ''}`} style={{ left: pct(c.v) + '%' }} />)}
-            <input type="range" aria-label="Extra each cycle" min={0} max={max / 100} step={5}
+            <input type="range" aria-label="Extra each cycle" aria-valuetext={spare ? 'All spare' : `${money(Math.min(max, extra))} extra a cycle`} min={0} max={max / 100} step={5}
               value={spare ? max / 100 : Math.min(max, extra) / 100} onChange={e => { setSpare(false); setAmt(e.target.value) }} />
           </div>
           <div className="rw-snaps">
@@ -511,7 +511,7 @@ function AheadSheet({ v, rows, k0, floorCents, money, accountId, card, planWords
   return (
     <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
-        <div className="rw-sh-h"><div><div className="rw-sheet-title">From {day(v.effective_from)}</div>
+        <div className="rw-sh-h"><div><h2 className="rw-sheet-title">From {day(v.effective_from)}</h2>
           <div className="rw-sd">{planWords(v.mode, Number(v.extra_cents ?? 0))}</div></div>
           <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>
         <div className="rw-tiles two">
@@ -580,7 +580,7 @@ function DetailsSheet({ card, rows, k0, floorCents, money, sym, onClose, toast }
   return (
     <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
-        <div className="rw-sh-h"><div><div className="rw-sheet-title">Card details</div><div className="rw-sd">{card.name}</div></div>
+        <div className="rw-sh-h"><div><h2 className="rw-sheet-title">Card details</h2><div className="rw-sd">{card.name}</div></div>
           <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>
         <div className="rw-lab">Name</div>
         <TextField value={name} onChange={setName} label="Card name" />
@@ -647,7 +647,7 @@ function AddCard({ accountId, sym, onAdded }: { accountId: string; sym: string; 
   }
   return (
     <div className="rw-page">
-      <div className="rw-page-head"><div className="rw-page-title">Credit</div>
+      <div className="rw-page-head"><h1 className="rw-page-title">Credit</h1>
         <div className="rw-sd">Add a card and its minimum goes into your forecast straight away. Set a plan to pay it off sooner.</div></div>
       <div className="rw-card rw-inset">
         <div className="rw-lab" style={{ marginTop: 0 }}>Name</div>

@@ -197,7 +197,7 @@ export default function ItemsPage({ accountId, onNavigate }: { accountId: string
 
   const section = (label: string, list: Item[], isIn = false) => list.length === 0 ? null : (
     <>
-      <div className="rw-dl"><span className="rw-dl-k">{label} · {list.length}</span><span>{isIn ? '+' : ''}{money(sum(list))} a pay</span></div>
+      <div role="heading" aria-level={2} className="rw-dl"><span className="rw-dl-k">{label} · {list.length}</span><span>{isIn ? '+' : ''}{money(sum(list))} a pay</span></div>
       <div className="rw-group">{[...list].sort((a, b) => a.name.localeCompare(b.name)).map(row)}</div>
     </>
   )
@@ -214,7 +214,7 @@ export default function ItemsPage({ accountId, onNavigate }: { accountId: string
   return (
     <div className="rw-page">
       <div className="rw-page-head rw-head-row">
-        <div className="rw-page-title">Expenses &amp; income</div>
+        <h1 className="rw-page-title">Expenses &amp; income</h1>
         {logSheets && <button type="button" className="rw-addb" onClick={() => logSheets.add()}>+ Add</button>}
       </div>
       <div className="rw-page-head" style={{ paddingTop: 0 }}>
@@ -261,7 +261,7 @@ export default function ItemsPage({ accountId, onNavigate }: { accountId: string
 
       {bnpl.length > 0 && (
         <>
-          <div className="rw-dl"><span className="rw-dl-k">BNPL · {bnpl.length}</span><span>managed in Plan</span></div>
+          <div role="heading" aria-level={2} className="rw-dl"><span className="rw-dl-k">BNPL · {bnpl.length}</span><span>managed in Plan</span></div>
           <div className="rw-group">{bnpl.map(row)}</div>
         </>
       )}
@@ -476,7 +476,7 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
           <div className="rw-sh-t">
             <Mark kind={item.kind} />
             <div>
-              <div className="rw-sheet-title">{r.name}</div>
+              <h2 className="rw-sheet-title">{r.name}</h2>
               <div className="rw-sd">{KIND_NAME[item.kind]}{isPrimary ? ' · main income' : ''}</div>
             </div>
           </div>

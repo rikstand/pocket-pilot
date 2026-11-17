@@ -152,7 +152,7 @@ export default function CycleView(p: Props) {
       : mode === 'today' ? i.sub : `${day(i.date)} · ${i.sub}`
     const showAction = mode !== 'up' && i.date <= today
     const right = showAction && i.action
-      ? <button type="button" className="rw-mini" onClick={e => { e.stopPropagation(); i.action!.run() }}>{i.action.label}</button>
+      ? <button type="button" className="rw-mini sec" aria-label={`${i.action.label} · ${i.name}`} onClick={() => i.action!.run()}>{i.action.label}</button>
       : showAction && i.donePill && mode === 'earlier'
         ? <span className="rw-pill good">{i.donePill}</span>
         : (
@@ -161,18 +161,23 @@ export default function CycleView(p: Props) {
             {mode === 'up' && <small>{i.payday ? `${money(p.closingCents)} before` : `leaves ${money(balanceAfter(i.date))}`}</small>}
           </div>
         )
+    const isAction = showAction && !!i.action
+    const body = <>
+      <MarkShape mark={i.mark} />
+      <div className="rw-tx">
+        <div className="rw-row-name">{i.name}{i.pill && <span className="rw-pill ink">{i.pill}</span>}</div>
+        <div className="rw-sub">{sub}</div>
+        {i.progress != null && <div className="rw-pb-row"><i style={{ width: Math.round(Math.min(1, Math.max(0, i.progress)) * 100) + '%' }} /></div>}
+      </div>
+      {!isAction && right}
+    </>
+    // The row opens its sheet; Set aside or Confirm sits beside it as its
+    // own button, never inside it (UX review K4).
     return (
       <div key={i.key} id={'rw-it-' + i.key}
-        className={`rw-row${mode === 'needs' ? ' needs' : ''}${mode === 'earlier' ? ' done' : ''}${flash === i.key ? ' flash' : ''}${i.onOpen ? '' : ' static'}`}
-        role={i.onOpen ? 'button' : undefined} tabIndex={i.onOpen ? 0 : undefined}
-        onClick={i.onOpen}>
-        <MarkShape mark={i.mark} />
-        <div className="rw-tx">
-          <div className="rw-row-name">{i.name}{i.pill && <span className="rw-pill ink">{i.pill}</span>}</div>
-          <div className="rw-sub">{sub}</div>
-          {i.progress != null && <div className="rw-pb-row"><i style={{ width: Math.round(Math.min(1, Math.max(0, i.progress)) * 100) + '%' }} /></div>}
-        </div>
-        {right}
+        className={`rw-row${mode === 'needs' ? ' needs' : ''}${mode === 'earlier' ? ' done' : ''}${flash === i.key ? ' flash' : ''}${i.onOpen ? '' : ' static'}`}>
+        {i.onOpen ? <button type="button" className="rw-row-main" onClick={i.onOpen}>{body}</button> : body}
+        {isAction && right}
       </div>
     )
   }
@@ -191,7 +196,7 @@ export default function CycleView(p: Props) {
       <div className="rw-cnav">
         <button type="button" className="rw-cnav-b" aria-label="Earlier cycle" disabled={!p.forecastNav.onPrev} onClick={p.forecastNav.onPrev}>‹</button>
         <div className="rw-cnav-t">
-          <b>{day(p.start)} – {day(p.end, true)}</b>
+          <h1>{day(p.start)} – {day(p.end, true)}</h1>
           <span>{inCycle ? `This cycle · day ${todayIdx + 1} of ${n} · ` : 'Forecast · '}{p.payName} {day(p.payDate)}</span>
         </div>
         <button type="button" className="rw-cnav-b" aria-label="Later cycle" disabled={!p.forecastNav.onNext} onClick={p.forecastNav.onNext}>›</button>
@@ -204,7 +209,7 @@ export default function CycleView(p: Props) {
           ? <button type="button" className="rw-cnav-b" aria-label="Earlier cycles" onClick={p.onPast}>‹</button>
           : <span className="rw-cnav-gap" />}
         <div className="rw-cnav-t">
-          <b>{day(p.start)} – {day(p.end, true)}</b>
+          <h1>{day(p.start)} – {day(p.end, true)}</h1>
           <span>{inCycle ? `day ${todayIdx + 1} of ${n} · ` : 'ended · '}{p.payName} {day(p.payDate)}</span>
         </div>
         <button type="button" className="rw-cnav-b" aria-label="Next cycles (Forecast)" onClick={p.onForecast}>›</button>
@@ -257,14 +262,14 @@ export default function CycleView(p: Props) {
         <>
           {needs.length > 0 && (
             <>
-              <div className="rw-dl needs">Needs you<b>{needs.length}</b><span>from earlier this cycle</span></div>
+              <div role="heading" aria-level={2} className="rw-dl needs">Needs you<b>{needs.length}</b><span>from earlier this cycle</span></div>
               <div className="rw-group">{needs.map(i => row(i, 'needs'))}</div>
             </>
           )}
 
           {inCycle && (
             <>
-              <div className="rw-dl today">Today · {day(today)}<span>leaves {money(balanceAfter(today))}</span></div>
+              <div role="heading" aria-level={2} className="rw-dl today">Today · {day(today)}<span>leaves {money(balanceAfter(today))}</span></div>
               <div className="rw-group">
                 {todays.length ? todays.map(i => row(i, 'today')) : (
                   <div className="rw-row static"><div className="rw-tx"><div className="rw-sub">
@@ -277,21 +282,22 @@ export default function CycleView(p: Props) {
 
           {inCycle && tomorrows.length > 0 && (
             <>
-              <div className="rw-dl">Tomorrow · {day(tomorrow)}<span>{tomorrow > p.end ? `${money(p.closingCents)} before pay` : `leaves ${money(balanceAfter(tomorrow))}`}</span></div>
+              <div role="heading" aria-level={2} className="rw-dl">Tomorrow · {day(tomorrow)}<span>{tomorrow > p.end ? `${money(p.closingCents)} before pay` : `leaves ${money(balanceAfter(tomorrow))}`}</span></div>
               <div className="rw-group">{tomorrows.map(i => row(i, 'today'))}</div>
             </>
           )}
 
           {p.budgets.length > 0 && (
             <>
-              <div className="rw-dl"><span className="rw-dl-k">Budgets</span>
+              <div role="heading" aria-level={2} className="rw-dl"><span className="rw-dl-k">Budgets</span>
                 <span>{money(budgetSpent)} of {money(budgetPlanned)} · {future ? `${n} days` : daysLeft ? `${daysLeft} day${daysLeft > 1 ? 's' : ''} left` : 'last day'}</span></div>
               <div className="rw-group">
                 {shownBudgets.map(b => {
                   const pct = b.plannedCents > 0 ? b.spentCents / b.plannedCents : 0
                   return (
                     <div key={b.id}>
-                      <div className="rw-row" role="button" tabIndex={0} onClick={b.onOpen}>
+                      <div className="rw-row">
+                        <button type="button" className="rw-row-main" onClick={b.onOpen}>
                         <div className="rw-tx">
                           <div className="rw-row-name">{b.name}{b.flag && (
                             <span className={`rw-bdg ${b.flag}`} role="img" aria-label={`Usually ${b.flag} budget`}>{b.flag === 'under' ? '↓' : '↑'}</span>
@@ -302,9 +308,10 @@ export default function CycleView(p: Props) {
                           </div>
                         </div>
                         <div className="rw-am">{money(b.spentCents)}<small>of {money(b.plannedCents)}</small></div>
+                        </button>
                         {b.onPlus && (
                           <button type="button" className={`rw-plus${b.plusOpen ? ' on' : ''}`} aria-label={`Log spend · ${b.name}`}
-                            onClick={e => { e.stopPropagation(); b.onPlus!() }}>{b.plusOpen ? '×' : '+'}</button>
+                            onClick={() => b.onPlus!()}>{b.plusOpen ? '×' : '+'}</button>
                         )}
                       </div>
                       {b.plusOpen && b.quickAdd}
@@ -323,14 +330,14 @@ export default function CycleView(p: Props) {
 
           {coming.length > 0 && (
             <>
-              <div className="rw-dl">Coming up<span>{coming.length} item{coming.length > 1 ? 's' : ''}</span></div>
+              <div role="heading" aria-level={2} className="rw-dl">Coming up<span>{coming.length} item{coming.length > 1 ? 's' : ''}</span></div>
               <div className="rw-group">{coming.map(i => row(i, 'up'))}</div>
             </>
           )}
 
           {earlier.length > 0 && (
             <>
-              <div className="rw-dl" style={{ paddingTop: 16 }}>Earlier this cycle<span>{earlier.length} item{earlier.length > 1 ? 's' : ''}</span></div>
+              <div role="heading" aria-level={2} className="rw-dl" style={{ paddingTop: 16 }}>Earlier this cycle<span>{earlier.length} item{earlier.length > 1 ? 's' : ''}</span></div>
               <div className="rw-group">
                 <button type="button" className="rw-row" onClick={() => setEarlyOpen(o => !o)}>
                   <div className="rw-tx">

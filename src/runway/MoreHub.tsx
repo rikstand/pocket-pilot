@@ -22,9 +22,9 @@ export default function MoreHub({ onNavigate, darkMode, onToggleDark, onAddAccou
 
   return (
     <div className="rw-page">
-      <div className="rw-page-head"><div className="rw-page-title">More</div></div>
+      <div className="rw-page-head"><h1 className="rw-page-title">More</h1></div>
 
-      <div className="rw-section">Accounts</div>
+      <div role="heading" aria-level={2} className="rw-section">Accounts</div>
       <div className="rw-group">
         {accounts.map(a => {
           const on = a.id === activeAccount?.id
@@ -46,7 +46,7 @@ export default function MoreHub({ onNavigate, darkMode, onToggleDark, onAddAccou
         </button>
       </div>
 
-      <div className="rw-section" />
+      <div role="heading" aria-level={2} className="rw-section" />
       <div className="rw-group">
         <div className="rw-row static">
           <div className="rw-tx"><div className="rw-row-name">Dark mode</div></div>
@@ -62,7 +62,7 @@ export default function MoreHub({ onNavigate, darkMode, onToggleDark, onAddAccou
         </button>
       </div>
 
-      <div className="rw-section" />
+      <div role="heading" aria-level={2} className="rw-section" />
       <div className="rw-group">
         <button type="button" className="rw-row" onClick={leave}>
           <div className="rw-tx"><div className="rw-row-name">Sign out</div></div>

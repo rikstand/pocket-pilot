@@ -103,7 +103,7 @@ export default function CloseSheet(p: Props) {
           <>
             <div className="rw-done">
               <div className="ck">✓</div>
-              <div className="rw-sheet-title">Cycle closed</div>
+              <h2 className="rw-sheet-title">Cycle closed</h2>
               <div className="rw-sd">Next cycle opens at {p.money(opening)} · forecast saved</div>
             </div>
             <div className="rw-ctas"><button type="button" className="rw-cta" onClick={p.onCancel}>Done</button></div>
@@ -112,7 +112,7 @@ export default function CloseSheet(p: Props) {
           <div className="rw-steps">{steps.map(s => <i key={s} className={s <= step ? 'on' : ''} />)}</div>
 
           {step === 0 && <>
-            <div className="rw-sh-h"><div className="rw-sheet-title">What did the estimates cost?</div>
+            <div className="rw-sh-h"><h2 className="rw-sheet-title">What did the estimates cost?</h2>
               <button type="button" className="rw-x" aria-label="Close" onClick={p.onCancel}>×</button></div>
             {p.estimates.filter(e => e.confirmed).length > 0 && (
               <div className="rw-sd">{p.estimates.filter(e => e.confirmed).map(e => e.name).join(', ')} already confirmed.</div>
@@ -128,7 +128,7 @@ export default function CloseSheet(p: Props) {
           </>}
 
           {step === 1 && <>
-            <div className="rw-sh-h"><div><div className="rw-sheet-title">Your balance right now</div>
+            <div className="rw-sh-h"><div><h2 className="rw-sheet-title">Your balance right now</h2>
               <div className="rw-sd">From your banking app</div></div>
               <button type="button" className="rw-x" aria-label="Close" onClick={p.onCancel}>×</button></div>
             <div className="rw-big"><span>{p.currencySymbol}</span>
@@ -137,7 +137,7 @@ export default function CloseSheet(p: Props) {
           </>}
 
           {step === 2 && <>
-            <div className="rw-sh-h"><div><div className="rw-sheet-title">Is {p.payName} in that balance?</div>
+            <div className="rw-sh-h"><div><h2 className="rw-sheet-title">Is {p.payName} in that balance?</h2>
               <div className="rw-sd">{p.scheduledPayCents > 0 ? `${p.money(p.scheduledPayCents)} · ` : ''}due {day(p.payDate)}</div></div>
               <button type="button" className="rw-x" aria-label="Close" onClick={p.onCancel}>×</button></div>
             <div className="rw-seg flush" role="radiogroup">
@@ -159,7 +159,7 @@ export default function CloseSheet(p: Props) {
           </>}
 
           {step === 3 && <>
-            <div className="rw-sh-h"><div className="rw-sheet-title">Actual vs forecast</div>
+            <div className="rw-sh-h"><h2 className="rw-sheet-title">Actual vs forecast</h2>
               <button type="button" className="rw-x" aria-label="Close" onClick={p.onCancel}>×</button></div>
             <div className="rw-tiles">
               <div className="rw-tile"><div className="k">Forecast</div><div className="v">{p.money(p.forecastCents)}</div><div className="d">before pay</div></div>

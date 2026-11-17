@@ -123,7 +123,7 @@ export default function Sheet({ onClose, busy = false, children }: Props) {
         {asking && (
           <div className="rw-sheet-body">
             <div className="rw-grab" />
-            <div className="rw-sh-h"><div><div className="rw-sheet-title">Discard what you typed?</div>
+            <div className="rw-sh-h"><div><h2 className="rw-sheet-title">Discard what you typed?</h2>
               <div className="rw-sd">Your changes on this sheet haven’t been saved.</div></div></div>
             <div className="rw-ctas">
               <button type="button" className="rw-cta sec" onClick={() => live.current.onClose()}>Discard</button>

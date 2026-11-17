@@ -13,8 +13,8 @@ const ROWS: { page: Page; name: string; sub: string }[] = [
 export default function PlanHub({ onNavigate }: { onNavigate: (page: Page) => void }) {
   return (
     <div className="rw-page">
-      <div className="rw-page-head"><div className="rw-page-title">Plan</div></div>
-      <div className="rw-section" />
+      <div className="rw-page-head"><h1 className="rw-page-title">Plan</h1></div>
+      <div role="heading" aria-level={2} className="rw-section" />
       <div className="rw-group">
         {ROWS.map(r => (
           <button key={r.page} type="button" className="rw-row" onClick={() => onNavigate(r.page)}>

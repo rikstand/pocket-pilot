@@ -29,6 +29,11 @@ const TAB_OF: Record<Page, 'cycle' | 'forecast' | 'plan' | 'more'> = {
   plan: 'plan', items: 'plan', expenses: 'plan', wishlist: 'plan', credit: 'plan',
   more: 'more', settings: 'more',
 }
+// The browser tab and the screen reader say which page this is.
+const TITLE: Record<Page, string> = {
+  cycle: 'Cycle', forecast: 'Forecast', plan: 'Plan', items: 'Expenses & income', expenses: 'Expenses',
+  wishlist: 'Wishlist', credit: 'Credit', more: 'More', settings: 'Settings',
+}
 const BACK: Partial<Record<Page, { to: Page; label: string }>> = {
   items:    { to: 'plan', label: 'Plan' },
   expenses: { to: 'plan', label: 'Plan' },
@@ -54,6 +59,7 @@ export default function RunwayShell({ active, onNavigate, onAdd, darkMode, onTog
 
   // The centre + logs spend (Journey 5); without the sheets it falls back.
   const log = useLog()
+  useEffect(() => { document.title = `${TITLE[active] ?? 'Pocket Pilot'} · Pocket Pilot` }, [active])
   const tab = TAB_OF[active]
   const back = BACK[active]
 
@@ -73,11 +79,13 @@ export default function RunwayShell({ active, onNavigate, onAdd, darkMode, onTog
           </div>
         )}
 
-        {active === 'plan' ? <PlanHub onNavigate={onNavigate} />
-          : active === 'more' ? <MoreHub onNavigate={onNavigate} darkMode={darkMode} onToggleDark={onToggleDark} onAddAccount={onAddAccount} />
-          : children}
+        <main className="rw-main">
+          {active === 'plan' ? <PlanHub onNavigate={onNavigate} />
+            : active === 'more' ? <MoreHub onNavigate={onNavigate} darkMode={darkMode} onToggleDark={onToggleDark} onAddAccount={onAddAccount} />
+            : children}
+        </main>
 
-        <nav className="rw-tabs">
+        <nav className="rw-tabs" aria-label="Main">
           {tabButton('cycle', 'Cycle')}
           {tabButton('forecast', 'Forecast')}
           <button type="button" className="rw-fab" aria-label="Log spend" onClick={() => (log ? log.log() : onAdd())}>{ICON.add}</button>

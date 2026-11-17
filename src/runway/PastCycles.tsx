@@ -76,7 +76,7 @@ export default function PastCycles({ accountId, onBackToNow }: { accountId: stri
     <div className="rw-page">
       <div className="rw-cnav">
         <button type="button" className="rw-cnav-b" aria-label="Earlier cycle" disabled={i === 0} onClick={() => setIdx(i - 1)}>‹</button>
-        <div className="rw-cnav-t"><b>{short(c.start_date)} – {short(c.end_date)}</b><span>Closed</span></div>
+        <div className="rw-cnav-t"><h1>{short(c.start_date)} – {short(c.end_date)}</h1><span>Closed</span></div>
         <button type="button" className="rw-cnav-b" aria-label="Later cycle"
           onClick={() => (i === closed.length - 1 ? onBackToNow() : setIdx(i + 1))}>›</button>
       </div>
@@ -143,7 +143,7 @@ export default function PastCycles({ accountId, onBackToNow }: { accountId: stri
             <div className="rw-tx"><div className="rw-row-name">{x.name}</div></div>
             <span className="rw-pill good">Set aside ✓ {money(x.cents)}</span></div>)))}
         {view.budgets.length > 0 && <>
-          <div className="rw-dl"><span className="rw-dl-k">Budgets</span>
+          <div role="heading" aria-level={2} className="rw-dl"><span className="rw-dl-k">Budgets</span>
             <span>{money(view.budgets.reduce((s, b) => s + b.spent, 0))} of {money(view.budgets.reduce((s, b) => s + b.planned, 0))}</span></div>
           <div className="rw-group">{view.budgets.map(b => (
             <button key={b.id} type="button" className="rw-row" onClick={() => setSheet({ kind: 'bud', budget: b })}>
@@ -175,7 +175,7 @@ export default function PastCycles({ accountId, onBackToNow }: { accountId: stri
 
 function group(label: string, rows: ReactNode[]) {
   if (!rows.length) return null
-  return <><div className="rw-dl"><span className="rw-dl-k">{label}</span></div><div className="rw-group">{rows}</div></>
+  return <><div role="heading" aria-level={2} className="rw-dl"><span className="rw-dl-k">{label}</span></div><div className="rw-group">{rows}</div></>
 }
 
 /* What happened in one closed cycle, from the saved rows. */
@@ -267,7 +267,7 @@ function EstimateFix({ cycle, item, accountId, money, closing, hasForecast, onCl
   return (
     <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
-        <div className="rw-sh-h"><div><div className="rw-sheet-title">{item.name} · real amount</div>
+        <div className="rw-sh-h"><div><h2 className="rw-sheet-title">{item.name} · real amount</h2>
           <div className="rw-sd">{item.dates.map(dayName).join(', ')} · estimate {money(item.estimate)}</div></div>
           <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>
         <div className="rw-big"><span>{sym}</span>
@@ -315,7 +315,7 @@ function MissedSpend({ cycle, budget, accountId, money, closing, hasForecast, pa
   return (
     <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
-        <div className="rw-sh-h"><div><div className="rw-sheet-title">{budget.name}</div>
+        <div className="rw-sh-h"><div><h2 className="rw-sheet-title">{budget.name}</h2>
           <div className="rw-sd">{money(budget.spent)} of {money(budget.planned)} · {short(cycle.start_date)} – {short(cycle.end_date)}</div></div>
           <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>
         {entries.length > 0 && (
@@ -390,7 +390,7 @@ function FixClose({ cycle, next, rows, accountId, money, onClose }: {
   return (
     <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
-        <div className="rw-sh-h"><div><div className="rw-sheet-title">Fix the {short(cycle.end_date)} close</div>
+        <div className="rw-sh-h"><div><h2 className="rw-sheet-title">Fix the {short(cycle.end_date)} close</h2>
           <div className="rw-sd">Closed {money(oldClose)}{oldEntered != null
             ? <> · you entered {money(oldEntered)}, {payName} {oldPayIn ? 'in it' : 'not in it'}</> : null}</div></div>
           <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>

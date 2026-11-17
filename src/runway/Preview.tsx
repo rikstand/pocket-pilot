@@ -87,7 +87,7 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
           </>}
           {!below0 && mn < 0 && <line x1={X0} x2={X1} y1={Y(0)} y2={Y(0)} stroke="var(--rw-hairline)" />}
           <line x1={X0} x2={X1} y1={Y(floorCents)} y2={Y(floorCents)} stroke="var(--rw-under-floor)" strokeDasharray="3 3" />
-          <polyline points={line(nowCents)} fill="none" stroke="var(--rw-ink)" strokeOpacity=".28" strokeWidth="2" strokeLinejoin="round" />
+          <polyline points={line(nowCents)} fill="none" stroke="var(--rw-ink)" strokeOpacity=".5" strokeWidth="2" strokeLinejoin="round" />
           <polyline points={line(newCents)} fill="none" stroke="var(--rw-line)" strokeWidth="2.4" strokeLinejoin="round" />
           {newCents.map((c, i) => c < floorCents
             ? <circle key={i} cx={X(i)} cy={Y(c)} r="3.4" fill={c < 0 ? 'var(--rw-under-floor)' : 'var(--rw-near-floor)'} />
@@ -122,7 +122,7 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
         </svg>
         {/* One legend row under the chart, as on Forecast and the card chart. */}
         <div className="rw-legend">
-          <span><i className="ln" style={{ borderTopColor: 'var(--rw-ink)', opacity: .3 }} />now</span>
+          <span><i className="ln" style={{ borderTopColor: 'var(--rw-ink)', opacity: .5 }} />now</span>
           <span><i className="ln" />new</span>
           <span><i className="fl" />floor</span>
           {ticks.some(f => f >= 0 && f <= n - 1) && <span><KeyLands />when it lands</span>}
