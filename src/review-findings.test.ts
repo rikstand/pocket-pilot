@@ -1,7 +1,8 @@
 // Tests for the fixes from the 17 Nov 2026 code review (fix/review-findings).
 import { describe, it, expect, vi } from 'vitest'
 vi.mock('./lib/supabase', () => ({ supabase: {} }))
-import { toEngineSavings } from './lib/forecast'
+import { toEngineSavings, toEngineCredit, projectFromRows } from './lib/forecast'
+import { dueAnchorOf, dueDateInCycle } from './lib/creditSchedule'
 import { savedSoFarCents } from './lib/savings'
 import { projectCycles, creditPlanOn } from './engine/index'
 
@@ -53,5 +54,45 @@ describe('card: the minimum is in the forecast before a plan is committed', () =
   it('a committed plan is unchanged: minimum plus the extra', () => {
     const r = run({ ...card, strategyCommitted: true })
     expect(r.creditExtraCents).toBe(20000)
+  })
+})
+
+// ── second pass, same review (fix/review-findings-2) ──────────────────
+const cardRow = (over: any = {}) => ({ id: 'c', name: 'Visa', apr_basis_points: 2190, min_payment_pct: 3, min_payment_floor_cents: 1000,
+  assumed_spend_cents: 0, strategy_extra_cents: 0, strategy_committed: true, strategy_mode: 'minimum', extra_timing: 'every_cycle',
+  current_balance_cents: 500000, balance_as_of: null, payment_frequency: 'monthly', payment_anchor_date: '2026-10-25', ...over })
+
+describe('card due day: read as a day of the month, whatever month was saved', () => {
+  const minimumIn = (anchor: string) => projectCycles({ incomeSources: [], expenses: [], openingBalanceCents: 300000,
+    startDate: '2026-11-20', numCycles: 1, safetyFloorCents: 0,
+    creditAccount: toEngineCredit(cardRow({ payment_anchor_date: anchor })) } as any)[0].creditMinimumCents
+
+  it('cycle 20 Nov – 3 Dec, due the 25th: the minimum is due however the date was saved', () => {
+    expect(minimumIn('2026-10-25')).toBeGreaterThan(0)
+    // Card details saved on 2 Dec used to store 25 Dec, and the 25 Nov minimum vanished.
+    expect(minimumIn('2026-12-25')).toBe(minimumIn('2026-10-25'))
+  })
+  it('the due date inside a cycle is found the same way', () => {
+    expect(dueDateInCycle(cardRow({ payment_anchor_date: '2026-12-25' }), '2026-11-20', 14)).toBe('2026-11-25')
+    expect(dueAnchorOf(cardRow({ payment_anchor_date: '2026-12-25' }))).toBe('2000-01-25')
+    expect(dueAnchorOf(cardRow({ payment_anchor_date: null }))).toBeNull()
+  })
+})
+
+describe('going over a budget on a "whatever\u2019s spare" card plan', () => {
+  const rows = (spend: any[]): any => ({
+    incomeRows: [], storedCycles: [], creditOverrideRows: [], creditPaymentRows: [], creditPlanRows: [],
+    expenseOverrideRows: [], incomeOverrideRows: [], savingsGoalRows: [], savingsContributionRows: [], savingsOverrideRows: [],
+    projectFrom: { start_date: '2026-11-20', end_date: '2026-12-03', opening_balance_cents: 300000 },
+    expenseRows: [{ id: 'b', name: 'Food', mode: 'budget', frequency: 'fortnightly', every_n: 1, anchor_date: '2026-01-01',
+      expense_amount_versions: [{ amount_cents: 28000, effective_from: '2026-01-01' }] }],
+    budgetSpendRows: spend,
+    creditCard: cardRow({ strategy_mode: 'spare', payment_frequency: 'per_cycle', payment_anchor_date: null }),
+  })
+  it('the card payment drops by the overspend and the balance before pay stays put', () => {
+    const a = projectFromRows(rows([]), 10000, 1)[0]
+    const b = projectFromRows(rows([{ id: 's', expense_id: 'b', amount_cents: 32000, spent_date: '2026-11-22' }]), 10000, 1)[0]
+    expect(b.committedClosingBalanceCents).toBe(a.committedClosingBalanceCents)
+    expect(a.creditPaymentCents - b.creditPaymentCents).toBe(4000)
   })
 })
