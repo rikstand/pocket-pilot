@@ -27,6 +27,7 @@ export interface DayItem {
   onOpen?: () => void
   payday?: boolean             // the pay that starts the next cycle
   progress?: number            // 0–1, a thin bar under the row (the card paid down)
+  pill?: string                // an ink pill by the name: "This cycle only"
 }
 
 export interface BudgetRow {
@@ -57,6 +58,7 @@ interface Props {
   ended: boolean
   // Cycles that ended without being closed (Journey 10). Takes the close banner's place.
   catchUp?: { count: number; from: string; to: string; onOpen: () => void }
+  closePaused?: number         // cycles not closed, when the saved cycles are out of order and catching up can't run
   onClose: () => void
   onForecast: () => void
   onPast?: () => void            // ‹ to closed cycles (Journey 10), when there are any
@@ -166,7 +168,7 @@ export default function CycleView(p: Props) {
         onClick={i.onOpen}>
         <MarkShape mark={i.mark} />
         <div className="rw-tx">
-          <div className="rw-row-name">{i.name}</div>
+          <div className="rw-row-name">{i.name}{i.pill && <span className="rw-pill ink">{i.pill}</span>}</div>
           <div className="rw-sub">{sub}</div>
           {i.progress != null && <div className="rw-pb-row"><i style={{ width: Math.round(Math.min(1, Math.max(0, i.progress)) * 100) + '%' }} /></div>}
         </div>
@@ -215,7 +217,7 @@ export default function CycleView(p: Props) {
         {p.cardLine && p.cardLine.cents > 0 && (
           <div className="rw-hero-card-line">{money(p.cardLine.cents)} extra to {p.cardLine.name} this cycle</div>
         )}
-        <div className="rw-hero-sub"><span>Before pay {day(p.payDate)}</span><b>{money(p.closingCents)}</b></div>
+        <div className="rw-hero-sub"><span>Before pay {day(p.payDate)} · floor {money(p.floorCents)}</span><b>{money(p.closingCents)}</b></div>
       </div>
 
       {p.catchUp ? (
@@ -224,6 +226,12 @@ export default function CycleView(p: Props) {
           <span className="rw-ban-tx"><b>{p.catchUp.count === 1 ? '1 cycle wasn\u2019t closed' : `${p.catchUp.count} cycles weren\u2019t closed`}</b>
             <small>{short(p.catchUp.from)} – {short(p.catchUp.to)}</small></span>
           <button type="button" onClick={p.catchUp.onOpen}>Catch up</button>
+        </div>
+      ) : p.closePaused ? (
+        <div className="rw-ban warn">
+          <span className="rw-ban-i">!</span>
+          <span className="rw-ban-tx"><b>{p.closePaused === 1 ? '1 cycle wasn\u2019t closed' : `${p.closePaused} cycles weren\u2019t closed`}</b>
+            <small>A later one is already saved, so closing is paused.</small></span>
         </div>
       ) : p.showClose && (
         <div className="rw-ban">

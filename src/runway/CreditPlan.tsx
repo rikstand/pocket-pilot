@@ -80,6 +80,17 @@ export default function CreditPlan({ accountId }: { accountId: string }) {
   const owingToday = predictedBalanceOn(card, cur.creditOpeningBalanceCents ?? 0, cur.startDate, days, today, cur.creditPaymentCents ?? 0,
     confirmedPaymentsFrom(rows.creditPaymentRows ?? []))
   const lastSnap = snaps[0]
+  // A balance from before this cycle: the figure above is worked out, not read.
+  const staleBalance = !!lastSnap && lastSnap.as_of_date < cur.startDate
+  // This cycle's amount against what the plan would have paid, when it was
+  // set for this cycle only.
+  const oneOff = !paidRow && (rows.creditOverrideRows ?? []).some((o: any) => o.cycle_start === cur.startDate)
+  const planPayCents = oneOff ? (projectFromRows({
+    ...rows, creditOverrideRows: (rows.creditOverrideRows ?? []).filter((o: any) => o.cycle_start !== cur.startDate),
+  }, floorCents, HORIZON).find(c => c.startDate === cur.startDate)?.creditPaymentCents ?? null) : null
+  const offPlan = planPayCents == null ? 0 : (cur.creditPaymentCents ?? 0) - planPayCents
+  const offPlanWords = Math.abs(offPlan) < 100 ? ''
+    : ` · ${money(Math.abs(offPlan))} ${offPlan > 0 ? 'more' : 'less'} than ${committed ? 'your plan' : 'the minimum'}`
 
   const cleared = (run: typeof cycles) => run.findIndex((c, i) => i >= k0 && (c.creditOpeningBalanceCents ?? 0) > 0 && (c.creditClosingBalanceCents ?? 0) <= 0)
   const interest = (run: typeof cycles) => run.slice(k0).reduce((s, c) => s + (c.creditInterestCents ?? 0), 0)
@@ -108,7 +119,7 @@ export default function CreditPlan({ accountId }: { accountId: string }) {
         <div>
           <div className="k">Owing</div>
           <div className="rw-cp-bal">{money(owingToday)}</div>
-          <div className="s">{lastSnap ? <>Updated <b>{short(lastSnap.as_of_date)}</b></> : 'Not updated yet'}</div>
+          <div className={`s${staleBalance ? ' old' : ''}`}>{lastSnap ? <>Updated <b>{short(lastSnap.as_of_date)}</b>{staleBalance ? ' · before this cycle' : ''}</> : 'Not updated yet'}</div>
         </div>
         <div className="r"><div className="k">Debt free</div><div className="v">{debtFree}</div></div>
       </div>
@@ -128,7 +139,7 @@ export default function CreditPlan({ accountId }: { accountId: string }) {
         <button type="button" className="rw-row" onClick={() => setSheet({ kind: 'plan' })}>
           <span className="rw-cardmark" />
           <div className="rw-tx"><div className="rw-row-name">Your plan</div>
-            <div className="rw-sub">{nowWords}{nextChange ? ` · then ${planWords(nextChange.mode, Number(nextChange.extra_cents ?? 0)).toLowerCase()} from ${short(nextChange.effective_from)}` : ''}</div></div>
+            <div className="rw-sub">{nowWords}{nextChange && committed ? ` · then ${planWords(nextChange.mode, Number(nextChange.extra_cents ?? 0)).toLowerCase()} from ${short(nextChange.effective_from)}` : ''}</div></div>
           {committed && <div className="rw-am">{money(interest(cycles))}<small>interest</small></div>}
           <span className="rw-chev">›</span>
         </button>
@@ -139,7 +150,7 @@ export default function CreditPlan({ accountId }: { accountId: string }) {
             <span className="rw-cp-cal" />
             <div className="rw-tx"><div className="rw-row-name">This cycle</div>
               <div className="rw-sub">{paidRow ? `Paid ${money(paidRow.amount_cents)}` : `${short(cur.startDate)} – ${short(cur.endDate)}`}
-                {(rows.creditOverrideRows ?? []).some((o: any) => o.cycle_start === cur.startDate) && !paidRow ? ' · your amount' : ''}</div></div>
+                {offPlanWords}</div></div>
             <div className="rw-am">{money(paidRow ? paidRow.amount_cents : cur.creditPaymentCents ?? 0)}</div>
             <span className="rw-chev">›</span>
           </button>
@@ -159,7 +170,7 @@ export default function CreditPlan({ accountId }: { accountId: string }) {
       </div>
 
       {ahead.length > 0 && <>
-        <div className="rw-dl"><span className="rw-dl-k">Plan changes ahead</span></div>
+        <div className="rw-dl"><span className="rw-dl-k">Plan changes ahead</span>{!committed && <span>paused until you set a plan</span>}</div>
         <div className="rw-group">
           {ahead.map(v => (
             <button key={v.id} type="button" className="rw-row" onClick={() => setSheet({ kind: 'ahead', v })}>
@@ -366,6 +377,7 @@ function PlanSheet({ rows, k0, card, accountId, floorCents, money, sym, onThisCy
     } catch (e: any) { alert('Could not save the plan: ' + e.message) }
     finally { setBusy(false) }
   }
+  const [confirmStop, setConfirmStop] = useState(false)
   async function stopPlan() {
     if (busy) return
     setBusy(true)
@@ -380,6 +392,25 @@ function PlanSheet({ rows, k0, card, accountId, floorCents, money, sym, onThisCy
   }
 
   const pays = cycles.slice(k0 + 1, k0 + 4).map(c => c.startDate)
+  // One step between the red row and stopping: it says what changes.
+  if (confirmStop) return (
+    <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget && !busy) onClose() }}>
+      <div className="rw-sheet" role="dialog" aria-modal="true" aria-label="Stop using a plan?">
+        <div className="rw-grab" />
+        <div className="rw-sh-h"><div><div className="rw-sheet-title">Stop using a plan?</div>
+          <div className="rw-sd">{card.name} · now: {planModeOf(was) === 'spare' ? 'whatever’s spare' : planModeOf(was) === 'minimum' ? 'minimum only' : `min + ${money(wasExtra)} a cycle`}</div></div>
+          <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>
+        <div className="rw-card" style={{ font: 'var(--rw-text-body)' }}>
+          Your extra payments leave Cycle and Forecast. The minimum payment stays in. Your balance and card details are kept.
+          {(rows.creditPlanRows ?? []).some((v: any) => v.effective_from > cycles[k0].startDate) && ' Changes you set for later dates are paused until you set a plan again.'}
+        </div>
+        <div className="rw-ctas">
+          <button type="button" className="rw-cta sec" style={{ flex: 1 }} disabled={busy} onClick={() => setConfirmStop(false)}>Keep my plan</button>
+          <button type="button" className="rw-cta dang" disabled={busy} onClick={stopPlan}>{busy ? 'Stopping…' : 'Stop the plan'}</button>
+        </div>
+      </div>
+    </div>
+  )
   return (
     <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget && !busy) onClose() }}>
       <div className="rw-sheet" role="dialog" aria-modal="true">
@@ -437,15 +468,21 @@ function PlanSheet({ rows, k0, card, accountId, floorCents, money, sym, onThisCy
             d: !committed ? 'with this plan' : sooner > 0 ? `${sooner} cycle${sooner > 1 ? 's' : ''} sooner` : sooner < 0 ? `${-sooner} cycle${sooner < -1 ? 's' : ''} later` : 'no change',
             cls: sooner > 0 ? 'good' : sooner < 0 ? 'near' : '' }} />
 
+        {committed && fromNow && (
+          <div className="rw-group flush" style={{ marginTop: 12 }}>
+            <button type="button" className="rw-row" disabled={busy} onClick={() => setConfirmStop(true)}>
+              <div className="rw-tx"><div className="rw-row-name rw-danger">Stop using a plan</div>
+                <div className="rw-sub">Only the minimum stays in your forecast</div></div>
+              <span className="rw-chev">›</span>
+            </button>
+          </div>
+        )}
         <div className="rw-ctas">
           <button type="button" className="rw-cta sec" onClick={onClose}>Cancel</button>
           <button type="button" className="rw-cta" disabled={busy || (!committed && !fromNow)} onClick={save}>
             {unchanged ? 'Keep my plan' : fromNow ? `Set as my plan${dInt >= 100 && committed ? ` · save ${money(dInt)}` : ''}` : `Set from ${short(start)}`}
           </button>
         </div>
-        {committed && fromNow && (
-          <button type="button" className="rw-lnk" disabled={busy} onClick={stopPlan}>Stop using a plan</button>
-        )}
       </div>
     </div>
   )
@@ -526,6 +563,10 @@ function DetailsSheet({ card, rows, k0, floorCents, money, sym, onClose, toast }
   const cleared = (r: typeof rows.cycles) => r.findIndex((c, i) => i >= k0 && (c.creditOpeningBalanceCents ?? 0) > 0 && (c.creditClosingBalanceCents ?? 0) <= 0)
   const interest = (r: typeof rows.cycles) => r.slice(k0).reduce((s, c) => s + (c.creditInterestCents ?? 0), 0)
   const label = (r: typeof rows.cycles) => { const i = cleared(r); return i >= 0 ? monYr(nextDay(r[i].endDate)) : 'Later' }
+  // The minimum these terms give, worked out by the forecast: this cycle's, or
+  // the next one that falls due.
+  const minAt = run.findIndex((c, i) => i >= k0 && (c.creditMinimumCents ?? 0) > 0)
+  const nextMin = minAt >= 0 ? { here: minAt === k0, cents: run[minAt].creditMinimumCents ?? 0 } : null
   async function save() {
     if (!fields.name) { setErr('Give the card a name.'); return }
     if (!aprBps || minP <= 0) { setErr('Rate and minimum payment are needed.'); return }
@@ -552,22 +593,24 @@ function DetailsSheet({ card, rows, k0, floorCents, money, sym, onClose, toast }
         <div className="rw-lab">How you pay it</div>
         <Segmented value={freq} onChange={setFreq} options={[{ value: 'monthly', label: 'Monthly, due date' }, { value: 'per_cycle', label: 'Every cycle' }]} />
         <div className="rw-cp-f2">
-          <div><div className="rw-lab">Interest rate</div>
+          <div style={freq === 'monthly' ? undefined : { gridColumn: '1 / -1' }}><div className="rw-lab">Interest rate</div>
             <div className="rw-amtrow"><input type="number" inputMode="decimal" step="0.1" aria-label="Interest rate" value={apr} onChange={e => setApr(e.target.value)} /><em>% a year</em></div></div>
-          <div><div className="rw-lab">Minimum</div>
-            <div className="rw-amtrow"><input type="number" inputMode="decimal" step="0.5" aria-label="Minimum payment" value={minPct} onChange={e => setMinPct(e.target.value)} /><em>% of balance</em></div></div>
-          <div><div className="rw-lab">Minimum, at least</div>
-            <div className="rw-amtrow"><span>{sym}</span><input type="number" inputMode="decimal" aria-label="Smallest minimum payment" value={minFloor} onChange={e => setMinFloor(e.target.value)} /><em>a payment</em></div></div>
           {freq === 'monthly' && <div><div className="rw-lab">Due day</div>
             <div className="rw-amtrow"><input type="number" inputMode="numeric" aria-label="Due day" value={due} onChange={e => setDue(e.target.value)} /><em>each month</em></div></div>}
-          <div><div className="rw-lab">New spending</div>
-            <div className="rw-amtrow"><span>{sym}</span><input type="number" inputMode="decimal" aria-label="New spending on the card each cycle" value={spend} onChange={e => setSpend(e.target.value)} /><em>a cycle</em></div></div>
+          <div><div className="rw-lab">Minimum payment</div>
+            <div className="rw-amtrow"><input type="number" inputMode="decimal" step="0.5" aria-label="Minimum payment, percent of balance" value={minPct} onChange={e => setMinPct(e.target.value)} /><em>% of balance</em></div></div>
+          <div><div className="rw-lab">Or at least</div>
+            <div className="rw-amtrow"><span>{sym}</span><input type="number" inputMode="decimal" aria-label="Smallest minimum payment" value={minFloor} onChange={e => setMinFloor(e.target.value)} /></div></div>
         </div>
+        <div className="rw-hint">Both are on your statement: a percentage of what you owe, or a set amount when that's more.
+          {nextMin && <> <b className="rw-ink">{nextMin.here ? 'This cycle’s' : 'The next'} minimum comes to {money(nextMin.cents)}.</b></>}</div>
+        <div className="rw-lab">New spending</div>
+        <div className="rw-amtrow"><span>{sym}</span><input type="number" inputMode="decimal" aria-label="New spending on the card each cycle" value={spend} onChange={e => setSpend(e.target.value)} /><em>a cycle</em></div>
+        <div className="rw-hint">What you expect to put on the card each cycle. $0 only if you've stopped using it.</div>
         {freq === 'monthly' && <>
           <div className="rw-lab">The extra goes out</div>
           <Segmented value={timing} onChange={setTiming} options={[{ value: 'every_cycle', label: 'With every pay' }, { value: 'due_cycle', label: 'In the due cycle' }]} />
         </>}
-        <div className="rw-hint">New spending: what you expect to put on the card each cycle. $0 only if you've stopped using it.</div>
         {card.strategy_committed && (
           <div className="rw-tiles two">
             <div className="rw-tile"><div className="k">Debt free</div><div className="v">{label(run)}</div><div className="d">was {label(rows.cycles)}</div></div>
@@ -621,11 +664,12 @@ function AddCard({ accountId, sym, onAdded }: { accountId: string; sym: string; 
         <div className="rw-cp-f2">
           <div><div className="rw-lab">Interest rate</div>
             <div className="rw-amtrow"><input type="number" inputMode="decimal" aria-label="Interest rate" value={apr} onChange={e => setApr(e.target.value)} /><em>% a year</em></div></div>
-          <div><div className="rw-lab">Minimum</div>
-            <div className="rw-amtrow"><input type="number" inputMode="decimal" aria-label="Minimum payment" value={minPct} onChange={e => setMinPct(e.target.value)} /><em>% of balance</em></div></div>
+          <div><div className="rw-lab">Minimum payment</div>
+            <div className="rw-amtrow"><input type="number" inputMode="decimal" aria-label="Minimum payment, percent of balance" value={minPct} onChange={e => setMinPct(e.target.value)} /><em>% of balance</em></div></div>
         </div>
-        <div className="rw-lab">Minimum, at least</div>
-        <div className="rw-amtrow"><span>{sym}</span><input type="number" inputMode="decimal" aria-label="Smallest minimum payment" value={minFloor} onChange={e => setMinFloor(e.target.value)} /><em>a payment</em></div>
+        <div className="rw-lab">Or at least</div>
+        <div className="rw-amtrow"><span>{sym}</span><input type="number" inputMode="decimal" aria-label="Smallest minimum payment" value={minFloor} onChange={e => setMinFloor(e.target.value)} /></div>
+        <div className="rw-hint">Both are on your statement: a percentage of what you owe, or a set amount when that's more.</div>
         <div className="rw-lab">New spending</div>
         <div className="rw-amtrow"><span>{sym}</span><input type="number" inputMode="decimal" aria-label="New spending each cycle" value={spend} onChange={e => setSpend(e.target.value)} /><em>a cycle</em></div>
         <div className="rw-hint">What you expect to put on the card each cycle. $0 only if you've stopped using it.</div>

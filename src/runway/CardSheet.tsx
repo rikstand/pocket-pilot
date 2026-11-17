@@ -1,7 +1,7 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { projectFromRows, type ForecastResult } from '../lib/forecast'
 import {
-  setCreditExtraOverride, clearCreditExtraOverride, confirmCreditPayment, unconfirmCreditPayment, addCreditSnapshot,
+  setCreditExtraOverride, clearCreditExtraOverride, confirmCreditPayment, unconfirmCreditPayment, addCreditSnapshot, deleteCreditSnapshot,
 } from '../lib/repository'
 import { parseDate, formatDate, addDays } from '../engine/dates'
 import { notifyDataChanged } from '../lib/dataEvents'
@@ -198,6 +198,23 @@ export default function CardSheet(p: Props) {
   /* ── update the balance ── */
   const [bal, setBal] = useState(p.predictedTodayCents != null ? String(dollars(p.predictedTodayCents)) : '')
   const balC = Math.max(0, Math.round((parseFloat(bal) || 0) * 100))
+  const balRef = useRef<HTMLInputElement>(null)
+  // Shown with thousands separators as it is typed, so a slipped digit is seen.
+  const balShown = (() => {
+    if (!bal) return ''
+    const [whole, cents] = bal.split('.')
+    return (whole ? Number(whole).toLocaleString('en-NZ') : '0') + (cents != null ? '.' + cents : '')
+  })()
+  const typeBal = (v: string) => {
+    const clean = v.replace(/[^0-9.]/g, '')
+    const dot = clean.indexOf('.')
+    setBal(dot < 0 ? clean : clean.slice(0, dot + 1) + clean.slice(dot + 1).replace(/\./g, '').slice(0, 2))
+  }
+  // A typing guard, not advice: more than 20% and at least $100 from the
+  // balance the forecast expected today, so the sheet asks before saving.
+  const balGap = p.predictedTodayCents != null ? balC - p.predictedTodayCents : 0
+  const balFar = p.predictedTodayCents != null && !!bal.trim()
+    && Math.abs(balGap) >= 10000 && Math.abs(balGap) > p.predictedTodayCents * 0.2
   // The forecast as it would run with this balance saved: the latest balance
   // is what the card reads, so this is exactly what saving does.
   const balRun = useMemo(() => mode !== 'balance' || !bal.trim() ? base : projectFromRows({
@@ -210,8 +227,10 @@ export default function CardSheet(p: Props) {
     if (busy || !bal.trim()) return
     setBusy(true)
     try {
-      await addCreditSnapshot(p.card.id, p.accountId, balC, p.today, 'manual', p.predictedTodayCents ?? undefined)
-      toast(`${name} balance ${money(balC)} saved. The plan re-runs from today.`)
+      const saved = await addCreditSnapshot(p.card.id, p.accountId, balC, p.today, 'manual', p.predictedTodayCents ?? undefined)
+      toast(`${name} balance set to ${money(balC)}`, {
+        undo: async () => { await deleteCreditSnapshot(saved.id); notifyDataChanged() },
+      })
       notifyDataChanged(); p.onClose()
     } catch (e: any) { alert('Could not update the balance: ' + e.message) }
     finally { setBusy(false) }
@@ -335,8 +354,12 @@ export default function CardSheet(p: Props) {
         {mode === 'balance' && <>
           {head('Update card balance', 'Whatever your banking app shows now. Do it as often as you like.')}
           <div className="rw-big"><span>{p.sym}</span>
-            <input type="number" inputMode="decimal" aria-label="Card balance now" value={bal} onChange={e => setBal(e.target.value)} /></div>
-          {p.predictedTodayCents != null && (
+            <input ref={balRef} type="text" inputMode="decimal" aria-label="Card balance now" value={balShown} onChange={e => typeBal(e.target.value)} /></div>
+          {balFar && p.predictedTodayCents != null ? (
+            <div className="rw-warn-ban near" role="alert">
+              <span><b>{money(Math.abs(balGap))} {balGap > 0 ? 'more' : 'less'} than expected.</b> We expected {money(p.predictedTodayCents)} today. Is {money(balC)} right?</span>
+            </div>
+          ) : p.predictedTodayCents != null && (
             <div className="rw-hint" style={{ textAlign: 'center' }}>
               We expected <b>{money(p.predictedTodayCents)}</b> today.{' '}
               {Math.abs(balC - p.predictedTodayCents) < 100 ? 'That matches.'
@@ -351,8 +374,10 @@ export default function CardSheet(p: Props) {
             </div>
           )}
           <div className="rw-ctas">
-            <button type="button" className="rw-cta sec" onClick={() => (p.mode === 'balance' ? p.onClose() : setMode(p.mode))}>{p.mode === 'balance' ? 'Cancel' : 'Back'}</button>
-            <button type="button" className="rw-cta" disabled={busy || !bal.trim()} onClick={saveBalance}>Save balance</button>
+            {balFar
+              ? <button type="button" className="rw-cta sec" disabled={busy} onClick={() => { balRef.current?.focus(); balRef.current?.select() }}>Change it</button>
+              : <button type="button" className="rw-cta sec" onClick={() => (p.mode === 'balance' ? p.onClose() : setMode(p.mode))}>{p.mode === 'balance' ? 'Cancel' : 'Back'}</button>}
+            <button type="button" className="rw-cta" disabled={busy || !bal.trim()} onClick={saveBalance}>{busy ? 'Saving…' : balFar ? `Yes, save ${money(balC)}` : 'Save balance'}</button>
           </div>
         </>}
       </div>

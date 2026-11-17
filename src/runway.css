@@ -283,6 +283,8 @@ body.is-runway #root { border-inline: none; }
 .rw .rw-mini { color: var(--rw-action-ink); }
 .rw-pill { font: var(--rw-text-label); font-size: 10.5px; padding: 3px 9px; border-radius: var(--rw-radius-pill); white-space: nowrap; }
 .rw-pill.good { background: color-mix(in srgb, var(--rw-good) 14%, transparent); color: var(--rw-good); }
+/* Ink: a fact about the row, not a state. "This cycle only" on the card row. */
+.rw-pill.ink { background: var(--rw-ink); color: var(--rw-bg); margin-left: 6px; vertical-align: 1px; }
 
 /* Budget pace: the bar is spent, the tick is how far through the cycle. */
 .rw-pb { height: 5px; border-radius: 3px; background: var(--rw-surface-2); margin-top: 6px; position: relative; }
@@ -684,6 +686,8 @@ body.is-runway #root { border-inline: none; }
 .rw-cp-hero .k { font: var(--rw-text-sub); font-size: 11px; font-weight: 600; color: var(--rw-muted); }
 .rw-cp-hero .s { font: var(--rw-text-sub); font-size: 11px; color: var(--rw-muted); margin-top: 3px; }
 .rw-cp-hero .s b { color: var(--rw-ink); font-weight: 650; }
+/* The balance was last read before this cycle began. */
+.rw-cp-hero .s.old, .rw-cp-hero .s.old b { color: var(--rw-near-floor-text); font-weight: 650; }
 .rw-cp-hero .r { text-align: right; }
 .rw-cp-hero .r .v { font: var(--rw-text-tile); font-size: 17px; letter-spacing: -.02em; }
 .rw-cp-bal { font: var(--rw-text-amount); font-size: 32px; letter-spacing: -.045em; line-height: 1.05; }

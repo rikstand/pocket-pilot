@@ -186,6 +186,7 @@ export default function CloseSheet(p: Props) {
             )}
           </>}
 
+          {step === 3 && <div className="rw-note"><b className="rw-ink">Closing is final.</b> You can still fix the balance afterwards in Past cycles.</div>}
           <div className="rw-ctas">
             {step > first && <button type="button" className="rw-cta sec" disabled={busy} onClick={() => setStep(s => s - 1)}>Back</button>}
             {step < 3

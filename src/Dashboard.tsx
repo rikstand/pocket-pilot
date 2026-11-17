@@ -2491,12 +2491,12 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
         creditPaymentCents <= 0 ? 'Nothing due this cycle'
           : creditExtraCents > 0 ? `Min ${fmt(creditMinimumCents, false)} + extra ${fmt(creditExtraCents, false)}` : 'Minimum',
         `${fmt(Math.max(0, creditLeftCents), false)} left`,
-        ...(cycleOverride && !paidHere ? ['this cycle only'] : []),
       ]
       items.push({
         key: 'card', date: d, name: rawCredit.name ?? 'Card', mark: 'credit',
         amountCents: paidHere ? creditPaidCents : creditPaymentCents,
         sub: parts.join(' · '),
+        pill: cycleOverride && !paidHere ? 'This cycle only' : undefined,
         progress: creditPct / 100,
         needs: creditState === 'due', needsText: 'not confirmed',
         action: creditState === 'due' ? { label: 'Confirm', run: sheetHere ? () => setRwCard('confirm') : openConfirmPay } : undefined,
@@ -2626,6 +2626,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
         floorCents={floorCents} closingCents={activeCycle.committedClosingBalanceCents}
         cardLine={d.cardLine} runway={d.runway} items={d.items} budgets={d.budgets}
         showClose={!isForecast && missed.length === 0 && (status === 'overdue' || (status === 'now' && today() === activeCycle.endDate))}
+        closePaused={missed.length > 0 && !canCatchUp ? missed.length : undefined}
         catchUp={canCatchUp ? { count: missed.length, from: missed[0].startDate, to: missed[missed.length - 1].endDate, onOpen: () => setRwCatchOpen(true) } : undefined}
         ended={status === 'overdue'}
         onClose={() => setRwCloseOpen(true)}

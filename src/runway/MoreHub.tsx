@@ -1,5 +1,7 @@
 import type { Page } from '../AppShell'
 import { useAccount } from '../lib/AccountContext'
+import { signOut } from '../lib/auth'
+import { useToast } from './toastContext'
 
 /** More: accounts, settings and dark mode. Journey 11 fills in the rest. */
 interface Props {
@@ -11,6 +13,12 @@ interface Props {
 
 export default function MoreHub({ onNavigate, darkMode, onToggleDark, onAddAccount }: Props) {
   const { accounts, activeAccount, setActiveAccountId } = useAccount()
+  const toast = useToast()
+  // Signing out loses nothing, so it is one tap. The app shows the sign-in
+  // screen as soon as the session ends.
+  async function leave() {
+    try { await signOut() } catch { toast('Could not sign out. Check your connection and try again.') }
+  }
 
   return (
     <div className="rw-page">
@@ -51,6 +59,13 @@ export default function MoreHub({ onNavigate, darkMode, onToggleDark, onAddAccou
             <div className="rw-sub">Safety floor, account name, new look</div>
           </div>
           <span className="rw-chev">›</span>
+        </button>
+      </div>
+
+      <div className="rw-section" />
+      <div className="rw-group">
+        <button type="button" className="rw-row" onClick={leave}>
+          <div className="rw-tx"><div className="rw-row-name">Sign out</div></div>
         </button>
       </div>
     </div>

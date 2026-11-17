@@ -39,7 +39,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   async function run(fn?: () => void | Promise<void>) {
     setHiding(true)
-    if (fn) await fn()
+    if (!fn) return
+    // An Undo that fails must say so: otherwise the change looks undone and isn't.
+    try { await fn() } catch { show('Undo didn’t work, so that change is still saved.') }
   }
 
   return (

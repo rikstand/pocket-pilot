@@ -1088,6 +1088,19 @@ export async function addCreditSnapshot(
   return data
 }
 
+// Undo for a balance just saved. Snapshots are otherwise append-only; this
+// removes the one row the Undo belongs to, and says so if nothing was removed
+// (the database refusing a delete returns no error, only no rows).
+export async function deleteCreditSnapshot(id: string) {
+  const { data, error } = await supabase
+    .from('credit_balance_snapshots')
+    .delete()
+    .eq('id', id)
+    .select('id')
+  if (error) throw error
+  if (!data || data.length === 0) throw new Error('The saved balance could not be removed.')
+}
+
 // --- CREDIT EXTRA OVERRIDES ---
 // The user's choice for one cycle: a set extra on top of the minimum (0 =
 // minimum only), or 'spare' — whatever this cycle has above the floor, kept
