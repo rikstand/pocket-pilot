@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { setErrorToast } from './Sheet'
 import { ToastContext, type Show, type ToastOptions } from './toastContext'
 
 /**
@@ -23,6 +24,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setHiding(false)
     setToast({ id: seq.current, message, ...options })
   }, [])
+
+  // A failure with no sheet open (a page-level action) is said here.
+  useEffect(() => { setErrorToast(m => show(m)) }, [show])
 
   useEffect(() => {
     if (!toast) return

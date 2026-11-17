@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import Sheet, { reportError } from './Sheet'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
 import { loadForecast, cycleRuleOn, toEngineExpenses, toEngineIncome, type ForecastResult } from '../lib/forecast'
@@ -259,13 +260,12 @@ function EstimateFix({ cycle, item, accountId, money, closing, hasForecast, onCl
       const row = await addCycleActual(cycle.id, accountId, item.id, cents)
       toast(`${item.name}: ${money(cents)} saved to history`, { undo: async () => { await deleteCycleActual(row.id); notifyDataChanged() } })
       notifyDataChanged(); onClose()
-    } catch (e: any) { alert('Could not save: ' + e.message) }
+    } catch (e: any) { reportError('That didn’t save.', e) }
     finally { setBusy(false) }
   }
 
   return (
-    <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="rw-sheet" role="dialog" aria-modal="true">
+    <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
         <div className="rw-sh-h"><div><div className="rw-sheet-title">{item.name} · real amount</div>
           <div className="rw-sd">{item.dates.map(dayName).join(', ')} · estimate {money(item.estimate)}</div></div>
@@ -280,8 +280,7 @@ function EstimateFix({ cycle, item, accountId, money, closing, hasForecast, onCl
           <button type="button" className="rw-cta sec" onClick={onClose}>Cancel</button>
           <button type="button" className="rw-cta" disabled={busy || cents === was} onClick={save}>Save real amount</button>
         </div>
-      </div>
-    </div>
+    </Sheet>
   )
 }
 
@@ -309,13 +308,12 @@ function MissedSpend({ cycle, budget, accountId, money, closing, hasForecast, pa
       const row = await addBudgetSpendEntry(accountId, budget.id, cents, '', date, {})
       toast(`${budget.name}: ${money(cents)} added to ${dayName(date)}`, { undo: async () => { await deleteBudgetSpendEntry(row.id); notifyDataChanged() } })
       notifyDataChanged(); onClose()
-    } catch (e: any) { alert('Could not add it: ' + e.message) }
+    } catch (e: any) { reportError('That wasn’t added.', e) }
     finally { setBusy(false) }
   }
 
   return (
-    <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="rw-sheet" role="dialog" aria-modal="true">
+    <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
         <div className="rw-sh-h"><div><div className="rw-sheet-title">{budget.name}</div>
           <div className="rw-sd">{money(budget.spent)} of {money(budget.planned)} · {short(cycle.start_date)} – {short(cycle.end_date)}</div></div>
@@ -343,8 +341,7 @@ function MissedSpend({ cycle, budget, accountId, money, closing, hasForecast, pa
           <button type="button" className="rw-cta sec" onClick={onClose}>Close</button>
           <button type="button" className="rw-cta" disabled={!cents || busy} onClick={save}>Add to the {short(cycle.start_date)} cycle</button>
         </div>
-      </div>
-    </div>
+    </Sheet>
   )
 }
 
@@ -386,13 +383,12 @@ function FixClose({ cycle, next, rows, accountId, money, onClose }: {
         undo: async () => { await fixLastClose(accountId, cycle.id, oldClose, oldEntered, oldPayIn); notifyDataChanged() },
       })
       notifyDataChanged(); onClose()
-    } catch (e: any) { alert('Could not fix the close, so nothing was changed.\n\n' + e.message) }
+    } catch (e: any) { reportError('The close wasn’t fixed, so nothing was changed.', e) }
     finally { setBusy(false) }
   }
 
   return (
-    <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget && !busy) onClose() }}>
-      <div className="rw-sheet" role="dialog" aria-modal="true">
+    <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
         <div className="rw-sh-h"><div><div className="rw-sheet-title">Fix the {short(cycle.end_date)} close</div>
           <div className="rw-sd">Closed {money(oldClose)}{oldEntered != null
@@ -433,7 +429,6 @@ function FixClose({ cycle, next, rows, accountId, money, onClose }: {
           <button type="button" className="rw-cta sec" onClick={onClose}>Cancel</button>
           <button type="button" className="rw-cta" disabled={busy || !changed || looksLikePay} onClick={save}>Save the fix</button>
         </div>
-      </div>
-    </div>
+    </Sheet>
   )
 }

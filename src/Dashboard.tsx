@@ -125,6 +125,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
   const [activeIdx,   setActiveIdx]   = useState(0)
   const [error,       setError]       = useState('')
   const [loading,     setLoading]     = useState(true)
+  const loadedFor = useRef<string | null>(null)
   const [reloadKey,   setReloadKey]   = useState(0)
   const pillsRef = useRef<HTMLDivElement>(null)
   // Desktop Cycle page puts the at-a-glance cards and the close button in a
@@ -295,8 +296,13 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
   function toggleSec(k: string) { setOpenSecs(p => ({ ...p, [k]: !p[k] })) }
 
   useEffect(() => {
+    // Everything but a reload after a save: a new account or a different view.
+    const loadKey = `${accountId}|${horizonCycles}|${variant}|${newLook}`
     async function load() {
-      setLoading(true)
+      // The loading screen is for the first load and for a change of account or view.
+      // After a save the screen stays as it is and the new figures are swapped
+      // in when they arrive, so you keep your place (17 Nov 2026).
+      if (loadedFor.current !== loadKey) setLoading(true)
       try {
         const floorCents = activeAccount?.safety_floor_cents ?? 0
 
@@ -381,7 +387,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
         setCycles(cyclesWithIds)
         setActiveIdx(findCurrentIdx(cyclesWithIds))
       } catch (e: any) { setError(e.message) }
-      finally { setLoading(false) }
+      finally { loadedFor.current = loadKey; setLoading(false) }
     }
     load()
   }, [accountId, reloadKey, horizonCycles, variant, newLook])

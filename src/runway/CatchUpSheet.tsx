@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import Sheet, { reportError } from './Sheet'
 import { parseDate } from '../engine/dates'
 
 /**
@@ -62,7 +63,7 @@ export default function CatchUpSheet(p: Props) {
       await p.onSubmit({ lastCloseCents: lastClose, enteredCents: known ? lastClose : null, payIn: known ? false : null })
       setDone(true)
     } catch (e: any) {
-      alert('Could not catch up, so nothing was changed. You can try again.\n\n' + e.message)
+      reportError('The catch-up didn’t run, so nothing was changed.', e)
     } finally { setBusy(false) }
   }
 
@@ -72,8 +73,7 @@ export default function CatchUpSheet(p: Props) {
   )
 
   return (
-    <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget && !busy) p.onCancel() }}>
-      <div className="rw-sheet" role="dialog" aria-modal="true">
+    <Sheet onClose={p.onCancel} busy={busy}>
         <div className="rw-grab" />
         {done ? (
           <>
@@ -152,7 +152,6 @@ export default function CatchUpSheet(p: Props) {
               : <button type="button" className="rw-cta" disabled={busy} onClick={submit}>{busy ? 'Closing…' : n === 1 ? 'Close 1 cycle' : `Close ${n} cycles`}</button>}
           </div>
         </>}
-      </div>
-    </div>
+    </Sheet>
   )
 }

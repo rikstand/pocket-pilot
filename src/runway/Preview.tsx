@@ -30,7 +30,7 @@ export function previewStats(nowCents: number[], newCents: number[], floorCents:
 
 const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
 
-export default function Preview({ nowCents, newCents, payDates, floorCents, money, ticks = [], title, done, third }: {
+export default function Preview({ nowCents, newCents, payDates, floorCents, money, ticks = [], title, done, third, tilesFirst }: {
   nowCents: number[]
   newCents: number[]
   payDates: string[]           // the payday each closing balance is "before"
@@ -45,6 +45,9 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
   done?: { now: number | null; next: number | null }
   // The third tile, when the change has a better one than "By <date>".
   third?: { k: string; v: string; d: string; cls?: string }
+  // Tiles and the warning above the chart: for a sheet whose answer must be
+  // in view right under its input (the card payment).
+  tilesFirst?: boolean
 }) {
   const n = newCents.length
   // Drag across to read any payday, as on the runway and Forecast.
@@ -66,7 +69,7 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
   const signed = (c: number) => Math.round(c / 100) === 0 ? money(0) : (c > 0 ? '+' : '') + money(c)
 
   return (
-    <>
+    <div className={tilesFirst ? 'rw-pv-set first' : 'rw-pv-set'}>
       <div className="rw-card rw-pv">
         <div className="rw-pv-k">
           <span>{title ?? 'Left before each payday'}</span>
@@ -158,6 +161,6 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
             <span>You’d be <b>{money(-st.lowestCents)} overdrawn</b> before pay {short(payDates[st.lowestIdx])}.</span></div>
         : <div className="rw-warn-ban near">
             <span>Before pay {short(payDates[st.lowestIdx])} dips <b>{money(floorCents - st.lowestCents)}</b> into your floor. You’d still have {money(st.lowestCents)}.</span></div>)}
-    </>
+    </div>
   )
 }

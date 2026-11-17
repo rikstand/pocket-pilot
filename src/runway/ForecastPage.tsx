@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import Sheet, { reportError } from './Sheet'
 import { parseDate, formatDate, addMonths } from '../engine/dates'
 import { useToast } from './toastContext'
 import { Segmented } from './controls'
@@ -79,7 +80,7 @@ export default function ForecastPage(p: Props) {
       toast(`${short(x.payDate)}: your choice. It stays marked, without the warning.`, {
         undo: () => p.onUndoDip(x.driver!.expenseId!, x.start),
       })
-    } catch (e: any) { alert('Could not save that: ' + e.message) }
+    } catch (e: any) { reportError('That didn’t save.', e) }
     finally { setBusy(false) }
   }
   async function undoDip(k: number) {
@@ -87,7 +88,7 @@ export default function ForecastPage(p: Props) {
     if (!x.driver?.expenseId || busy) return
     setBusy(true)
     try { await p.onUndoDip(x.driver.expenseId, x.start); setSheet(null) }
-    catch (e: any) { alert('Could not undo that: ' + e.message) }
+    catch (e: any) { reportError('That wasn’t undone.', e) }
     finally { setBusy(false) }
   }
 
@@ -163,8 +164,7 @@ export default function ForecastPage(p: Props) {
       <div style={{ height: 16 }} />
 
       {sheet && (
-        <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget && !busy) setSheet(null) }}>
-          <div className="rw-sheet" role="dialog" aria-modal="true">
+        <Sheet onClose={() => setSheet(null)} busy={busy}>
             <div className="rw-grab" />
             {sheet.kind === 'how' ? <>
               <div className="rw-sh-h"><div className="rw-sheet-title">How to read this</div>
@@ -207,8 +207,7 @@ export default function ForecastPage(p: Props) {
                 {!x.accepted && <div className="rw-hint">In the cycle you can change an amount for that cycle only.</div>}
               </>
             })()}
-          </div>
-        </div>
+        </Sheet>
       )}
     </div>
   )

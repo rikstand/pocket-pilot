@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import Sheet, { reportError } from './Sheet'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
 import { loadForecast, projectFromRows, cardWithPlanOn, type ForecastResult } from '../lib/forecast'
@@ -374,7 +375,7 @@ function PlanSheet({ rows, k0, card, accountId, floorCents, money, sym, onThisCy
         })
       }
       notifyDataChanged(); onClose()
-    } catch (e: any) { alert('Could not save the plan: ' + e.message) }
+    } catch (e: any) { reportError('The plan didn’t save.', e) }
     finally { setBusy(false) }
   }
   const [confirmStop, setConfirmStop] = useState(false)
@@ -387,15 +388,14 @@ function PlanSheet({ rows, k0, card, accountId, floorCents, money, sym, onThisCy
         undo: async () => { await commitCreditStrategy(card.id, planModeOf(card), card.strategy_extra_cents ?? 0); notifyDataChanged() },
       })
       notifyDataChanged(); onClose()
-    } catch (e: any) { alert('Could not stop the plan: ' + e.message) }
+    } catch (e: any) { reportError('The plan wasn’t stopped.', e) }
     finally { setBusy(false) }
   }
 
   const pays = cycles.slice(k0 + 1, k0 + 4).map(c => c.startDate)
   // One step between the red row and stopping: it says what changes.
   if (confirmStop) return (
-    <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget && !busy) onClose() }}>
-      <div className="rw-sheet" role="dialog" aria-modal="true" aria-label="Stop using a plan?">
+    <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
         <div className="rw-sh-h"><div><div className="rw-sheet-title">Stop using a plan?</div>
           <div className="rw-sd">{card.name} · now: {planModeOf(was) === 'spare' ? 'whatever’s spare' : planModeOf(was) === 'minimum' ? 'minimum only' : `min + ${money(wasExtra)} a cycle`}</div></div>
@@ -408,12 +408,10 @@ function PlanSheet({ rows, k0, card, accountId, floorCents, money, sym, onThisCy
           <button type="button" className="rw-cta sec" style={{ flex: 1 }} disabled={busy} onClick={() => setConfirmStop(false)}>Keep my plan</button>
           <button type="button" className="rw-cta dang" disabled={busy} onClick={stopPlan}>{busy ? 'Stopping…' : 'Stop the plan'}</button>
         </div>
-      </div>
-    </div>
+    </Sheet>
   )
   return (
-    <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget && !busy) onClose() }}>
-      <div className="rw-sheet" role="dialog" aria-modal="true">
+    <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
         <div className="rw-sh-h"><div><div className="rw-sheet-title">{card.name} · your plan</div>
           <div className="rw-sd">{committed ? `Now: ${planModeOf(was) === 'spare' ? 'whatever’s spare' : planModeOf(was) === 'minimum' ? 'minimum only' : `min + ${money(wasExtra)} a cycle`}` : 'No plan yet: only the minimum is in your forecast'}</div></div>
@@ -483,8 +481,7 @@ function PlanSheet({ rows, k0, card, accountId, floorCents, money, sym, onThisCy
             {unchanged ? 'Keep my plan' : fromNow ? `Set as my plan${dInt >= 100 && committed ? ` · save ${money(dInt)}` : ''}` : `Set from ${short(start)}`}
           </button>
         </div>
-      </div>
-    </div>
+    </Sheet>
   )
 }
 
@@ -508,12 +505,11 @@ function AheadSheet({ v, rows, k0, floorCents, money, accountId, card, planWords
         undo: async () => { await setCreditPlanFrom(card.id, accountId, v.effective_from, v.mode, Number(v.extra_cents ?? 0)); notifyDataChanged() },
       })
       notifyDataChanged(); onClose()
-    } catch (e: any) { alert('Could not remove it: ' + e.message) }
+    } catch (e: any) { reportError('That wasn’t removed.', e) }
     finally { setBusy(false) }
   }
   return (
-    <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget && !busy) onClose() }}>
-      <div className="rw-sheet" role="dialog" aria-modal="true">
+    <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
         <div className="rw-sh-h"><div><div className="rw-sheet-title">From {day(v.effective_from)}</div>
           <div className="rw-sd">{planWords(v.mode, Number(v.extra_cents ?? 0))}</div></div>
@@ -527,8 +523,7 @@ function AheadSheet({ v, rows, k0, floorCents, money, accountId, card, planWords
           <button type="button" className="rw-cta sec" onClick={onClose}>Close</button>
           <button type="button" className="rw-cta" disabled={busy} onClick={remove}>Remove change</button>
         </div>
-      </div>
-    </div>
+    </Sheet>
   )
 }
 
@@ -583,8 +578,7 @@ function DetailsSheet({ card, rows, k0, floorCents, money, sym, onClose, toast }
     finally { setBusy(false) }
   }
   return (
-    <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget && !busy) onClose() }}>
-      <div className="rw-sheet" role="dialog" aria-modal="true">
+    <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
         <div className="rw-sh-h"><div><div className="rw-sheet-title">Card details</div><div className="rw-sd">{card.name}</div></div>
           <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>
@@ -622,8 +616,7 @@ function DetailsSheet({ card, rows, k0, floorCents, money, sym, onClose, toast }
           <button type="button" className="rw-cta sec" onClick={onClose}>Cancel</button>
           <button type="button" className="rw-cta" disabled={busy} onClick={save}>Save</button>
         </div>
-      </div>
-    </div>
+    </Sheet>
   )
 }
 

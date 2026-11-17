@@ -705,3 +705,48 @@ body.is-runway #root { border-inline: none; }
 .rw .rw-amt .rw-cp-all { color: var(--rw-ink); font-size: 28px; }
 .rw-amt em { font-style: normal; font: var(--rw-text-sub); font-size: 12px; font-weight: 600; color: var(--rw-muted); margin-left: 6px; white-space: nowrap; }
 .rw-sl.dim .sl-fill, .rw-sl.dim input[type=range]::-webkit-slider-thumb { opacity: .35; }
+
+/* ═══ The shared sheet (Sheet.tsx) ═══════════════════════════════════ */
+.rw-sheet { outline: none; }
+/* The button row stays in view; the content scrolls behind it. The sheet's
+   own bottom padding is dropped so the row can sit on the bottom edge; a
+   sheet that ends in anything else gets that space back as a margin. Only a
+   button row that ends the sheet is pinned: one with a link under it (Log
+   spend) stays where it is. */
+.rw-sheet.shared { padding-bottom: 0; }
+.rw-sheet-body > :last-child:not(.rw-ctas) { margin-bottom: calc(18px + env(safe-area-inset-bottom)); }
+.rw-sheet-body > .rw-ctas:last-child {
+  position: sticky; bottom: 0; z-index: 3; background: var(--rw-bg);
+  margin: 12px -14px 0; padding: 10px 14px calc(18px + env(safe-area-inset-bottom));
+  box-shadow: 0 -1px 0 var(--rw-hairline);
+}
+/* A save that failed: one plain line, pinned to the top of the sheet. */
+.rw-sheet-err {
+  position: sticky; top: 0; z-index: 4; display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px;
+  background: var(--rw-surface); border: 1.5px solid var(--rw-under-floor); border-radius: var(--rw-radius-md);
+  padding: 9px 8px 9px 11px; font: var(--rw-text-body);
+}
+.rw-sheet-err > div { flex: 1; min-width: 0; }
+.rw-sheet-err b { color: var(--rw-under-floor); font-weight: 650; }
+.rw-sheet-err div button { border: none; background: none; padding: 0; cursor: pointer; font: inherit; font-weight: 650; text-decoration: underline; }
+.rw .rw-sheet-err div button { color: var(--rw-ink); }
+.rw-sheet-err small { display: block; margin-top: 4px; font: var(--rw-text-sub); color: var(--rw-muted); word-break: break-word; }
+/* While a save runs, the main button says so and can't be tapped twice. */
+.rw-sheet.busy .rw-ctas .rw-cta:not(.sec) { font-size: 0; pointer-events: none; opacity: 1; }
+.rw-sheet.busy .rw-ctas .rw-cta:not(.sec)::after { content: 'Saving…'; font: var(--rw-text-row-name); opacity: .7; }
+
+/* ═══ Pressed states: every control answers a touch ═══════════════════ */
+.rw-row:not(.static):not(:disabled):active { background: var(--rw-surface-2); }
+.rw-cta:not(:disabled):active, .rw-mini:active, .rw-fab:active, .rw-addb:active { opacity: .82; }
+.rw .rw-cta.sec:not(:disabled):active { background: var(--rw-hairline); opacity: 1; }
+.rw-chips button:active, .rw-snaps button:active, .rw-dchips > button:active, .rw-days button:active,
+.rw-plus:active, .rw-cnav-b:not(:disabled):active, .rw-qm:active, .rw-refb:active, .rw-stepper button:not(:disabled):active {
+  background: var(--rw-surface-2);
+}
+.rw-seg button:not(.on):not(:disabled):active { background: color-mix(in srgb, var(--rw-surface) 55%, transparent); }
+.rw-tab:active { color: var(--rw-ink); }
+.rw-x:active { background: var(--rw-hairline); }
+.rw-lnk:active, .rw-ends button:active { opacity: .6; }
+.rw-pv-set.first { display: flex; flex-direction: column; }
+.rw-pv-set.first > .rw-tiles { order: -2; }
+.rw-pv-set.first > .rw-warn-ban { order: -1; }

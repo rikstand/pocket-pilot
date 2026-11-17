@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import Sheet, { reportError } from './Sheet'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
 import { loadForecast, budgetsInCycle, cycleRuleOn, previewBudgetChange, projectFromRows, toEngineExpenses } from '../lib/forecast'
@@ -110,8 +111,7 @@ export function LogSheetsProvider({ accountId, userId, children }: {
     <LogContext.Provider value={api}>
       {children}
       {view && (
-        <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget) close() }}>
-          <div className="rw-sheet" role="dialog" aria-modal="true">
+        <Sheet onClose={close}>
             <div className="rw-grab" />
             {view.kind === 'add' ? <AddSheet accountId={accountId} userId={userId} onClose={close} />
               : error ? <div className="rw-sd">{error}</div>
@@ -129,8 +129,7 @@ export function LogSheetsProvider({ accountId, userId, children }: {
                     }}
                     onAddOther={() => setView({ kind: 'add' })}
                     currency={activeAccount?.currency_code} />}
-          </div>
-        </div>
+        </Sheet>
       )}
     </LogContext.Provider>
   )
@@ -265,7 +264,7 @@ function BudgetChange({ data, budget, spentCents, accountId, onCancel, onSaved }
         toast(`${budget.name} deleted`, { undo: async () => { await reactivateExpense(budget.id); notifyDataChanged() } })
       }
       onSaved()
-    } catch (err: any) { alert('Could not change the budget: ' + err.message) }
+    } catch (err: any) { reportError('The budget didn’t change.', err) }
     finally { setBusy(false) }
   }
 
@@ -297,7 +296,7 @@ function BudgetChange({ data, budget, spentCents, accountId, onCancel, onSaved }
         } })
       }
       onSaved()
-    } catch (err: any) { alert('Could not change the budget: ' + err.message) }
+    } catch (err: any) { reportError('The budget didn’t change.', err) }
     finally { setBusy(false) }
   }
 
@@ -508,7 +507,7 @@ function LogSheet({ data, accountId, view, onClose, onDone, onAddOther, currency
         toast(words, { undo: async () => { await deleteBudgetSpendEntry(row.id); notifyDataChanged() } })
       }
       onDone()
-    } catch (err: any) { alert('Could not save: ' + err.message) }
+    } catch (err: any) { reportError('That didn’t save.', err) }
     finally { setBusy(false) }
   }
 
@@ -522,7 +521,7 @@ function LogSheet({ data, accountId, view, onClose, onDone, onAddOther, currency
         notifyDataChanged()
       } })
       onDone()
-    } catch (err: any) { alert('Could not delete: ' + err.message) }
+    } catch (err: any) { reportError('That wasn’t deleted.', err) }
     finally { setBusy(false) }
   }
 

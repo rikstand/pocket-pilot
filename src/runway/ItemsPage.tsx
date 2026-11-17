@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import Sheet, { reportError } from './Sheet'
 import type { Page } from '../AppShell'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
@@ -207,7 +208,7 @@ export default function ItemsPage({ accountId, onNavigate }: { accountId: string
       await unarchiveExpense(r.id)
       toast(`${r.name} restored`, { undo: async () => { await archiveExpense(r.id, prevEnd ?? t); notifyDataChanged() } })
       notifyDataChanged()
-    } catch (e: any) { alert('Could not restore: ' + e.message) }
+    } catch (e: any) { reportError('That wasn’t restored.', e) }
   }
 
   return (
@@ -410,7 +411,7 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
         } })
       }
       onSaved()
-    } catch (e: any) { alert('Could not save: ' + e.message) }
+    } catch (e: any) { reportError('That didn’t save.', e) }
     finally { setBusy(false) }
   }
 
@@ -430,7 +431,7 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
         notifyDataChanged()
       } })
       onSaved()
-    } catch (e: any) { alert('Could not change it: ' + e.message) }
+    } catch (e: any) { reportError('That didn’t change.', e) }
     finally { setBusy(false) }
   }
 
@@ -445,7 +446,7 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
         notifyDataChanged()
       } })
       onSaved()
-    } catch (e: any) { alert('Could not stop it: ' + e.message) }
+    } catch (e: any) { reportError('That wasn’t stopped.', e) }
     finally { setBusy(false) }
   }
 
@@ -458,7 +459,7 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
         notifyDataChanged()
       } })
       onSaved()
-    } catch (e: any) { alert('Could not delete: ' + e.message) }
+    } catch (e: any) { reportError('That wasn’t deleted.', e) }
     finally { setBusy(false) }
   }
 
@@ -469,8 +470,7 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
   )
 
   return (
-    <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="rw-sheet" role="dialog" aria-modal="true">
+    <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
         <div className="rw-sh-h">
           <div className="rw-sh-t">
@@ -602,8 +602,7 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
             <button type="button" className="rw-cta dang" disabled={busy} onClick={saveDelete}>Delete {r.name}</button>
           </div>
         </>}
-      </div>
-    </div>
+    </Sheet>
   )
 }
 
@@ -710,7 +709,7 @@ function PayChange({ row: r, rows, floorCents, accountId, onBack, onSaved }: {
         notifyDataChanged()
       } })
       onSaved()
-    } catch (e: any) { alert('Could not change your pay: ' + e.message) }
+    } catch (e: any) { reportError('Your pay didn’t change.', e) }
     finally { setBusy(false) }
   }
 

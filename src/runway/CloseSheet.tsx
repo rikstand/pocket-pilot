@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import Sheet, { reportError } from './Sheet'
 import { parseDate } from '../engine/dates'
 
 /**
@@ -91,13 +92,12 @@ export default function CloseSheet(p: Props) {
       })
       setDone(true)
     } catch (e: any) {
-      alert('Could not close this cycle, so nothing was changed. You can try again.\n\n' + e.message)
+      reportError('The cycle didn’t close, so nothing was changed.', e)
     } finally { setBusy(false) }
   }
 
   return (
-    <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget && !busy) p.onCancel() }}>
-      <div className="rw-sheet" role="dialog" aria-modal="true">
+    <Sheet onClose={p.onCancel} busy={busy}>
         <div className="rw-grab" />
         {done ? (
           <>
@@ -194,7 +194,6 @@ export default function CloseSheet(p: Props) {
               : <button type="button" className="rw-cta" disabled={busy || looksLikePay} onClick={submit}>{busy ? 'Closing…' : 'Close cycle'}</button>}
           </div>
         </>}
-      </div>
-    </div>
+    </Sheet>
   )
 }

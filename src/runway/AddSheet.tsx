@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { reportError } from './Sheet'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
 import { loadForecast, projectFromRows, billPromptsFromRows, cycleRuleOn, type ForecastResult } from '../lib/forecast'
@@ -135,7 +136,7 @@ export default function AddSheet({ accountId, userId, onClose }: { accountId: st
       }
       notifyDataChanged()
       onClose()
-    } catch (e: any) { alert('Could not add it: ' + e.message) }
+    } catch (e: any) { reportError('That wasn’t added.', e) }
     finally { setBusy(false) }
   }
 

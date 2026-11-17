@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react'
+import Sheet, { reportError } from './Sheet'
 import { projectFromRows, type ForecastResult } from '../lib/forecast'
 import {
   setCreditExtraOverride, clearCreditExtraOverride, confirmCreditPayment, unconfirmCreditPayment, addCreditSnapshot, deleteCreditSnapshot,
@@ -159,7 +160,7 @@ export default function CardSheet(p: Props) {
         },
       })
       notifyDataChanged(); p.onClose()
-    } catch (e: any) { alert('Could not save: ' + e.message) }
+    } catch (e: any) { reportError('That didn’t save.', e) }
     finally { setBusy(false) }
   }
 
@@ -181,7 +182,7 @@ export default function CardSheet(p: Props) {
         undo: async () => { await unconfirmCreditPayment(p.card.id, p.cycleStart); notifyDataChanged() },
       })
       notifyDataChanged(); p.onClose()
-    } catch (e: any) { alert('Could not confirm: ' + e.message) }
+    } catch (e: any) { reportError('The payment wasn’t confirmed.', e) }
     finally { setBusy(false) }
   }
   async function undoPaid() {
@@ -191,7 +192,7 @@ export default function CardSheet(p: Props) {
       await unconfirmCreditPayment(p.card.id, p.cycleStart)
       toast('Payment unconfirmed')
       notifyDataChanged(); p.onClose()
-    } catch (e: any) { alert('Could not undo: ' + e.message) }
+    } catch (e: any) { reportError('That wasn’t undone.', e) }
     finally { setBusy(false) }
   }
 
@@ -232,7 +233,7 @@ export default function CardSheet(p: Props) {
         undo: async () => { await deleteCreditSnapshot(saved.id); notifyDataChanged() },
       })
       notifyDataChanged(); p.onClose()
-    } catch (e: any) { alert('Could not update the balance: ' + e.message) }
+    } catch (e: any) { reportError('The balance didn’t save.', e) }
     finally { setBusy(false) }
   }
 
@@ -250,8 +251,7 @@ export default function CardSheet(p: Props) {
   if (k0 < 0 || !here) return null
 
   return (
-    <div className="rw rw-ov" onClick={e => { if (e.target === e.currentTarget && !busy) p.onClose() }}>
-      <div className="rw-sheet" role="dialog" aria-modal="true">
+    <Sheet onClose={p.onClose} busy={busy}>
         <div className="rw-grab" />
 
         {mode === 'pay' && <>
@@ -287,22 +287,16 @@ export default function CardSheet(p: Props) {
             done={{ now: planClear >= 0 && planClear - k0 < span ? planClear - k0 : null, next: runClear >= 0 && runClear - k0 < span ? runClear - k0 : null }}
             third={{ k: 'Card cleared', v: runClear >= 0 ? monYr(nextDay(run[runClear].endDate)) : 'Later',
               d: sooner > 0 ? `${sooner} cycle${sooner > 1 ? 's' : ''} sooner` : sooner < 0 ? `${-sooner} cycle${sooner < -1 ? 's' : ''} later` : 'on plan',
-              cls: sooner > 0 ? 'good' : sooner < 0 ? 'near' : '' }} />
+              cls: sooner > 0 ? 'good' : sooner < 0 ? 'near' : '' }} tilesFirst />
 
-          <div className="rw-group flush" style={{ marginTop: 10 }}>
-            {(p.dueDate ?? cycleEnd) <= p.today || p.predictedTodayCents != null ? (
+          {/* Update card balance and Change my plan live on Plan › Credit only,
+              so the answer to this payment stays in view (agreed 17 Nov 2026). */}
+          {((p.dueDate ?? cycleEnd) <= p.today || p.predictedTodayCents != null) && (
+            <div className="rw-group flush" style={{ marginTop: 10 }}>
               <button type="button" className="rw-row" onClick={() => setMode('confirm')}>
                 <div className="rw-tx"><div className="rw-row-name">I’ve paid it</div><div className="rw-sub">Early counts</div></div><span className="rw-chev">›</span></button>
-            ) : null}
-            {p.predictedTodayCents != null && (
-              <button type="button" className="rw-row" onClick={() => setMode('balance')}>
-                <div className="rw-tx"><div className="rw-row-name">Update card balance</div><div className="rw-sub">What your banking app shows now</div></div><span className="rw-chev">›</span></button>
-            )}
-            {p.onPlan && (
-              <button type="button" className="rw-row" onClick={() => { p.onClose(); p.onPlan!() }}>
-                <div className="rw-tx"><div className="rw-row-name">Change my plan</div><div className="rw-sub">{planWords}</div></div><span className="rw-chev">›</span></button>
-            )}
-          </div>
+            </div>
+          )}
 
           <div className="rw-ctas">
             <button type="button" className="rw-cta sec" onClick={p.onClose}>Cancel</button>
@@ -380,7 +374,6 @@ export default function CardSheet(p: Props) {
             <button type="button" className="rw-cta" disabled={busy || !bal.trim()} onClick={saveBalance}>{busy ? 'Saving…' : balFar ? `Yes, save ${money(balC)}` : 'Save balance'}</button>
           </div>
         </>}
-      </div>
-    </div>
+    </Sheet>
   )
 }
