@@ -39,6 +39,20 @@ export function planModeOf(card: any): PlanMode {
   return (card?.strategy_extra_cents ?? 0) > 0 ? 'extra' : 'minimum'
 }
 
+/**
+ * The card's due date, as the engine should read it: a day of the month that
+ * has always applied. The stored date only carries the day. Card details used
+ * to save it as "this month's due day", and nothing is ever due before a
+ * schedule's first date — so saving the details after the month turned dropped
+ * the minimum from a cycle whose due date fell in the month before, and from
+ * every earlier cycle a stale balance is carried through (17 Nov 2026 review).
+ * Anchoring it far in the past makes the day of the month the only thing read.
+ */
+export function dueAnchorOf(card: any): string | null {
+  if (!card?.payment_anchor_date) return null
+  return formatDate(new Date(2000, 0, parseDate(card.payment_anchor_date).getDate()))
+}
+
 /** True when the card has one bill a month on a set day. */
 export function isMonthlyCard(card: any): boolean {
   return (card?.payment_frequency ?? 'per_cycle') === 'monthly' && !!card?.payment_anchor_date
@@ -55,7 +69,7 @@ export function buildMinimumDueSchedule(
     const start = addDays(parseDate(firstCycleStart), offset * cycleDays)
     const end   = addDays(start, cycleDays - 1)
     return getOccurrencesInRange(
-      card.payment_anchor_date, 'monthly', formatDate(start), formatDate(end)
+      dueAnchorOf(card)!, 'monthly', formatDate(start), formatDate(end)
     ).length > 0
   }
 }
@@ -99,7 +113,7 @@ export function dueDateInCycle(
   if (!isMonthlyCard(card)) return end   // paying every cycle: treat the cycle end as the date
 
   const hits = getOccurrencesInRange(
-    card.payment_anchor_date, 'monthly', cycleStart, end
+    dueAnchorOf(card)!, 'monthly', cycleStart, end
   )
   return hits.length > 0 ? hits[0] : null
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
-import { loadForecast, budgetsInCycle, cycleRuleOn, previewBudgetChange, toEngineExpenses } from '../lib/forecast'
+import { loadForecast, budgetsInCycle, cycleRuleOn, previewBudgetChange, projectFromRows, toEngineExpenses } from '../lib/forecast'
 import type { ForecastResult } from '../lib/forecast'
 import {
   getPayees, findOrCreatePayee,
@@ -455,13 +455,30 @@ function LogSheet({ data, accountId, view, onClose, onDone, onAddOther, currency
   const planned = budget?.plannedCents ?? 0
   const after = before + cents
   const left = planned - after
-  // The forecast already counts this entry as saved; take it out first.
-  const withOld = e && e.expense_id === budgetId ? before + e.amount_cents : before
   const over = (s: number) => Math.max(0, s - planned)
-  const baseClose = data.closingCents + (e && e.expense_id === budgetId ? over(withOld) - over(before) : 0)
   const extra = over(after) - over(before)
-  const newClose = baseClose - extra
+  // What going over does, from the real forecast with this entry swapped in:
+  // the same rows, projected without it and with it. Subtracting the overspend
+  // from "left before pay" was wrong whenever something else gives way first:
+  // on a "whatever's spare" card plan the card payment drops and the balance
+  // before pay doesn't move (17 Nov 2026 review).
+  const sim = useMemo(() => {
+    if (!budgetId || !cents || extra <= 0) return null
+    const others = (data.rows.budgetSpendRows ?? []).filter((x: any) => x.id !== e?.id)
+    const run = (spend: any[]) => projectFromRows({ ...data.rows, budgetSpendRows: spend }, data.floorCents, 1)[0]
+    const a = run(others)
+    const b = run([...others, { expense_id: budgetId, amount_cents: cents, spent_date: date }])
+    if (!a || !b) return null
+    return {
+      baseClose: a.committedClosingBalanceCents, newClose: b.committedClosingBalanceCents,
+      cardBefore: a.creditPaymentCents ?? 0, cardAfter: b.creditPaymentCents ?? 0,
+    }
+  }, [data, budgetId, cents, date, extra, e])
+  const baseClose = sim?.baseClose ?? data.closingCents
+  const newClose = sim?.newClose ?? data.closingCents
   const level = newClose < 0 ? 'under' : newClose < data.floorCents ? 'near' : 'ok'
+  // The card took all of it: less goes to the card, the balance stays put.
+  const cardTookIt = !!sim && sim.newClose === sim.baseClose && sim.cardAfter < sim.cardBefore
 
   const days: string[] = []
   for (let d = data.start; d <= last; d = shift(d, 1)) days.push(d)
@@ -622,11 +639,13 @@ function LogSheet({ data, accountId, view, onClose, onDone, onAddOther, currency
             </div>}
       </div>
 
-      {extra > 0 && (
+      {extra > 0 && sim && (
         <div className={`rw-strip ${level}`}>
           <span className="g1">{money(extra)} over</span>
-          <span className="g2">left before pay {dayName(shift(data.end, 1), false)}: {money(baseClose, false)} → <b>{money(newClose, false)}</b>
-            {level === 'under' ? ', overdrawn' : level === 'near' ? ', into your floor' : ''}</span>
+          {cardTookIt
+            ? <span className="g2">card payment this cycle: {money(sim.cardBefore, false)} → <b>{money(sim.cardAfter, false)}</b> · left before pay stays {money(newClose, false)}</span>
+            : <span className="g2">left before pay {dayName(shift(data.end, 1), false)}: {money(baseClose, false)} → <b>{money(newClose, false)}</b>
+                {level === 'under' ? ', overdrawn' : level === 'near' ? ', into your floor' : ''}</span>}
         </div>
       )}
 

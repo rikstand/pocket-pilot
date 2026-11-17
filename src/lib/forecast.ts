@@ -32,7 +32,7 @@ import type {
   CycleResult, IncomeSource, Expense, CreditAccount, CreditExtraOverride,
   BudgetSpendEntry, ExpenseOverride, SavingsGoal, CreditPayment, IncomeOverride, ScheduleVersion, CreditPlanVersion,
 } from '../engine/types'
-import { carriedCardBalance, confirmedPaymentsFrom, cycleDaysOf, planModeOf } from './creditSchedule'
+import { carriedCardBalance, confirmedPaymentsFrom, cycleDaysOf, planModeOf, dueAnchorOf } from './creditSchedule'
 import { formatDate, parseDate, addDays } from '../engine/dates'
 import { byNewest, latestVersion, versionForDate } from './versions'
 import { savedSoFarCents } from './savings'
@@ -187,7 +187,8 @@ export function toEngineCredit(
     planVersions: toEnginePlanVersions(planRows),
     currentBalanceCents: startBalance,
     paymentFrequency: card.payment_frequency ?? 'per_cycle',
-    paymentAnchorDate: card.payment_anchor_date ?? undefined,
+    // The due DAY, applying to every month (see dueAnchorOf).
+    paymentAnchorDate: dueAnchorOf(card) ?? undefined,
   }
 }
 

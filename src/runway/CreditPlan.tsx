@@ -75,10 +75,10 @@ export default function CreditPlan({ accountId }: { accountId: string }) {
   const ahead = planRows.filter(v => v.effective_from > cur.startDate)
   const days = cycleDaysOf(cur)
   const paidRow = (rows.creditPaymentRows ?? []).find((x: any) => x.cycle_start === cur.startDate && x.amount_cents != null)
-  const owingToday = committed
-    ? predictedBalanceOn(card, cur.creditOpeningBalanceCents ?? 0, cur.startDate, days, today, cur.creditPaymentCents ?? 0,
-        confirmedPaymentsFrom(rows.creditPaymentRows ?? []))
-    : (card.current_balance_cents ?? 0)
+  // The same working with or without a plan: a card with no plan still pays
+  // its minimum, so it is in the forecast either way.
+  const owingToday = predictedBalanceOn(card, cur.creditOpeningBalanceCents ?? 0, cur.startDate, days, today, cur.creditPaymentCents ?? 0,
+    confirmedPaymentsFrom(rows.creditPaymentRows ?? []))
   const lastSnap = snaps[0]
 
   const cleared = (run: typeof cycles) => run.findIndex((c, i) => i >= k0 && (c.creditOpeningBalanceCents ?? 0) > 0 && (c.creditClosingBalanceCents ?? 0) <= 0)
@@ -132,7 +132,9 @@ export default function CreditPlan({ accountId }: { accountId: string }) {
           {committed && <div className="rw-am">{money(interest(cycles))}<small>interest</small></div>}
           <span className="rw-chev">›</span>
         </button>
-        {committed && (
+        {/* Shown with or without a plan: the minimum goes out either way, and
+            this is where it is confirmed or changed for one cycle. */}
+        {(
           <button type="button" className="rw-row" onClick={() => setSheet({ kind: 'card', mode: paidRow ? 'paid' : 'pay' })}>
             <span className="rw-cp-cal" />
             <div className="rw-tx"><div className="rw-row-name">This cycle</div>
@@ -200,7 +202,8 @@ function CardChart({ rows, k0, snaps, committed, ahead, money }: {
   type P = { d: string; bal: number; past?: boolean; pay?: number; due?: boolean; k?: number }
   const pts: P[] = [...snaps].slice(0, 5).reverse().map(s => ({ d: s.as_of_date, bal: s.balance_cents, past: true }))
   let clearedAt = -1
-  if (committed) {
+  // With no plan the line is the minimum only: that is what the forecast pays.
+  {
     for (let k = k0; k < rows.cycles.length && pts.length < 40; k++) {
       const c = rows.cycles[k]
       pts.push({ d: nextDay(c.endDate), bal: Math.max(0, c.creditClosingBalanceCents ?? 0), pay: c.creditPaymentCents ?? 0, due: (c.creditMinimumCents ?? 0) > 0, k })
@@ -255,7 +258,7 @@ function CardChart({ rows, k0, snaps, committed, ahead, money }: {
       </div>
       <div className="rw-legend">
         <span><i className="ln" style={{ borderTopColor: 'var(--rw-ink)' }} />your updates</span>
-        <span><i className="ln" />your plan</span>
+        <span><i className="ln" />{committed ? 'your plan' : 'minimum only'}</span>
         {clearedAt >= 0 && <span><KeyDone />cleared</span>}
         {changeIdx.length > 0 && <span><KeyLands />plan changes</span>}
       </div>
@@ -368,7 +371,7 @@ function PlanSheet({ rows, k0, card, accountId, floorCents, money, sym, onThisCy
     setBusy(true)
     try {
       await uncommitCreditStrategy(card.id)
-      toast('Plan stopped. The card is left out of your forecast.', {
+      toast('Plan stopped. Only the minimum is in your forecast now.', {
         undo: async () => { await commitCreditStrategy(card.id, planModeOf(card), card.strategy_extra_cents ?? 0); notifyDataChanged() },
       })
       notifyDataChanged(); onClose()
@@ -382,12 +385,12 @@ function PlanSheet({ rows, k0, card, accountId, floorCents, money, sym, onThisCy
       <div className="rw-sheet" role="dialog" aria-modal="true">
         <div className="rw-grab" />
         <div className="rw-sh-h"><div><div className="rw-sheet-title">{card.name} · your plan</div>
-          <div className="rw-sd">{committed ? `Now: ${planModeOf(was) === 'spare' ? 'whatever’s spare' : planModeOf(was) === 'minimum' ? 'minimum only' : `min + ${money(wasExtra)} a cycle`}` : 'No plan yet: the card is left out of your forecast'}</div></div>
+          <div className="rw-sd">{committed ? `Now: ${planModeOf(was) === 'spare' ? 'whatever’s spare' : planModeOf(was) === 'minimum' ? 'minimum only' : `min + ${money(wasExtra)} a cycle`}` : 'No plan yet: only the minimum is in your forecast'}</div></div>
           <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>
 
         <div style={{ marginTop: 10 }}>
           <Segmented value={scope} onChange={v => { if (v === 'one') { onThisCycle(); return } setScope(v) }}
-            options={[{ value: 'one', label: 'Just this cycle', disabled: !committed }, { value: 'from', label: 'From a date' }]} />
+            options={[{ value: 'one', label: 'Just this cycle' }, { value: 'from', label: 'From a date' }]} />
         </div>
 
         <div className="rw-card rw-sl-card">
@@ -501,6 +504,7 @@ function DetailsSheet({ card, rows, k0, floorCents, money, sym, onClose, toast }
   const [apr, setApr] = useState(String(card.apr_basis_points / 100))
   const [minPct, setMinPct] = useState(String(Number(card.min_payment_pct)))
   const [spend, setSpend] = useState(String((card.assumed_spend_cents ?? 0) / 100))
+  const [minFloor, setMinFloor] = useState(String((card.min_payment_floor_cents ?? 0) / 100))
   const [freq, setFreq] = useState<'monthly' | 'per_cycle'>(card.payment_frequency === 'monthly' ? 'monthly' : 'per_cycle')
   const [due, setDue] = useState(card.payment_anchor_date ? String(parseDate(card.payment_anchor_date).getDate()) : '15')
   const [timing, setTiming] = useState<'every_cycle' | 'due_cycle'>(card.extra_timing === 'due_cycle' ? 'due_cycle' : 'every_cycle')
@@ -509,15 +513,16 @@ function DetailsSheet({ card, rows, k0, floorCents, money, sym, onClose, toast }
   const aprBps = Math.round((parseFloat(apr) || 0) * 100)
   const minP = parseFloat(minPct) || 0
   const spendC = Math.max(0, Math.round((parseFloat(spend) || 0) * 100))
+  const minFloorC = Math.max(0, Math.round((parseFloat(minFloor) || 0) * 100))
   const dueDay = Math.min(28, Math.max(1, parseInt(due || '1', 10) || 1))
   const now = new Date()
   const anchor = freq === 'monthly' ? formatDate(new Date(now.getFullYear(), now.getMonth(), dueDay)) : null
   const fields = {
-    name: name.trim(), apr_basis_points: aprBps, min_payment_pct: minP, assumed_spend_cents: spendC,
+    name: name.trim(), apr_basis_points: aprBps, min_payment_pct: minP, min_payment_floor_cents: minFloorC, assumed_spend_cents: spendC,
     payment_frequency: freq, payment_anchor_date: anchor, extra_timing: freq === 'monthly' ? timing : ('every_cycle' as const),
   }
   const run = useMemo(() => projectFromRows({ ...rows, creditCard: { ...card, ...fields } }, floorCents, HORIZON),
-    [aprBps, minP, spendC, freq, anchor, timing, rows])
+    [aprBps, minP, minFloorC, spendC, freq, anchor, timing, rows])
   const cleared = (r: typeof rows.cycles) => r.findIndex((c, i) => i >= k0 && (c.creditOpeningBalanceCents ?? 0) > 0 && (c.creditClosingBalanceCents ?? 0) <= 0)
   const interest = (r: typeof rows.cycles) => r.slice(k0).reduce((s, c) => s + (c.creditInterestCents ?? 0), 0)
   const label = (r: typeof rows.cycles) => { const i = cleared(r); return i >= 0 ? monYr(nextDay(r[i].endDate)) : 'Later' }
@@ -526,6 +531,7 @@ function DetailsSheet({ card, rows, k0, floorCents, money, sym, onClose, toast }
     if (!aprBps || minP <= 0) { setErr('Rate and minimum payment are needed.'); return }
     setBusy(true); setErr('')
     const before = { name: card.name, apr_basis_points: card.apr_basis_points, min_payment_pct: Number(card.min_payment_pct),
+      min_payment_floor_cents: card.min_payment_floor_cents ?? 0,
       assumed_spend_cents: card.assumed_spend_cents, payment_frequency: card.payment_frequency ?? 'per_cycle',
       payment_anchor_date: card.payment_anchor_date ?? null, extra_timing: card.extra_timing ?? 'every_cycle' }
     try {
@@ -550,6 +556,8 @@ function DetailsSheet({ card, rows, k0, floorCents, money, sym, onClose, toast }
             <div className="rw-amtrow"><input type="number" inputMode="decimal" step="0.1" aria-label="Interest rate" value={apr} onChange={e => setApr(e.target.value)} /><em>% a year</em></div></div>
           <div><div className="rw-lab">Minimum</div>
             <div className="rw-amtrow"><input type="number" inputMode="decimal" step="0.5" aria-label="Minimum payment" value={minPct} onChange={e => setMinPct(e.target.value)} /><em>% of balance</em></div></div>
+          <div><div className="rw-lab">Minimum, at least</div>
+            <div className="rw-amtrow"><span>{sym}</span><input type="number" inputMode="decimal" aria-label="Smallest minimum payment" value={minFloor} onChange={e => setMinFloor(e.target.value)} /><em>a payment</em></div></div>
           {freq === 'monthly' && <div><div className="rw-lab">Due day</div>
             <div className="rw-amtrow"><input type="number" inputMode="numeric" aria-label="Due day" value={due} onChange={e => setDue(e.target.value)} /><em>each month</em></div></div>}
           <div><div className="rw-lab">New spending</div>
@@ -583,6 +591,7 @@ function AddCard({ accountId, sym, onAdded }: { accountId: string; sym: string; 
   const [apr, setApr] = useState('21.9')
   const [minPct, setMinPct] = useState('3')
   const [spend, setSpend] = useState('0')
+  const [minFloor, setMinFloor] = useState('10')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   async function add() {
@@ -592,7 +601,8 @@ function AddCard({ accountId, sym, onAdded }: { accountId: string; sym: string; 
     setBusy(true); setErr('')
     try {
       await createCreditAccount(accountId, {
-        name: name.trim(), apr_basis_points: aprBps, min_payment_pct: minP, min_payment_floor_cents: 1000,
+        name: name.trim(), apr_basis_points: aprBps, min_payment_pct: minP,
+        min_payment_floor_cents: Math.max(0, Math.round((parseFloat(minFloor) || 0) * 100)),
         assumed_spend_cents: Math.max(0, Math.round((parseFloat(spend) || 0) * 100)),
       }, Math.max(0, Math.round((parseFloat(bal) || 0) * 100)), t0())
       notifyDataChanged(); onAdded()
@@ -602,7 +612,7 @@ function AddCard({ accountId, sym, onAdded }: { accountId: string; sym: string; 
   return (
     <div className="rw-page">
       <div className="rw-page-head"><div className="rw-page-title">Credit</div>
-        <div className="rw-sd">Add a card and its minimum, interest and payoff go into your forecast once you set a plan.</div></div>
+        <div className="rw-sd">Add a card and its minimum goes into your forecast straight away. Set a plan to pay it off sooner.</div></div>
       <div className="rw-card rw-inset">
         <div className="rw-lab" style={{ marginTop: 0 }}>Name</div>
         <TextField value={name} onChange={setName} label="Card name" />
@@ -614,6 +624,8 @@ function AddCard({ accountId, sym, onAdded }: { accountId: string; sym: string; 
           <div><div className="rw-lab">Minimum</div>
             <div className="rw-amtrow"><input type="number" inputMode="decimal" aria-label="Minimum payment" value={minPct} onChange={e => setMinPct(e.target.value)} /><em>% of balance</em></div></div>
         </div>
+        <div className="rw-lab">Minimum, at least</div>
+        <div className="rw-amtrow"><span>{sym}</span><input type="number" inputMode="decimal" aria-label="Smallest minimum payment" value={minFloor} onChange={e => setMinFloor(e.target.value)} /><em>a payment</em></div>
         <div className="rw-lab">New spending</div>
         <div className="rw-amtrow"><span>{sym}</span><input type="number" inputMode="decimal" aria-label="New spending each cycle" value={spend} onChange={e => setSpend(e.target.value)} /><em>a cycle</em></div>
         <div className="rw-hint">What you expect to put on the card each cycle. $0 only if you've stopped using it.</div>
