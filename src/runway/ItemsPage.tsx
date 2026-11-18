@@ -315,6 +315,9 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
   const cycleNow = inThisCycle.length
     ? (ownOv ? Math.round(ownOv.amount_cents / inThisCycle.length) : amountAt(r, item.isIncome, inThisCycle[0]))
     : item.amountCents
+  // What "the usual" is once this cycle is over: the next payment after it.
+  const afterCycle = cycle ? occurrencesOf(eng, shift(cycle.endDate, 1), far())[0] : undefined
+  const thenBack = afterCycle ? ` Then back to ${money(amountAt(r, item.isIncome, afterCycle))}.` : ''
   // "From a date" starts at the cycle you came from, never before today.
   const fromDates = cycle && cycle.startDate > t ? occurrencesOf(eng, cycle.startDate, far()).slice(0, 12) : item.next
   // Nothing has gone out (or come in) yet: deleting it loses nothing.
@@ -423,6 +426,13 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
     ...oRows.filter(o => o.cycle_start > t).map(o => ({ key: 'o' + o.cycle_start, kind: 'cycle' as const, date: o.cycle_start, v: o,
       title: `The ${short(o.cycle_start)} cycle only`, words: `${money(o.amount_cents)} for that cycle` })),
   ].sort((a, b) => a.date.localeCompare(b.date))
+
+  // A cycle's amount without its one-cycle change: each payment at its own amount.
+  function usualFor(start: string) {
+    const c = rows.cycles.find(x => x.startDate === start)
+    const ds = c ? occurrencesOf(eng, c.startDate, c.endDate) : []
+    return ds.reduce((s, d) => s + amountAt(r, item.isIncome, d), 0)
+  }
 
   async function removeAhead() {
     if (!pick || busy) return
@@ -571,8 +581,8 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
               </div>
             ) : (
               <div className="rw-hint">
-                {inThisCycle.length === 1 ? `Only the ${short(inThisCycle[0])} payment. Then back to the usual.`
-                  : `Each of this cycle's ${inThisCycle.length} payments. Then back to the usual.`}
+                {inThisCycle.length === 1 ? `Only the ${short(inThisCycle[0])} payment.${thenBack}`
+                  : `Each of this cycle's ${inThisCycle.length} payments.${thenBack}`}
               </div>
             )}
             {inThisCycle.length === 0 && <div className="rw-hint">Nothing due this cycle, so a change starts from a date.</div>}
@@ -662,7 +672,7 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
         {mode === 'ahead' && pick && <>
           <div className="rw-card"><div className="rw-row-name">{pick.title}</div><div className="rw-sub">{pick.words}</div></div>
           <div className="rw-note">{pick.kind === 'cycle'
-            ? `Removing it puts the ${short(pick.date)} cycle back to the usual amount.`
+            ? `Removing it puts the ${short(pick.date)} cycle back to ${money(usualFor(pick.date))}.`
             : `Removing it keeps ${r.name} as it is before ${short(pick.date)}, after that date too.`}</div>
           {preview}
           <div className="rw-ctas">
