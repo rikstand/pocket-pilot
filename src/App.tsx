@@ -14,6 +14,7 @@ import SettingsPage from './SettingsPage'
 import RunwayShell from './runway/RunwayShell'
 import { LogSheetsProvider } from './runway/LogSheets'
 import ItemsPage from './runway/ItemsPage'
+import WishlistPlan from './runway/WishlistPlan'
 import { ToastProvider } from './runway/Toast'
 import { useNewLook } from './lib/look'
 import { useBackLayer } from './runway/Sheet'
@@ -93,7 +94,9 @@ function AuthedApp({ userId }: { userId: string }) {
         <ExpensesPage userId={userId} accountId={activeAccount.id} onBack={goCycleAndReload} addSignal={addSignal} />
       )}
       {shown === 'wishlist' && (
-        <WishlistPage userId={userId} accountId={activeAccount.id} />
+        newLook
+          ? <WishlistPlan accountId={activeAccount.id} userId={userId} />
+          : <WishlistPage userId={userId} accountId={activeAccount.id} />
       )}
       {shown === 'credit' && (
         newLook

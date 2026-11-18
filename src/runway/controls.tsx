@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, type ReactNode } from 'react'
 import { parseDate, formatDate, addDays } from '../engine/dates'
 import { occurrencesOf, nthOccurrence } from '../engine/index'
 
@@ -124,10 +124,14 @@ const HOW: { value: How; label: string }[] = [
 ]
 const ord = (n: number) => { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]) }
 
-export function ScheduleFields({ value: s, onChange, today, payDates, min, firstLabel, repeatOnly }: {
+export function ScheduleFields({ value: s, onChange, today, payDates, min, firstLabel, repeatOnly, afterHow, howOnly }: {
   value: Schedule; onChange: (s: Schedule) => void; today: string; payDates: string[]; min?: string; firstLabel?: string
   // Changing how often something repeats: no Once, and no end here (Stop does that).
   repeatOnly?: boolean
+  // Shown straight after How often (the + sheet's "money were tight?" question).
+  afterHow?: ReactNode
+  // How often only: the rest isn't needed (it's going on the Wishlist instead).
+  howOnly?: boolean
 }) {
   const set = (p: Partial<Schedule>) => onChange({ ...s, ...p })
   const next = nextDates(s, s.first)
@@ -147,6 +151,8 @@ export function ScheduleFields({ value: s, onChange, today, payDates, min, first
         </>
       )}
 
+      {afterHow}
+      {!howOnly && <>
       <div className="rw-lab">{s.how === 'once' ? 'Date' : firstLabel ?? 'First payment'}</div>
       <DateChips value={s.first} onChange={first => set({ first })} today={today} payDates={payDates} min={min} label={s.how === 'once' ? 'Date' : 'First payment'} />
       {(s.how === 'monthly' || (s.how === 'custom' && s.unit === 'monthly')) && day > 28 && (
@@ -173,6 +179,7 @@ export function ScheduleFields({ value: s, onChange, today, payDates, min, first
       <div className="rw-next">
         {next.length ? <>Next: {next.map(d => chipDate(d)).join(' · ')}{s.how !== 'once' && next.length === 3 ? ' …' : ''}</> : 'No payments in the next three years.'}
       </div>
+      </>}
     </>
   )
 }

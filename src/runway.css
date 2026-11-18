@@ -843,3 +843,28 @@ button.rw-row:not(:disabled):active, .rw-row:has(> .rw-row-main:active) { backgr
 .rw-gain:not(.flat) span { color: var(--rw-ink); }
 /* Glyphs drawn inside a fixed circle stop growing before they outgrow it. */
 .rw :is(.rw-x, .rw-plus, .rw-cnav-b) { font-size: min(calc(16 * var(--rw-u)), 20px); }
+
+/* ═══ Wishlist (Journey 3 and the comparison, release 5a) ═══════════════ */
+.rw .rw-between { justify-content: space-between; }
+.rw .rw-ask { margin: 16px 0 8px; font: var(--rw-text-row-name); }
+.rw .rw-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* A labelled field inside a card: a line above, no box of its own. */
+.rw .rw-card .rw-fld.flush { background: transparent; padding: 12px 0 0; margin-top: 12px; border-top: 1px solid var(--rw-hairline); border-radius: 0; }
+/* Comparison table (approved 14 Nov): tap a column to pick that way to pay. */
+.rw .rw-cmp { margin-top: 6px; padding: 4px 6px 6px; }
+.rw .rw-cmp table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.rw .rw-cmp th, .rw .rw-cmp td { font: var(--rw-text-sub); text-align: left; padding: 6px; border-top: 1px solid var(--rw-hairline); vertical-align: top; }
+.rw .rw-cmp thead th { border-top: none; padding: 0; }
+.rw .rw-cmp thead th:first-child { width: 34%; }
+.rw .rw-cmp thead button { display: block; width: 100%; min-height: var(--rw-tap); padding: 6px; border: none; background: none; text-align: left;
+  border-radius: var(--rw-radius-sm) var(--rw-radius-sm) 0 0; font: var(--rw-text-row-name); color: var(--rw-muted); cursor: pointer; }
+/* Inline, so the colour stays beside the name when large text wraps it. */
+.rw .rw-cmp thead button i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; vertical-align: middle; margin: 0 6px 2px 0; }
+.rw .rw-cmp th.on button { color: var(--rw-ink); background: var(--rw-surface-2); }
+.rw .rw-cmp tbody th { color: var(--rw-muted); font-weight: 500; }
+.rw .rw-cmp td { color: var(--rw-ink); cursor: pointer; font-weight: 600; }
+.rw .rw-cmp td.on { background: var(--rw-surface-2); }
+.rw .rw-cmp tr:last-child td.on { border-radius: 0 0 var(--rw-radius-sm) var(--rw-radius-sm); }
+.rw .rw-cmp td small { display: block; font: var(--rw-text-caption); color: var(--rw-muted); }
+.rw .rw-cmp td .near { color: var(--rw-near-floor-text); }
+.rw .rw-cmp td .under { color: var(--rw-under-floor); }

@@ -563,6 +563,16 @@ export async function replaceBnplPayments(
   }
 }
 
+// Undo for Change or Pay off early: clear everything the change wrote from
+// the earlier of the two first payments, so replaceBnplPayments can put the
+// old payments back with nothing of the change left in between.
+export async function clearBnplFrom(expenseId: string, from: string) {
+  const { error: e1 } = await supabase.from('expense_amount_versions').delete().eq('expense_id', expenseId).gte('effective_from', from)
+  if (e1) throw e1
+  const { error: e2 } = await supabase.from('expense_schedule_versions').delete().eq('expense_id', expenseId).gte('effective_from', from)
+  if (e2) throw e2
+}
+
 // Missed one: the payment due on paymentDate didn't go out. It is left out of
 // the forecast (the engine skips that date), and the repayment — the amount
 // plus any late fee you enter — is a one-off on repayDate: a date you pick, or
@@ -902,6 +912,98 @@ export async function releaseWishlistItem(itemId: string) {
 
 export async function deleteWishlistItem(itemId: string) {
   const { error } = await supabase.from('wishlist_items').delete().eq('id', itemId)
+  if (error) throw error
+}
+
+// --- WISHLIST: PICKING HOW TO PAY (release 5a) ---
+// The item is claimed before anything else is written. The claim only goes
+// through while the item is still on the list, so a second tap, or the same
+// item open in another tab, can't start a second plan. If a later step fails,
+// what was written is switched off again and the item goes back on the list,
+// so nothing half-made reaches the forecast.
+async function claimWishlistItem(itemId: string) {
+  const { data, error } = await supabase
+    .from('wishlist_items')
+    .update({ status: 'committed' })
+    .eq('id', itemId)
+    .eq('status', 'active')
+    .select('id')
+  if (error) throw error
+  if (!data || data.length === 0) throw new Error('This item already has a plan. Close this and look again.')
+}
+
+export async function commitWishlistBnpl(
+  accountId: string,
+  userId: string,
+  item: { id: string; name: string },
+  plan: { frequency: 'weekly' | 'fortnightly'; payments: { date: string; amountCents: number }[] }
+) {
+  await claimWishlistItem(item.id)
+  let made: { layby: any; expense: any } | null = null
+  try {
+    made = await createBnplPlan(accountId, userId, { name: item.name, ...plan })
+    const { error } = await supabase
+      .from('wishlist_items')
+      .update({ payment_method: 'layby', savings_goal_id: null, committed_expense_id: made.expense.id, committed_cycle_start: plan.payments[0].date })
+      .eq('id', item.id)
+    if (error) throw error
+    return made
+  } catch (e) {
+    if (made) await deactivateBnplPlan(made.expense.id, made.layby.id).catch(() => {})
+    await releaseWishlistItem(item.id).catch(() => {})
+    throw e
+  }
+}
+
+export async function commitWishlistSaving(
+  accountId: string,
+  item: { id: string; name: string; amountCents: number },
+  goal: { perCycleCents: number; cyclesTotal: number; startCycleStart: string }
+) {
+  await claimWishlistItem(item.id)
+  let made: any = null
+  try {
+    made = await createSavingsGoal(accountId, {
+      name: item.name, target_cents: item.amountCents, per_cycle_cents: goal.perCycleCents,
+      cycles_total: goal.cyclesTotal, start_cycle_start: goal.startCycleStart, wishlist_item_id: item.id,
+    })
+    const { error } = await supabase
+      .from('wishlist_items')
+      .update({ payment_method: 'savings', savings_goal_id: made.id })
+      .eq('id', item.id)
+    if (error) throw error
+    return made
+  } catch (e) {
+    if (made) await deleteSavingsGoal(made.id).catch(() => {})
+    await releaseWishlistItem(item.id).catch(() => {})
+    throw e
+  }
+}
+
+// Undo for Stop: the item goes back to the plan it had.
+export async function relinkWishlistItem(
+  itemId: string,
+  link: { method: 'layby'; expenseId: string; start: string } | { method: 'savings'; goalId: string }
+) {
+  const { error } = await supabase
+    .from('wishlist_items')
+    .update(link.method === 'layby'
+      ? { status: 'committed', payment_method: 'layby', savings_goal_id: null, committed_expense_id: link.expenseId, committed_cycle_start: link.start }
+      : { status: 'committed', payment_method: 'savings', savings_goal_id: link.goalId })
+    .eq('id', itemId)
+  if (error) throw error
+}
+
+// Undo for removing an item: the same row, id and all, so anything that
+// pointed at it still does.
+export async function restoreWishlistItem(row: any) {
+  const { error } = await supabase.from('wishlist_items').insert(row)
+  if (error) throw error
+}
+
+// Undo for removing a BNPL plan that hadn't started: switch its plan row back on.
+export async function reactivateLayBy(laybyId: string) {
+  const { error } = await supabase.from('lay_bys').update({ is_active: true }).eq('id', laybyId)
   if (error) throw error
 }
 

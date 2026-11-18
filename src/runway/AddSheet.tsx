@@ -3,7 +3,7 @@ import { reportError } from './Sheet'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
 import { loadForecast, projectFromRows, billPromptsFromRows, cycleRuleOn, type ForecastResult } from '../lib/forecast'
-import { addExpense, addIncomeSource, deactivateExpense, deactivateIncomeSource, createBillPot, deleteSavingsGoal } from '../lib/repository'
+import { addExpense, addIncomeSource, deactivateExpense, deactivateIncomeSource, createBillPot, deleteSavingsGoal, addWishlistItem, deleteWishlistItem } from '../lib/repository'
 import { parseDate, formatDate, addDays } from '../engine/dates'
 import { notifyDataChanged } from '../lib/dataEvents'
 import { useToast } from './toastContext'
@@ -50,6 +50,9 @@ export default function AddSheet({ accountId, userId, onClose }: { accountId: st
   const [period, setPeriod] = useState<'weekly' | 'fortnightly' | 'monthly'>('fortnightly')
   const [sched, setSched] = useState<Schedule>(newSchedule(t))
   const [setAside, setSetAside] = useState(false)
+  // A one-off: would you pay it even if money were tight? No makes it a want,
+  // and it goes on the Wishlist instead of the forecast (decided 14 Nov).
+  const [need, setNeed] = useState<'yes' | 'no'>('yes')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -85,6 +88,8 @@ export default function AddSheet({ accountId, userId, onClose }: { accountId: st
     ? { ...rows, incomeRows: [...rows.incomeRows, newRow()] }
     : { ...rows, expenseRows: [...rows.expenseRows, newRow()] }
 
+  const asks = (type === 'fixed' || type === 'estimate') && sched.how === 'once'
+  const want = asks && need === 'no'
   const ready = !!rows && cents > 0
   const changed = ready ? withNew()! : null
   const now = rows ? rows.cycles.slice(0, PREVIEW_PAYS).map(c => c.committedClosingBalanceCents) : []
@@ -110,11 +115,14 @@ export default function AddSheet({ accountId, userId, onClose }: { accountId: st
   const perPay = type === 'budget' ? Math.round(cents * (PER_YEAR[period] ?? 26.09) / paysPerYear) : 0
 
   async function save() {
-    if (!ready || !name.trim() || busy) return
+    if (!name.trim() || busy || (want ? cents <= 0 : !ready)) return
     setBusy(true)
     try {
       const nm = name.trim()
-      if (type === 'income') {
+      if (want) {
+        const row = await addWishlistItem(accountId, userId, nm, cents)
+        toast(`${nm} is on your Wishlist, not in your forecast`, { undo: async () => { await deleteWishlistItem(row.id); notifyDataChanged() } })
+      } else if (type === 'income') {
         const row = await addIncomeSource(accountId, userId, {
           name: nm, frequency: rule.frequency, anchorDate: rule.anchorDate, amountCents: cents,
           isPotential: false, everyN: rule.everyN, endDate: rule.endDate,
@@ -172,14 +180,19 @@ export default function AddSheet({ accountId, userId, onClose }: { accountId: st
             : 'Pick the period you think in. It’s spread evenly across every pay.'}</div>
         </>
       ) : (
-        <ScheduleFields value={sched} onChange={setSched} today={t} payDates={payDates} />
+        <ScheduleFields value={sched} onChange={setSched} today={t} payDates={payDates} howOnly={want}
+          afterHow={asks && <>
+            <div className="rw-ask">Would you pay this even if money were tight?</div>
+            <Segmented value={need} onChange={setNeed} options={[{ value: 'yes', label: 'Yes, I need it' }, { value: 'no', label: 'No, it’s a want' }]} />
+          </>} />
       )}
 
-      {!rows ? <div className="rw-empty">Loading your forecast…</div>
+      {want ? <div className="rw-hint">It goes on your Wishlist instead, where you can compare saving up with BNPL before any of it reaches your forecast.</div>
+        : !rows ? <div className="rw-empty">Loading your forecast…</div>
         : !cents ? <div className="rw-empty">Enter an amount to see what it does to each payday.</div>
         : <Preview nowCents={now} newCents={after} payDates={paydays} floorCents={floorCents} money={money} ticks={ticks} />}
 
-      {prompt?.setAside && (
+      {!want && prompt?.setAside && (
         <div className="rw-sug">
           <div>
             <b>Set aside about {money(prompt.setAside.firstCycleCents)} each pay</b>
@@ -192,8 +205,9 @@ export default function AddSheet({ accountId, userId, onClose }: { accountId: st
 
       <div className="rw-ctas">
         <button type="button" className="rw-cta sec" onClick={onClose}>Cancel</button>
-        <button type="button" className="rw-cta" disabled={!ready || !name.trim() || busy} onClick={save}>
-          Add {name.trim() || (type === 'income' ? 'income' : once ? 'one-off' : 'expense')}{st && st.level === 'under' && st.worse ? ' anyway' : ''}
+        <button type="button" className="rw-cta" disabled={(want ? cents <= 0 : !ready) || !name.trim() || busy} onClick={save}>
+          {want ? 'Add to Wishlist'
+            : <>Add {name.trim() || (type === 'income' ? 'income' : once ? 'one-off' : 'expense')}{st && st.level === 'under' && st.worse ? ' anyway' : ''}</>}
         </button>
       </div>
     </>
