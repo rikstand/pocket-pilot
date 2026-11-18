@@ -34,7 +34,7 @@ const TITLE: Record<Page, string> = {
   cycle: 'Cycle', forecast: 'Forecast', plan: 'Plan', items: 'Expenses & income', expenses: 'Expenses',
   wishlist: 'Wishlist', credit: 'Credit', more: 'More', settings: 'Settings',
 }
-const BACK: Partial<Record<Page, { to: Page; label: string }>> = {
+export const BACK: Partial<Record<Page, { to: Page; label: string }>> = {
   items:    { to: 'plan', label: 'Plan' },
   expenses: { to: 'plan', label: 'Plan' },
   wishlist: { to: 'plan', label: 'Plan' },

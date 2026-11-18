@@ -258,10 +258,10 @@ function BudgetChange({ data, budget, spentCents, accountId, onCancel, onSaved }
     try {
       if (everUsed) {
         await archiveExpense(budget.id, data.end)
-        toast(`${budget.name} archived from ${dayName(shift(data.end, 1), false)}`, { undo: async () => { await unarchiveExpense(budget.id); notifyDataChanged() } })
+        toast(`${budget.name} archived from ${dayName(shift(data.end, 1), false)}`, { undo: async () => { await unarchiveExpense(budget.id); notifyDataChanged() }, lasting: true })
       } else {
         await deactivateExpense(budget.id)
-        toast(`${budget.name} deleted`, { undo: async () => { await reactivateExpense(budget.id); notifyDataChanged() } })
+        toast(`${budget.name} deleted`, { undo: async () => { await reactivateExpense(budget.id); notifyDataChanged() }, lasting: true })
       }
       onSaved()
     } catch (err: any) { reportError('The budget didn’t change.', err) }
@@ -519,7 +519,7 @@ function LogSheet({ data, accountId, view, onClose, onDone, onAddOther, currency
       toast('Entry deleted', { undo: async () => {
         await addBudgetSpendEntry(accountId, e.expense_id, e.amount_cents, e.label ?? '', e.spent_date, { payeeId: e.payee_id, note: e.note })
         notifyDataChanged()
-      } })
+      }, lasting: true })
       onDone()
     } catch (err: any) { reportError('That wasn’t deleted.', err) }
     finally { setBusy(false) }

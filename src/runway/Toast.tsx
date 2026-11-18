@@ -9,6 +9,8 @@ import { ToastContext, type Show, type ToastOptions } from './toastContext'
  */
 // How long a toast stays. Long enough to read it and reach Undo (J5).
 const SHOW_MS = 5000
+// A removal keeps its Undo until you do something else, up to this long.
+const LASTING_MS = 30000
 
 interface Current extends ToastOptions { id: number; message: string }
 
@@ -28,10 +30,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   // A failure with no sheet open (a page-level action) is said here.
   useEffect(() => { setErrorToast(m => show(m)) }, [show])
 
+  const box = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!toast) return
-    timer.current = window.setTimeout(() => setHiding(true), SHOW_MS)
-    return () => window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => setHiding(true), toast.lasting ? LASTING_MS : SHOW_MS)
+    if (!toast.lasting) return () => window.clearTimeout(timer.current)
+    // The next tap anywhere but the toast is the next action: it goes then.
+    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setHiding(true) }
+    const arm = window.setTimeout(() => document.addEventListener('pointerdown', away, true), 400)
+    return () => { window.clearTimeout(timer.current); window.clearTimeout(arm); document.removeEventListener('pointerdown', away, true) }
   }, [toast])
 
   // Drop it once the fade has finished, so it can't be tapped while invisible.
@@ -52,7 +59,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={show}>
       {children}
       {toast && (
-        <div key={toast.id} className={`rw rw-toast${hiding ? ' hide' : ''}`} role="status" aria-live="polite">
+        <div key={toast.id} ref={box} className={`rw rw-toast${hiding ? ' hide' : ''}`} role="status" aria-live="polite">
           <span className="rw-toast-msg">{toast.message}</span>
           {toast.action && <button type="button" onClick={() => run(toast.action!.run)}>{toast.action.label}</button>}
           {toast.undo && <button type="button" onClick={() => run(toast.undo)}>Undo</button>}

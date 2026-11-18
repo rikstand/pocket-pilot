@@ -21,12 +21,14 @@ interface Props {
   children: ReactNode
 }
 
-/* ── one history entry while any sheet is open ──────────────────────────
+/* ── one history entry while anything Back can close is open ───────────
    A sheet that swaps for another (plan → this cycle's payment) must not
    leave two entries behind, and closing one by its own buttons must take the
-   entry away again. So the entry belongs to "a sheet is open", not to a
-   particular sheet. */
-type Open = { ask: () => void; fail: (m: string, detail: string) => void }
+   entry away again. So the entry belongs to "something is open", not to a
+   particular sheet. Pages away from Cycle and views inside a page (a past
+   cycle, a future cycle opened from Forecast) join the same stack as layers,
+   so the phone's Back steps out of them too, one level at a time. */
+type Open = { ask: () => void; fail: (m: string, detail: string) => void; layer?: boolean }
 const stack: Open[] = []
 let entry = false        // our entry is on top of the history
 let skipPop = false      // the next popstate is our own history.back()
@@ -53,8 +55,22 @@ export function reportError(message: string, error?: unknown) {
   const detail = error instanceof Error ? error.message : error ? String(error) : ''
   console.error(message, error)
   const top = stack[stack.length - 1]
-  if (top) top.fail(message, detail)
+  if (top && !top.layer) top.fail(message, detail)
   else if (toastFallback) toastFallback(`${message} Check your connection and try again.`)
+}
+
+/** While open, the phone's Back calls onBack instead of leaving the app. */
+export function useBackLayer(open: boolean, onBack: () => void) {
+  const fn = useRef(onBack)
+  fn.current = onBack
+  useEffect(() => {
+    if (!open) return
+    const me: Open = { ask: () => fn.current(), fail: () => {}, layer: true }
+    stack.push(me)
+    if (!listening) { window.addEventListener('popstate', onPop); listening = true }
+    sync()
+    return () => { const i = stack.indexOf(me); if (i >= 0) stack.splice(i, 1); sync() }
+  }, [open])
 }
 
 const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'

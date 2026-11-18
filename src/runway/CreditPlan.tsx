@@ -386,6 +386,7 @@ function PlanSheet({ rows, k0, card, accountId, floorCents, money, sym, onThisCy
       await uncommitCreditStrategy(card.id)
       toast('Plan stopped. Only the minimum is in your forecast now.', {
         undo: async () => { await commitCreditStrategy(card.id, planModeOf(card), card.strategy_extra_cents ?? 0); notifyDataChanged() },
+        lasting: true,
       })
       notifyDataChanged(); onClose()
     } catch (e: any) { reportError('The plan wasn’t stopped.', e) }
@@ -503,6 +504,7 @@ function AheadSheet({ v, rows, k0, floorCents, money, accountId, card, planWords
       await deleteCreditPlanVersion(v.id)
       toast(`Change from ${short(v.effective_from)} removed`, {
         undo: async () => { await setCreditPlanFrom(card.id, accountId, v.effective_from, v.mode, Number(v.extra_cents ?? 0)); notifyDataChanged() },
+        lasting: true,
       })
       notifyDataChanged(); onClose()
     } catch (e: any) { reportError('That wasn’t removed.', e) }

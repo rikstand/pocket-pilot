@@ -1,6 +1,21 @@
 import { supabase } from './supabase'
 
 // --- ACCOUNTS ---
+
+// The database returns at most 1,000 rows a request. Lists that grow with use
+// (spend entries, cycles, one-cycle amounts) are read a page at a time, in a
+// fixed order, until a page comes back short (code review finding 5).
+const PAGE = 1000
+async function allRows(build: () => any): Promise<any[]> {
+  const out: any[] = []
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await build().range(from, from + PAGE - 1)
+    if (error) throw error
+    out.push(...(data ?? []))
+    if (!data || data.length < PAGE) return out
+  }
+}
+
 export async function getAccounts(userId: string) {
   const { data, error } = await supabase
     .from('accounts')
@@ -161,13 +176,12 @@ export async function setIncomeAmountFrom(incomeId: string, effectiveFrom: strin
 // dated amount with the old one "put back" afterwards. amountCents is the
 // whole cycle's pay.
 export async function getAllIncomeOverrides(accountId: string) {
-  const { data, error } = await supabase
+  return allRows(() => supabase
     .from('income_overrides')
     .select('*')
     .eq('account_id', accountId)
     .order('cycle_start')
-  if (error) throw error
-  return data
+    .order('income_source_id'))
 }
 
 export async function setIncomeOverride(
@@ -604,13 +618,12 @@ export async function deactivateBnplPlan(expenseId: string, laybyId: string | nu
 
 // --- CYCLES ---
 export async function getCycles(accountId: string) {
-  const { data, error } = await supabase
+  return allRows(() => supabase
     .from('cycles')
     .select('*')
     .eq('account_id', accountId)
     .order('start_date')
-  if (error) throw error
-  return data
+    .order('id'))
 }
 
 export async function upsertCycle(
@@ -747,13 +760,12 @@ export async function fixLastClose(accountId: string, cycleId: string, closingCe
 // new row rather than editing the old one, so the first figure stays as
 // history; the newest row for a cycle and expense is the one that counts.
 export async function getCycleActuals(accountId: string) {
-  const { data, error } = await supabase
+  return allRows(() => supabase
     .from('cycle_expense_actuals')
     .select('*')
     .eq('account_id', accountId)
     .order('created_at')
-  if (error) throw error
-  return data
+    .order('id'))
 }
 
 export async function addCycleActual(cycleId: string, accountId: string, expenseId: string, amountCents: number) {
@@ -1055,13 +1067,12 @@ export async function getLatestCreditSnapshot(creditAccountId: string) {
 }
 
 export async function getCreditSnapshots(creditAccountId: string) {
-  const { data, error } = await supabase
+  return allRows(() => supabase
     .from('credit_balance_snapshots')
     .select('*')
     .eq('credit_account_id', creditAccountId)
     .order('as_of_date', { ascending: false })
-  if (error) throw error
-  return data
+    .order('id'))
 }
 
 export async function addCreditSnapshot(
@@ -1142,13 +1153,11 @@ export async function deleteCreditPlanVersion(id: string) {
 }
 
 export async function getCreditExtraOverrides(creditAccountId: string) {
-  const { data, error } = await supabase
+  return allRows(() => supabase
     .from('credit_extra_overrides')
     .select('*')
     .eq('credit_account_id', creditAccountId)
-    .order('cycle_start')
-  if (error) throw error
-  return data
+    .order('cycle_start'))
 }
 
 export async function setCreditExtraOverride(
@@ -1189,13 +1198,11 @@ export async function clearCreditExtraOverride(creditAccountId: string, cycleSta
 // A row here means "the payment for this cycle has gone out". Once that is
 // true, later changes to the plan must not rewrite that cycle.
 export async function getCreditCyclePayments(creditAccountId: string) {
-  const { data, error } = await supabase
+  return allRows(() => supabase
     .from('credit_cycle_payments')
     .select('*')
     .eq('credit_account_id', creditAccountId)
-    .order('cycle_start')
-  if (error) throw error
-  return data
+    .order('cycle_start'))
 }
 
 // amountCents is what actually left the account. Rows confirmed before it
@@ -1331,13 +1338,12 @@ export async function getSavingsContributions(goalId: string) {
 }
 
 export async function getAllSavingsContributions(accountId: string) {
-  const { data, error } = await supabase
+  return allRows(() => supabase
     .from('savings_contributions')
     .select('*')
     .eq('account_id', accountId)
     .order('cycle_start')
-  if (error) throw error
-  return data
+    .order('savings_goal_id'))
 }
 
 export async function confirmSavingsContribution(
@@ -1373,12 +1379,12 @@ export async function unconfirmSavingsContribution(goalId: string, cycleStart: s
 // When a bill takes a payday under the floor and the user says "let it dip",
 // that payday isn't asked about again. One row per bill and cycle.
 export async function getAcceptedDips(accountId: string) {
-  const { data, error } = await supabase
+  return allRows(() => supabase
     .from('accepted_dips')
     .select('*')
     .eq('account_id', accountId)
-  if (error) throw error
-  return data
+    .order('cycle_start')
+    .order('expense_id'))
 }
 
 export async function acceptDip(accountId: string, expenseId: string, cycleStart: string) {
@@ -1435,13 +1441,12 @@ export async function getSavingsOverrides(goalId: string) {
 }
 
 export async function getAllSavingsOverrides(accountId: string) {
-  const { data, error } = await supabase
+  return allRows(() => supabase
     .from('savings_overrides')
     .select('*')
     .eq('account_id', accountId)
     .order('cycle_start')
-  if (error) throw error
-  return data
+    .order('savings_goal_id'))
 }
 
 export async function setSavingsOverride(
@@ -1473,13 +1478,12 @@ export async function clearSavingsOverride(goalId: string, cycleStart: string) {
 
 // --- BUDGET SPEND ENTRIES ---
 export async function getBudgetSpendEntries(accountId: string) {
-  const { data, error } = await supabase
+  return allRows(() => supabase
     .from('budget_spend_entries')
     .select('*')
     .eq('account_id', accountId)
     .order('spent_date', { ascending: false })
-  if (error) throw error
-  return data
+    .order('id'))
 }
 
 export async function addBudgetSpendEntry(
@@ -1549,13 +1553,12 @@ export async function deleteBudgetSpendEntry(entryId: string) {
 // an amount "from now on" is a new amount version instead — see
 // setExpenseAmountFrom. amountCents is the whole cycle's amount.
 export async function getAllExpenseOverrides(accountId: string) {
-  const { data, error } = await supabase
+  return allRows(() => supabase
     .from('expense_overrides')
     .select('*')
     .eq('account_id', accountId)
     .order('cycle_start')
-  if (error) throw error
-  return data
+    .order('expense_id'))
 }
 
 export async function setExpenseOverride(

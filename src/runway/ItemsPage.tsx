@@ -46,6 +46,13 @@ const ord = (n: number) => { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; re
 const PER_YEAR: Record<string, number> = { daily: 365.25, weekly: 52.18, fortnightly: 26.09, monthly: 12, annually: 1, once: 0 }
 const perYear = (r: any) => (PER_YEAR[r.frequency] ?? 0) / Math.max(1, r.every_n ?? 1)
 const PERIOD: Record<string, string> = { daily: 'day', weekly: 'week', fortnightly: 'fortnight', monthly: 'month', annually: 'year' }
+// The schedule in force on a date, in the row's own field names. A "Change
+// how often" from a date is a dated row, so the item's own fields keep the
+// schedule it started with (code review, 18 Nov 2026).
+const schedNow = (r: any, isIncome: boolean, on: string) => {
+  const s = scheduleOn((isIncome ? toEngineIncome([r]) : toEngineExpenses([r]))[0] as any, on)
+  return { frequency: s.frequency, every_n: s.everyN ?? 1, anchor_date: s.anchorDate }
+}
 
 type Kind = 'income' | 'fixed' | 'estimate' | 'budget' | 'bnpl'
 const kindOf = (r: any, isIncome: boolean): Kind =>
@@ -84,7 +91,7 @@ export function itemFor(rows: ForecastResult, r: any, isIncome: boolean): Item {
   const amount = versionForDate(isIncome ? r.income_amount_versions : r.expense_amount_versions, t)?.amount_cents ?? r.amount_cents ?? 0
   return {
     id: r.id, row: r, isIncome, kind, name: r.name, amountCents: amount,
-    perPayCents: Math.round(amount * perYear(r) / paysPerYear),
+    perPayCents: Math.round(amount * perYear(schedNow(r, isIncome, t)) / paysPerYear),
     next: occurrencesOf(eng, t, far()).slice(0, 12),
   }
 }
@@ -130,7 +137,7 @@ export default function ItemsPage({ accountId, onNavigate }: { accountId: string
     return {
       id: r.id, row: r, isIncome, kind, name: r.name,
       amountCents: amount,
-      perPayCents: kind === 'budget' ? amount : Math.round(amount * perYear(r) / paysPerYear),
+      perPayCents: kind === 'budget' ? amount : Math.round(amount * perYear(schedNow(r, isIncome, t)) / paysPerYear),
       next: kind === 'budget' ? [] : occurrencesOf(eng, t, far()).slice(0, 12),
     }
   }
@@ -152,7 +159,7 @@ export default function ItemsPage({ accountId, onNavigate }: { accountId: string
   const scale = Math.max(pay, out, 1)
 
   function schedText(i: Item) {
-    const r = i.row
+    const r = { ...i.row, ...schedNow(i.row, i.isIncome, t) }
     if (i.kind === 'budget') return `${money(i.amountCents)} a pay`
     const n = Math.max(1, r.every_n ?? 1)
     const first = parseDate(r.anchor_date)
@@ -279,7 +286,7 @@ function amountOn(row: any, date: string) {
 }
 
 /* ── the item sheet: change the amount, stop it, or delete it ──────── */
-type Mode = 'amount' | 'stop' | 'delete' | 'sched' | 'pay'
+type Mode = 'amount' | 'stop' | 'delete' | 'sched' | 'pay' | 'ahead'
 
 export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved, cycleIdx = 0, fromCycle = false }: {
   item: Item; rows: ForecastResult; floorCents: number; accountId: string
@@ -318,9 +325,17 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
   const [amt, setAmt] = useState(String((fromCycle && inThisCycle.length ? cycleNow : item.amountCents) / 100))
   const [more, setMore] = useState(false)
   const [from, setFrom] = useState(fromDates[0] ?? t)
-  const [stopAt, setStopAt] = useState<string>(item.next[0] ?? 'now')
+  // A payment due today has most likely gone out already: "now" keeps it.
+  const dueToday = item.next[0] === t
+  const stopChoices = dueToday ? item.next.slice(1, 4) : item.next.slice(0, 3)
+  const [stopAt, setStopAt] = useState<string>(dueToday ? 'now' : item.next[0] ?? 'now')
+  const stopEnd = stopAt === 'now' ? (dueToday ? t : shift(t, -1)) : stopAt
+  // Changes already saved for later: dated amounts, dated schedules, and
+  // amounts set for one future cycle. Each can be looked at and removed.
+  type Ahead = { key: string; kind: 'amount' | 'sched' | 'cycle'; date: string; v: any; title: string; words: string }
+  const [pick, setPick] = useState<Ahead | null>(null)
   const [busy, setBusy] = useState(false)
-  const [sched, setSched] = useState<Schedule>(() => scheduleFromRow(r, item.next[0] ?? t))
+  const [sched, setSched] = useState<Schedule>(() => scheduleFromRow({ ...r, ...schedNow(r, item.isIncome, t) }, item.next[0] ?? t))
   const [schedFrom, setSchedFrom] = useState(item.next[0] ?? t)
   const nextPays = rows.cycles.slice(1, 4).map(c => c.startDate)
 
@@ -340,7 +355,17 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
       return editRow(x => ({ ...x, [sKey]: [...(x[sKey] ?? []),
         { effective_from: schedFrom, frequency: rule.frequency, every_n: rule.everyN, anchor_date: sched.first, created_at: '9999' }] }))
     }
-    if (mode === 'stop') return editRow(x => ({ ...x, end_date: stopAt === 'now' ? shift(t, -1) : stopAt }))
+    if (mode === 'stop') return editRow(x => ({ ...x, end_date: stopEnd }))
+    if (mode === 'ahead' && pick) {
+      if (pick.kind === 'amount') return editRow(x => ({ ...x, [vKey]: (x[vKey] ?? []).filter((v: any) => v.id !== pick.v.id) }))
+      if (pick.kind === 'sched') {
+        const sKey = item.isIncome ? 'income_schedule_versions' : 'expense_schedule_versions'
+        return editRow(x => ({ ...x, [sKey]: (x[sKey] ?? []).filter((v: any) => v.id !== pick.v.id) }))
+      }
+      return item.isIncome
+        ? { ...rows, incomeOverrideRows: (rows.incomeOverrideRows ?? []).filter((o: any) => !(o.income_source_id === r.id && o.cycle_start === pick.date)) }
+        : { ...rows, expenseOverrideRows: (rows.expenseOverrideRows ?? []).filter((o: any) => !(o.expense_id === r.id && o.cycle_start === pick.date)) }
+    }
     if (scope === 'from') return editRow(x => ({ ...x, [vKey]: [...(x[vKey] ?? []), { effective_from: from, amount_cents: cents, created_at: '9999' }] }))
     const total = cents * inThisCycle.length
     return item.isIncome
@@ -381,6 +406,51 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
     ? (rows.expenseOverrideRows ?? []).filter((o: any) => o.expense_id === r.id && cycle && o.cycle_start < cycle.startDate)
         .sort((a: any, b: any) => a.cycle_start.localeCompare(b.cycle_start)).slice(-6)
     : []
+
+  const vRows: any[] = (item.isIncome ? r.income_amount_versions : r.expense_amount_versions) ?? []
+  const firstVersion = [...vRows].sort(byOldest)[0]
+  const sRows: any[] = (item.isIncome ? r.income_schedule_versions : r.expense_schedule_versions) ?? []
+  const oRows: any[] = item.isIncome
+    ? (rows.incomeOverrideRows ?? []).filter((o: any) => o.income_source_id === r.id)
+    : (rows.expenseOverrideRows ?? []).filter((o: any) => o.expense_id === r.id)
+  const howWords = (v: any) => (v.every_n ?? 1) > 1 ? `Every ${v.every_n} ${PERIOD[v.frequency] ?? v.frequency}s`
+    : ({ daily: 'Daily', weekly: 'Weekly', fortnightly: 'Fortnightly', monthly: 'Monthly', annually: 'Yearly' } as Record<string, string>)[v.frequency] ?? v.frequency
+  const ahead: Ahead[] = [
+    ...vRows.filter(v => v.effective_from > t && v !== firstVersion).map(v => ({ key: 'a' + v.id, kind: 'amount' as const, date: v.effective_from, v,
+      title: `From ${dayName(v.effective_from)}`, words: `${money(v.amount_cents)} each` })),
+    ...sRows.filter(v => v.effective_from > t).map(v => ({ key: 's' + v.id, kind: 'sched' as const, date: v.effective_from, v,
+      title: `From ${dayName(v.effective_from)}`, words: howWords(v) })),
+    ...oRows.filter(o => o.cycle_start > t).map(o => ({ key: 'o' + o.cycle_start, kind: 'cycle' as const, date: o.cycle_start, v: o,
+      title: `The ${short(o.cycle_start)} cycle only`, words: `${money(o.amount_cents)} for that cycle` })),
+  ].sort((a, b) => a.date.localeCompare(b.date))
+
+  async function removeAhead() {
+    if (!pick || busy) return
+    setBusy(true)
+    const p = pick
+    try {
+      if (p.kind === 'amount') {
+        if (item.isIncome) await deleteIncomeAmountVersion(p.v.id); else await deleteExpenseAmountVersion(p.v.id)
+      } else if (p.kind === 'sched') {
+        if (item.isIncome) await deleteIncomeScheduleVersion(p.v.id); else await deleteExpenseScheduleVersion(p.v.id)
+      } else if (item.isIncome) await clearIncomeOverride(r.id, p.date); else await clearExpenseOverride(r.id, p.date)
+      toast(`${r.name}: change ${p.kind === 'cycle' ? 'for the ' + short(p.date) + ' cycle' : 'from ' + short(p.date)} removed`, {
+        undo: async () => {
+          if (p.kind === 'amount') {
+            if (item.isIncome) await setIncomeAmountFrom(r.id, p.date, p.v.amount_cents); else await setExpenseAmountFrom(r.id, accountId, p.date, p.v.amount_cents)
+          } else if (p.kind === 'sched') {
+            const back = { effectiveFrom: p.date, frequency: p.v.frequency, everyN: p.v.every_n ?? 1, anchorDate: p.v.anchor_date }
+            if (item.isIncome) await setIncomeScheduleFrom(r.id, accountId, back); else await setExpenseScheduleFrom(r.id, accountId, back)
+          } else if (item.isIncome) await setIncomeOverride(r.id, accountId, p.date, p.v.amount_cents)
+          else await setExpenseOverride(r.id, accountId, p.date, p.v.amount_cents)
+          notifyDataChanged()
+        },
+        lasting: true,
+      })
+      onSaved()
+    } catch (e: any) { reportError('That wasn’t removed.', e) }
+    finally { setBusy(false) }
+  }
 
   async function saveAmount() {
     if (!changed || busy) return
@@ -438,13 +508,13 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
   async function saveStop() {
     setBusy(true)
     const prevEnd = r.end_date ?? null
-    const end = stopAt === 'now' ? shift(t, -1) : stopAt
+    const end = stopEnd
     try {
       if (item.isIncome) await setIncomeEndDate(r.id, end); else await setExpenseEndDate(r.id, end)
       toast(stopAt === 'now' ? `${r.name} stopped` : `${r.name} stops after ${short(end)}`, { undo: async () => {
         if (item.isIncome) await setIncomeEndDate(r.id, prevEnd); else await setExpenseEndDate(r.id, prevEnd)
         notifyDataChanged()
-      } })
+      }, lasting: true })
       onSaved()
     } catch (e: any) { reportError('That wasn’t stopped.', e) }
     finally { setBusy(false) }
@@ -457,7 +527,7 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
       toast(`${r.name} deleted`, { undo: async () => {
         if (item.isIncome) await reactivateIncomeSource(r.id); else await reactivateExpense(r.id)
         notifyDataChanged()
-      } })
+      }, lasting: true })
       onSaved()
     } catch (e: any) { reportError('That wasn’t deleted.', e) }
     finally { setBusy(false) }
@@ -525,6 +595,17 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
             </div>
           )}
 
+          {ahead.length > 0 && <>
+            <div role="heading" aria-level={2} className="rw-lab">Changes ahead</div>
+            <div className="rw-group flush">
+              {ahead.map(a => (
+                <button key={a.key} type="button" className="rw-row" onClick={() => { setPick(a); setMode('ahead') }}>
+                  <div className="rw-tx"><div className="rw-row-name">{a.title}</div><div className="rw-sub">{a.words}</div></div>
+                  <span className="rw-chev">›</span>
+                </button>
+              ))}
+            </div>
+          </>}
           {isPrimary && (
             <div className="rw-group flush" style={{ marginTop: 12 }}>
               <button type="button" className="rw-row" onClick={() => setMode('pay')}>
@@ -578,18 +659,29 @@ export function ItemSheet({ item, rows, floorCents, accountId, onClose, onSaved,
         {mode === 'pay' && <PayChange row={r} rows={rows} floorCents={floorCents} accountId={accountId}
           onBack={() => setMode('amount')} onSaved={onSaved} />}
 
+        {mode === 'ahead' && pick && <>
+          <div className="rw-card"><div className="rw-row-name">{pick.title}</div><div className="rw-sub">{pick.words}</div></div>
+          <div className="rw-note">{pick.kind === 'cycle'
+            ? `Removing it puts the ${short(pick.date)} cycle back to the usual amount.`
+            : `Removing it keeps ${r.name} as it is before ${short(pick.date)}, after that date too.`}</div>
+          {preview}
+          <div className="rw-ctas">
+            <button type="button" className="rw-cta sec" onClick={() => { setPick(null); setMode('amount') }}>Back</button>
+            <button type="button" className="rw-cta" disabled={busy} onClick={removeAhead}>Remove change{anyway}</button>
+          </div>
+        </>}
         {mode === 'stop' && <>
           <div className="rw-note">Payments that already went out stay in your history. Nothing before the date you pick changes.</div>
           <div className="rw-lab">Last payment</div>
           <div className="rw-chips">
-            <button type="button" className={stopAt === 'now' ? 'on' : ''} onClick={() => setStopAt('now')}>None. Stop now</button>
-            {item.next.slice(0, 3).map(d => <button key={d} type="button" className={stopAt === d ? 'on' : ''} onClick={() => setStopAt(d)}>{dayName(d)}</button>)}
+            <button type="button" className={stopAt === 'now' ? 'on' : ''} onClick={() => setStopAt('now')}>{dueToday ? 'After today’s payment' : 'None. Stop now'}</button>
+            {stopChoices.map(d => <button key={d} type="button" className={stopAt === d ? 'on' : ''} onClick={() => setStopAt(d)}>{dayName(d)}</button>)}
           </div>
           {preview}
           <div className="rw-ctas">
             <button type="button" className="rw-cta sec" onClick={() => setMode('amount')}>Back</button>
             <button type="button" className="rw-cta" disabled={busy} onClick={saveStop}>
-              {stopAt === 'now' ? 'Stop now' : `Stop after ${short(stopAt)}`}{anyway}
+              {stopAt === 'now' ? (dueToday ? 'Stop after today' : 'Stop now') : `Stop after ${short(stopAt)}`}{anyway}
             </button>
           </div>
         </>}

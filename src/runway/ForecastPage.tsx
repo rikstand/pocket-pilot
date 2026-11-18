@@ -151,7 +151,7 @@ export default function ForecastPage(p: Props) {
               return (
                 <button key={x.start} type="button" className="rw-row" onClick={() => p.onOpen(x.idx)}>
                   <div className="rw-tx"><div className="rw-row-name">{day(x.payDate)}
-                    {lv !== 'ok' && <span className={`rw-fc-pill ${lv}`}>{lv === 'chosen' ? 'your choice' : x.driver?.name ?? 'under floor'}</span>}
+                    {lv !== 'ok' && <span className={`rw-fc-pill ${lv}`}>{lv === 'chosen' ? 'your choice' : `${lv === 'under' ? 'Overdrawn' : 'Under floor'}${x.driver?.name ? ' · ' + x.driver.name : ''}`}</span>}
                   </div></div>
                   <div className={`rw-am ${lvlClass(lv)}`}>{money(x.closeCents)}</div>
                   <span className="rw-chev">›</span>

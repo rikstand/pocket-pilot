@@ -52,6 +52,7 @@ import CardSheet, { type CardMode } from './runway/CardSheet'
 import { ItemSheet, itemFor } from './runway/ItemsPage'
 import { buildRunway, type RunwayEvent } from './runway/runwaySeries'
 import { budgetHistory, budgetFlag } from './runway/budgetHistory'
+import { useBackLayer } from './runway/Sheet'
 
 function fmtDate(d: string) {
   return parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
@@ -176,6 +177,10 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
   const [rwCatchOpen,        setRwCatchOpen]        = useState(false)
   // The new look's Forecast (Journey 6): a payday opened as its own cycle.
   const [fcOpen,             setFcOpen]             = useState(false)
+  // The phone's Back closes a past cycle or a cycle opened from Forecast,
+  // the same as their own ‹ buttons.
+  useBackLayer(newLook && showPast, () => setShowPast(false))
+  useBackLayer(newLook && fcOpen, () => { setFcOpen(false); setActiveIdx(findCurrentIdx(cycles)) })
   // An item opened from a cycle in the new look: the Journey 9 item sheet,
   // set to that cycle (Journey 6).
   const [rwItem,             setRwItem]             = useState<{ id: string; isIncome: boolean } | null>(null)
@@ -2395,9 +2400,12 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
   function cycleViewData() {
     const c = activeCycle
     const HOW: Record<string, string> = { daily: 'Daily', weekly: 'Weekly', fortnightly: 'Fortnightly', monthly: 'Monthly', annually: 'Yearly', once: 'One-off' }
-    const howOften = (row: any) => (row.every_n ?? 1) > 1
-      ? `Every ${row.every_n} ${PERIOD_WORD[row.frequency] ?? row.frequency}s`
-      : (HOW[row.frequency] ?? row.frequency)
+    // Said from the schedule in force in this cycle, so a "Change how often"
+    // from a date shows once it starts (code review, 18 Nov 2026).
+    const howOften = (eng: any) => {
+      const s = scheduleOn(eng, c.startDate), n = s.everyN ?? 1
+      return n > 1 ? `Every ${n} ${PERIOD_WORD[s.frequency] ?? s.frequency}s` : (HOW[s.frequency] ?? s.frequency)
+    }
     const t = today()
     const items: DayItem[] = []
     const events: RunwayEvent[] = []
@@ -2422,7 +2430,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
         if (!src.is_potential) events.push({ date: d, cents, name: src.name })
         items.push({
           key: `inc-${src.id}-${d}`, date: d, name: src.name, mark: 'income', amountCents: cents, isIn: true,
-          sub: src.is_potential ? 'Not certain yet' : ov ? 'This cycle only' : howOften(src),
+          sub: src.is_potential ? 'Not certain yet' : ov ? 'This cycle only' : howOften(toEngineIncome([src])[0]),
           onOpen: src.frequency !== 'once' && !src.is_potential && openItem(src.id, true)
             || (cd ? () => (src.frequency === 'once' ? openOneOff(cd, !(cd.isPotential ?? true)) : openIncomeEdit(cd)) : undefined),
         })
@@ -2446,18 +2454,18 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
         events.push({ date: d, cents: -cents, name: exp.name })
         const isEstimate = mode === 'variable'
         const open = isEstimate && !ov
-        let sub = howOften(exp)
+        let sub = howOften(toEngineExpenses([exp])[0])
         if (isLayby) {
           const n = sorted.findIndex((v: any) => v.effective_from === d)
           sub = `BNPL · ${n >= 0 ? n + 1 : '?'} of ${layby?.payments_total ?? sorted.length}`
-        } else if (isEstimate) sub = ov ? 'Confirmed' : 'Estimate'
+        } else if (isEstimate) sub = ov ? (c.startDate > t ? 'Changed for this cycle' : 'Confirmed') : 'Estimate'
         else if (ov) sub = 'This cycle only'
         items.push({
           key: `exp-${exp.id}-${d}`, date: d, name: exp.name, mark: isLayby ? 'bnpl' : isEstimate ? 'estimate' : 'fixed',
           amountCents: cents, estimate: open, sub,
           needs: open && d < t, needsText: 'not confirmed',
           action: open && cd ? { label: 'Confirm', run: () => openVar(cd) } : undefined,
-          donePill: isEstimate && ov ? '✓' : undefined,
+          donePill: isEstimate && ov && c.startDate <= t ? '✓' : undefined,
           onOpen: !isLayby && exp.frequency !== 'once' && cd?.act !== 'oneoff' && openItem(exp.id, false)
             || (!cd ? undefined
             : cd.act === 'oneoff' ? () => openOneOff(cd, false)

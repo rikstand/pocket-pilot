@@ -312,6 +312,25 @@ function MissedSpend({ cycle, budget, accountId, money, closing, hasForecast, pa
     finally { setBusy(false) }
   }
 
+  // A spend in a closed cycle can be taken out again: the cycle's closing
+  // balance stays as entered, only what was logged changes.
+  async function removeEntry(x: any) {
+    if (busy) return
+    setBusy(true)
+    try {
+      await deleteBudgetSpendEntry(x.id)
+      toast(`${money(x.amount_cents)} taken out of ${budget.name}`, {
+        undo: async () => {
+          await addBudgetSpendEntry(accountId, x.expense_id, x.amount_cents, x.label ?? '', x.spent_date, { payeeId: x.payee_id, note: x.note })
+          notifyDataChanged()
+        },
+        lasting: true,
+      })
+      notifyDataChanged(); onClose()
+    } catch (e: any) { reportError('That wasn’t deleted.', e) }
+    finally { setBusy(false) }
+  }
+
   return (
     <Sheet onClose={onClose} busy={busy}>
         <div className="rw-grab" />
@@ -324,6 +343,8 @@ function MissedSpend({ cycle, budget, accountId, money, closing, hasForecast, pa
               <div key={x.id} className="rw-row static">
                 <div className="rw-tx"><div className="rw-row-name">{place(x.payee_id) ?? x.note ?? 'Spend'}</div><div className="rw-sub">{dayName(x.spent_date)}</div></div>
                 <div className={`rw-am${x.amount_cents < 0 ? ' in' : ''}`}>{(x.amount_cents < 0 ? '−' : '') + fmt(Math.abs(x.amount_cents), true)}</div>
+                <button type="button" className="rw-mini sec" disabled={busy}
+                  aria-label={`Delete ${fmt(Math.abs(x.amount_cents), true)} on ${dayName(x.spent_date)}`} onClick={() => removeEntry(x)}>Delete</button>
               </div>))}
           </div>
         )}

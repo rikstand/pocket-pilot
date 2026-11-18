@@ -16,6 +16,8 @@ import { LogSheetsProvider } from './runway/LogSheets'
 import ItemsPage from './runway/ItemsPage'
 import { ToastProvider } from './runway/Toast'
 import { useNewLook } from './lib/look'
+import { useBackLayer } from './runway/Sheet'
+import { BACK } from './runway/RunwayShell'
 
 function AuthedApp({ userId }: { userId: string }) {
   const { activeAccount, loading: accountLoading, reloadAccounts } = useAccount()
@@ -31,6 +33,10 @@ function AuthedApp({ userId }: { userId: string }) {
   // Plan, More and Expenses & income only exist in the new shell. Turning the new look off
   // while on one of them shows Cycle.
   const shown: Page = !newLook && (page === 'plan' || page === 'more' || page === 'items') ? 'cycle' : page
+
+  // The phone's Back goes one level up in the new look, as the ‹ link does:
+  // a page under Plan or More goes back to it, and a tab goes back to Cycle.
+  useBackLayer(newLook && shown !== 'cycle', () => navigate(BACK[shown]?.to ?? 'cycle'))
 
   function navigate(to: Page) {
     setPage(to)
