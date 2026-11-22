@@ -4,7 +4,7 @@ import { useViewport } from './lib/useViewport'
 
 export type Page = 'cycle' | 'forecast' | 'expenses' | 'wishlist' | 'credit' | 'settings'
   // Only in the new look's shell
-  | 'plan' | 'more' | 'items'
+  | 'plan' | 'more' | 'items' | 'savings'
 
 interface AppShellProps {
   active: Page

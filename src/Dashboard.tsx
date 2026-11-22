@@ -49,6 +49,7 @@ import PastCycles from './runway/PastCycles'
 import CatchUpSheet from './runway/CatchUpSheet'
 import ForecastPage, { type ForecastPoint } from './runway/ForecastPage'
 import CardSheet, { type CardMode } from './runway/CardSheet'
+import SavingsSheet from './runway/SavingsSheet'
 import { ItemSheet, itemFor } from './runway/ItemsPage'
 import { buildRunway, type RunwayEvent } from './runway/runwaySeries'
 import { budgetHistory, budgetFlag } from './runway/budgetHistory'
@@ -186,6 +187,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
   const [rwItem,             setRwItem]             = useState<{ id: string; isIncome: boolean } | null>(null)
   // The card's sheet in the new look (Journey 1), on what the cycle needs.
   const [rwCard,             setRwCard]             = useState<CardMode | null>(null)
+  const [rwSav,              setRwSav]              = useState<string | null>(null)   // savings sheet (release 6)
   const [closeVarActuals,  setCloseVarActuals]  = useState<Record<string, string>>({})
   const [closePayLanded,   setClosePayLanded]   = useState<boolean | null>(null)
   const [closePayAmount,   setClosePayAmount]   = useState('')
@@ -2488,7 +2490,22 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
           needs: !done && c.startDate < t, needsText: 'not set aside',
           action: done ? undefined : { label: 'Set aside', run: () => toggleSetAside(line.goalId) },
           donePill: done ? 'Set aside ✓' : undefined,
-          onOpen: () => setSavTarget(goal),
+          onOpen: () => newLook ? setRwSav(goal.id) : setSavTarget(goal),
+        })
+      }
+    }
+    // A goal skipped this cycle has no amount here, but it still shows, so
+    // the skip can be seen and undone (release 6).
+    if (newLook && !c.isHistorical) {
+      for (const goal of savingsGoals as any[]) {
+        if ((goal.status ?? 'active') !== 'active' || goal.is_active === false) continue
+        if (savingsLines.some((l: any) => l.goalId === goal.id)) continue
+        const skipped = (forecastRows?.savingsOverrideRows ?? []).some((o: any) =>
+          o.savings_goal_id === goal.id && o.cycle_start === c.startDate && o.amount_cents === 0)
+        if (!skipped) continue
+        items.push({
+          key: `sav-${goal.id}`, date: c.startDate, name: goal.name, mark: 'savings', amountCents: 0,
+          sub: 'Skipped this cycle', onOpen: () => setRwSav(goal.id),
         })
       }
     }
@@ -2677,6 +2694,9 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
           floorCents={floorCents} today={t} dueDate={creditDueDate} paidCents={creditState === 'paid' ? creditPaidCents : null}
           predictedTodayCents={isCurrentCycle ? predictedCardToday() : null} sym={sym} money={money}
           onPlan={onCredit} onClose={() => setRwCard(null)} />
+      )}
+      {rwSav && (
+        <SavingsSheet accountId={accountId} goalId={rwSav} rows={forecastRows} cycleStart={activeCycle.startDate} onClose={() => setRwSav(null)} />
       )}
       {rwItem && forecastRows && (() => {
         const row = (rwItem.isIncome ? rawIncome : rawExpenses).find((x: any) => x.id === rwItem.id)

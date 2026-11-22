@@ -6,7 +6,7 @@ import { loadForecast, type ForecastResult } from '../lib/forecast'
 import { savedSoFarCents } from '../lib/savings'
 import {
   getWishlistItems, addWishlistItem, deleteWishlistItem, restoreWishlistItem, releaseWishlistItem, relinkWishlistItem,
-  commitWishlistBnpl, commitWishlistSaving, uncommitWishlistItem, deleteSavingsGoal, updateSavingsGoal,
+  commitWishlistBnpl, commitWishlistSaving, uncommitWishlistItem, deleteSavingsGoal,
   replaceBnplPayments, clearBnplFrom, markBnplPaymentMissed, undoBnplMissed,
   setExpenseEndDate, deactivateBnplPlan, reactivateExpense, reactivateLayBy,
 } from '../lib/repository'
@@ -17,6 +17,7 @@ import Preview, { previewStats } from './Preview'
 import { Stepper, Segmented, DateChips, TextField } from './controls'
 import { Mark } from './ItemsPage'
 import { KeyDone } from './LegendKeys'
+import SavingsSheet from './SavingsSheet'
 
 /**
  * Plan › Wishlist (Journey 3 and the wishlist comparison, release 5a; mock
@@ -240,8 +241,7 @@ function WishlistBody({ rows, items, accountId, userId, floorCents, fmt, sym, op
         onRemove={() => removeItem(openItem, `${openItem.name} removed from your Wishlist`)} />}
       {open?.kind === 'running' && openPlan && <RunningSheet key={openPlan.row.id} plan={openPlan} m={m} floorCents={floorCents} sym={sym} money={money} moneyC={moneyC}
         accountId={accountId} userId={userId} onClose={close} onSaved={saved} />}
-      {open?.kind === 'saving' && openItem && goalOf(openItem) && <SavingSheet item={openItem} goal={goalOf(openItem)} rows={rows} m={m} money={money}
-        onClose={close} onSaved={saved} />}
+      {open?.kind === 'saving' && openItem && goalOf(openItem) && <SavingsSheet accountId={accountId} goalId={goalOf(openItem).id} rows={rows} wishItem={openItem} onClose={close} />}
       {open?.kind === 'done' && openItem && <DoneSheet item={openItem} last={lastOf(openItem)} money={money} onClose={close}
         onRemove={() => removeItem(openItem, `${openItem.name} removed from your Wishlist`)} />}
       {open?.kind === 'add' && <AddWantSheet accountId={accountId} userId={userId} sym={sym} onClose={close} onSaved={saved} />}
@@ -697,66 +697,6 @@ function RunningSheet({ plan, m, floorCents, sym, money, moneyC, accountId, user
         <button type="button" className="rw-cta sec" onClick={onClose}>Cancel</button>
         <button type="button" className="rw-cta" disabled={!can || busy} onClick={save}>{busy ? 'Saving…' : <>{btn}{can && st.level === 'under' && st.worse ? ' anyway' : ''}</>}</button>
       </div>
-    </Sheet>
-  )
-}
-
-/* ── an item being saved for: its Savings goal holds the amount ── */
-function SavingSheet({ item, goal, rows, m, money, onClose, onSaved }: {
-  item: any; goal: any; rows: ForecastResult; m: Model; money: (c: number) => string; onClose: () => void; onSaved: () => void
-}) {
-  const toast = useToast()
-  const [busy, setBusy] = useState(false)
-  const have = savedSoFarCents(goal, rows.savingsContributionRows, rows.savingsOverrideRows)
-  const left = Math.max(0, goal.target_cents - have), per = Math.max(1, goal.per_cycle_cents)
-  const n = Math.ceil(left / per), k = m.idx(m.t) + n - (m.idx(m.t) === 0 ? 1 : 0)
-
-  async function bought() {
-    if (busy) return
-    setBusy(true)
-    try {
-      await updateSavingsGoal(goal.id, { status: 'completed' })
-      await deleteWishlistItem(item.id)
-      toast(`${item.name}: bought. The goal is closed.`, { lasting: true, undo: async () => {
-        await updateSavingsGoal(goal.id, { status: goal.status }); await restoreWishlistItem(item); notifyDataChanged() } })
-      onSaved()
-    } catch (e: any) { reportError('That wasn’t saved.', e) }
-    finally { setBusy(false) }
-  }
-  async function stop() {
-    if (busy) return
-    setBusy(true)
-    try {
-      await updateSavingsGoal(goal.id, { status: 'cancelled' })
-      await releaseWishlistItem(item.id)
-      toast(`${item.name}: saving stopped. It’s back under Wanted.`, { lasting: true, undo: async () => {
-        await updateSavingsGoal(goal.id, { status: 'active' }); await relinkWishlistItem(item.id, { method: 'savings', goalId: goal.id }); notifyDataChanged() } })
-      onSaved()
-    } catch (e: any) { reportError('That wasn’t stopped.', e) }
-    finally { setBusy(false) }
-  }
-
-  return (
-    <Sheet onClose={onClose} busy={busy}>
-      <div className="rw-grab" />
-      <SheetHead mark={<span className="rw-savmark" aria-hidden="true" />} title={item.name} sub={`Saving up · ${money(goal.per_cycle_cents)} a cycle`} onClose={onClose} />
-      <div className="rw-card">
-        <div className="rw-pv-k"><span>Saved so far</span><span>of {money(goal.target_cents)}</span></div>
-        <div className="rw-hero-v">{money(have)}</div>
-        <div className="rw-pb" aria-hidden="true"><i style={{ width: Math.min(100, have / Math.max(1, goal.target_cents) * 100) + '%' }} /></div>
-        <div className="rw-hint">{left === 0 ? 'Saved. It’s yours whenever you’re ready.' : `${n} more cycle${n > 1 ? 's' : ''} at ${money(goal.per_cycle_cents)}. Yours on ${short(m.startOf(k))}.`}</div>
-      </div>
-      <div className="rw-group flush" style={{ marginTop: 12 }}>
-        <button type="button" className="rw-row" onClick={bought} disabled={busy}>
-          <div className="rw-tx"><div className="rw-row-name">I’ve bought it</div><div className="rw-sub">Closes the goal. The money already left your balance as you saved it.</div></div>
-        </button>
-        {goal.status === 'active' && (
-          <button type="button" className="rw-row" onClick={stop} disabled={busy}>
-            <div className="rw-tx"><div className="rw-row-name rw-danger">Stop saving</div><div className="rw-sub">Back under Wanted. What you saved stays recorded.</div></div>
-          </button>
-        )}
-      </div>
-      <div className="rw-ctas"><button type="button" className="rw-cta" onClick={onClose}>Done</button></div>
     </Sheet>
   )
 }

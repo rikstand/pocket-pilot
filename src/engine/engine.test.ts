@@ -680,3 +680,32 @@ describe('a card plan from a date', () => {
     expect(pays(c)).toEqual([10000, 0, 30000, 0])
   })
 })
+
+// ── skipping a set-aside (release 6, decided 22 Nov) ─────────────────
+describe('skipping a goal’s set-aside this cycle', () => {
+  // $999 left at $167 a cycle: 6 cycles, the last one $164.
+  const goal = (over: Partial<SavingsGoal> = {}): SavingsGoal => ({
+    id: 'watch', name: 'Apple Watch', targetCents: 150000, perCycleCents: 16700, startCycleStart: '2026-11-05',
+    savedSoFarCents: 50100, overrides: [], ...over,
+  })
+  const amounts = (g: SavingsGoal) => run({ numCycles: 9, savingsGoals: [g] }).map(c => c.savingsLines.find(l => l.goalId === 'watch')?.amountCents ?? 0)
+  const first = run({ numCycles: 1 })[0].startDate
+  const second = run({ numCycles: 2 })[1].startDate
+
+  it('as planned: six cycles from this one', () => {
+    expect(amounts(goal())).toEqual([16700, 16700, 16700, 16700, 16700, 16400, 0, 0, 0])
+  })
+  it('finish a cycle later: $0 this cycle, the rest as before, one cycle on', () => {
+    expect(amounts(goal({ overrides: [{ cycleStart: first, amountCents: 0 }] })))
+      .toEqual([0, 16700, 16700, 16700, 16700, 16700, 16400, 0, 0])
+  })
+  it('catch up next cycle: $0 now, double next, same finish', () => {
+    expect(amounts(goal({ overrides: [{ cycleStart: first, amountCents: 0 }, { cycleStart: second, amountCents: 33400 }] })))
+      .toEqual([0, 33400, 16700, 16700, 16700, 16400, 0, 0, 0])
+  })
+  it('a skipped cycle leaves the money in the forecast that cycle', () => {
+    const plain = run({ numCycles: 2, savingsGoals: [goal()] })
+    const skipped = run({ numCycles: 2, savingsGoals: [goal({ overrides: [{ cycleStart: first, amountCents: 0 }] })] })
+    expect(skipped[0].committedClosingBalanceCents - plain[0].committedClosingBalanceCents).toBe(16700)
+  })
+})

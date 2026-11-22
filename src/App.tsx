@@ -15,6 +15,7 @@ import RunwayShell from './runway/RunwayShell'
 import { LogSheetsProvider } from './runway/LogSheets'
 import ItemsPage from './runway/ItemsPage'
 import WishlistPlan from './runway/WishlistPlan'
+import SavingsPlan from './runway/SavingsPlan'
 import { ToastProvider } from './runway/Toast'
 import { useNewLook } from './lib/look'
 import { useBackLayer } from './runway/Sheet'
@@ -33,7 +34,7 @@ function AuthedApp({ userId }: { userId: string }) {
 
   // Plan, More and Expenses & income only exist in the new shell. Turning the new look off
   // while on one of them shows Cycle.
-  const shown: Page = !newLook && (page === 'plan' || page === 'more' || page === 'items') ? 'cycle' : page
+  const shown: Page = !newLook && (page === 'plan' || page === 'more' || page === 'items' || page === 'savings') ? 'cycle' : page
 
   // The phone's Back goes one level up in the new look, as the ‹ link does:
   // a page under Plan or More goes back to it, and a tab goes back to Cycle.
@@ -93,6 +94,7 @@ function AuthedApp({ userId }: { userId: string }) {
       {shown === 'expenses' && (
         <ExpensesPage userId={userId} accountId={activeAccount.id} onBack={goCycleAndReload} addSignal={addSignal} />
       )}
+      {shown === 'savings' && <SavingsPlan accountId={activeAccount.id} />}
       {shown === 'wishlist' && (
         newLook
           ? <WishlistPlan accountId={activeAccount.id} userId={userId} />

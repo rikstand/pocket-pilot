@@ -868,3 +868,27 @@ button.rw-row:not(:disabled):active, .rw-row:has(> .rw-row-main:active) { backgr
 .rw .rw-cmp td small { display: block; font: var(--rw-text-caption); color: var(--rw-muted); }
 .rw .rw-cmp td .near { color: var(--rw-near-floor-text); }
 .rw .rw-cmp td .under { color: var(--rw-under-floor); }
+
+/* ═══ Savings (release 6) ═══════════════════════════════════════════════ */
+.rw .rw-big-amt { font: var(--rw-text-amount); margin: 2px 0 4px; }
+.rw .rw-line { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 6px; font: var(--rw-text-body); color: var(--rw-ink); }
+.rw .rw-line b { font-weight: 700; }
+.rw .rw-ok { color: var(--rw-good); font-weight: 650; }
+.rw .rw-result { font: var(--rw-text-body); color: var(--rw-ink); padding: 0 2px; }
+.rw .rw-result b { font-weight: 700; }
+/* A row that opens in place: the chevron turns down, the detail sits under it. */
+.rw .rw-turn { transition: transform .15s; display: inline-block; }
+.rw .rw-turn.on { transform: rotate(90deg); }
+.rw .rw-open { padding: 0 12px 12px; }
+.rw .rw-open .rw-amt { margin-bottom: 10px; }
+/* Savings progress: one circle per cycle. */
+.rw .rw-cdots { display: flex; gap: 6px; flex-wrap: wrap; }
+.rw .rw-cdot { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 44px; padding: 0; border: none; background: none;
+  font: var(--rw-text-caption); color: var(--rw-muted); cursor: pointer; }
+.rw span.rw-cdot { cursor: default; }
+.rw .rw-cdot i { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-weight: 700; border: 1.5px solid var(--rw-control-edge); }
+.rw .rw-cdot.ok i { background: var(--rw-good); border-color: var(--rw-good); color: #fff; }
+.rw .rw-cdot.miss i { border-color: var(--rw-near-floor); color: var(--rw-near-floor-text); }
+.rw .rw-cdot.now i { border: 2px solid var(--rw-ink); }
+.rw .rw-cdot.now.ok i { border-color: var(--rw-good); }
+.rw .rw-u { color: var(--rw-under-floor); font-weight: 650; }

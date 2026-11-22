@@ -7,6 +7,7 @@ import type { Page } from '../AppShell'
 const ROWS: { page: Page; name: string; sub: string }[] = [
   { page: 'items',    name: 'Expenses & income', sub: 'Everything that repeats, and what it is each pay' },
   { page: 'wishlist', name: 'Wishlist', sub: 'Things to buy and how to pay' },
+  { page: 'savings',  name: 'Savings',  sub: 'Goals, and money put away for expenses' },
   { page: 'credit',   name: 'Credit',   sub: 'Your card and its plan' },
 ]
 
