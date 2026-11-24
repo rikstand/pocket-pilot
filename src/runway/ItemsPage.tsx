@@ -22,6 +22,7 @@ import { notifyDataChanged, useDataChanged } from '../lib/dataEvents'
 import { useToast } from './toastContext'
 import { useLog } from './logContext'
 import Preview, { previewStats } from './Preview'
+import { underFloor, overdrawn } from '../engine/floor'
 
 /**
  * Journey 9, part one: Expenses & income. Everything that repeats, with what
@@ -785,7 +786,7 @@ function PayChange({ row: r, rows, floorCents, accountId, onBack, onSaved }: {
   const proj = projectFromRows(changedRows, floorCents, PREVIEW_PAYS + 1).slice(0, PREVIEW_PAYS + 1)
   const lowIdx = proj.reduce((m, c, i) => c.committedClosingBalanceCents < proj[m].committedClosingBalanceCents ? i : m, 0)
   const low = proj[lowIdx]?.committedClosingBalanceCents ?? 0
-  const level = low < 0 ? 'under' : low < floorCents ? 'near' : 'ok'
+  const level = overdrawn(low) ? 'under' : underFloor(low, floorCents) ? 'near' : 'ok'
 
   const budgets = budgetsInCycle(rows, cur.startDate, cur.endDate)
   const budgetsNow = budgets.reduce((s, b) => s + b.baseCents, 0)

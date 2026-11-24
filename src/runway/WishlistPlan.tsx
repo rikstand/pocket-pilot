@@ -18,6 +18,7 @@ import { Stepper, Segmented, DateChips, TextField } from './controls'
 import { Mark } from './ItemsPage'
 import { KeyDone } from './LegendKeys'
 import SavingsSheet from './SavingsSheet'
+import { underFloor } from '../engine/floor'
 
 /**
  * Plan › Wishlist (Journey 3 and the wishlist comparison, release 5a; mock
@@ -93,7 +94,7 @@ function useModel(rows: ForecastResult, floorCents: number) {
     }
     const dated = (list: Pay[]) => list.map(p => ({ k: idx(p.date), cents: p.cents }))
     /** It fits when no payday it lowers ends up under the floor. */
-    const fits = (v: number[]) => v.every((c, k) => c >= floorCents || c >= now[k])
+    const fits = (v: number[]) => v.every((c, k) => !underFloor(c, floorCents) || c >= now[k])
     return { cycles, now, payDates, t, idx, startOf, after, dated, fits }
   }, [rows, floorCents])
 }

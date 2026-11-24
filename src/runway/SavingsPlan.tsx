@@ -17,6 +17,7 @@ import SavingsSheet from './SavingsSheet'
 import { saveDraft } from '../lib/savingsSave'
 import { DateChips } from './controls'
 import { makePlanner, perFor, savingsDip, type Draft } from '../lib/savingsPlan'
+import { overdrawn } from '../engine/floor'
 
 /**
  * Plan › Savings (Journey 4, release 6; mock claude/pp-savings-6.html,
@@ -149,7 +150,7 @@ function Body({ rows, accountId, floorCents, fmt, sym }: {
               <button type="button" className="rw-row-main" onClick={() => setOpen({ kind: 'dip' })}>
                 <span className="rw-savmark" aria-hidden="true" style={{ opacity: .45 }} />
                 <div className="rw-tx"><div className="rw-row-name">Before pay {short(shift(rows.cycles[dipK].endDate, 1))}</div>
-                  <div className="rw-sub"><span className="rw-warn">{v < 0 ? `${money(-v)} overdrawn` : `${money(floorCents - v)} under your floor`} · from savings</span></div></div>
+                  <div className="rw-sub"><span className="rw-warn">{overdrawn(v) ? `${money(-v)} overdrawn` : `${money(floorCents - v)} under your floor`} · from savings</span></div></div>
               </button>
               <button type="button" className="rw-mini sec" aria-label="Options · that payday" onClick={() => setOpen({ kind: 'dip' })}>Options</button>
             </div>) })()}
@@ -339,7 +340,7 @@ function AddGoalSheet({ accountId, rows, floorCents, sym, money, short, onClose 
           <div className="rw-amt"><span>{sym}</span>
             <input type="number" inputMode="decimal" aria-label="Each cycle" value={per / 100} onChange={e => setPick(Math.max(100, Math.round((parseFloat(e.target.value) || 0) * 100)))} /></div>
           <div className="rw-gain"><b>{fin >= 0 ? `Saved by ${short(P.startOf(fin))}` : 'Not within the forecast'}</b><span>{fin >= 0 ? `${fin} cycles` : ''}</span></div>
-          {lo != null && <div className="rw-sl-tag">{lo < 0 ? <span className="n">Overdrawn before pay {short(P.startOf(lowAt + 1))}</span> : <span className="w">Into your floor before pay {short(P.startOf(lowAt + 1))}</span>}</div>}
+          {lo != null && <div className="rw-sl-tag">{overdrawn(lo) ? <span className="n">Overdrawn before pay {short(P.startOf(lowAt + 1))}</span> : <span className="w">Into your floor before pay {short(P.startOf(lowAt + 1))}</span>}</div>}
           <div className="rw-sl">
             <div className="sl-rail" />
             {fitPer != null && fitPer < hi && <div className="sl-zone" style={{ left: pct(fitPer) + '%', right: 0 }} />}
@@ -365,7 +366,7 @@ function AddGoalSheet({ accountId, rows, floorCents, sym, money, short, onClose 
       </>}
       <div className="rw-ctas">
         <button type="button" className="rw-cta sec" onClick={onClose}>Cancel</button>
-        <button type="button" className="rw-cta" disabled={!name.trim() || !target || busy} onClick={add}>{busy ? 'Saving…' : <>{`Add · ${money(per)} a cycle`}{lo != null && lo < 0 ? ' anyway' : ''}</>}</button>
+        <button type="button" className="rw-cta" disabled={!name.trim() || !target || busy} onClick={add}>{busy ? 'Saving…' : <>{`Add · ${money(per)} a cycle`}{lo != null && overdrawn(lo) ? ' anyway' : ''}</>}</button>
       </div>
     </Sheet>
   )
@@ -412,7 +413,7 @@ function DipSheet({ k, rows, base, without, goals, have, accountId, floorCents, 
       <div className="rw-grab" />
       <div className="rw-sh-h"><div className="rw-sh-t"><span className="rw-savmark" aria-hidden="true" /><div>
         <h2 className="rw-sheet-title">Before pay {short(shift(rows.cycles[k].endDate, 1))}</h2>
-        <div className="rw-sd">{v < 0 ? `${money(-v)} overdrawn` : `${money(floorCents - v)} under your floor`} · from savings</div></div></div>
+        <div className="rw-sd">{overdrawn(v) ? `${money(-v)} overdrawn` : `${money(floorCents - v)} under your floor`} · from savings</div></div></div>
         <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>
       {o?.proj && <Preview nowCents={base.slice(0, span).map(x => x.committedClosingBalanceCents)} newCents={o.proj.slice(0, span).map((x: any) => x.committedClosingBalanceCents)}
         payDates={Array.from({ length: span }, (_, i) => shift(rows.cycles[i].endDate, 1))} floorCents={floorCents} money={money} tilesFirst />}

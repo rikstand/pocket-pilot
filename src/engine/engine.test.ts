@@ -467,6 +467,7 @@ describe('BNPL: change, pay off early, missed one', () => {
 
 // ── saving for a bill (Journey 4) ───────────────────────────────────
 import { billPrompts, creditPlanOn } from './engine'
+import { underFloor, overdrawn } from './floor'
 import type { SavingsGoal, CreditAccount } from './types'
 
 describe('a pot for a bill', () => {
@@ -545,6 +546,22 @@ describe('prompts to set money aside', () => {
     const p = billPrompts(input({ expenses: [rentLike, soon] }))
     expect(p.map(x => [x.expenseId, x.cycleStart])).toEqual([['soon', '2026-11-05']])
     expect(p[0].setAside).toBeNull()
+  })
+
+  it('a bill already paid this cycle is not asked about (25 Nov 2026)', () => {
+    const soon = bill({ id: 'soon', frequency: 'annually', anchorDate: '2026-11-12', amountCents: 104000 })
+    expect(billPrompts(input({ expenses: [rentLike, soon] }), [], '2026-11-13')).toEqual([])
+    expect(billPrompts(input({ expenses: [rentLike, soon] }), [], '2026-11-12').map(x => x.expenseId)).toEqual(['soon'])
+  })
+
+  it('a payday short by cents is at the floor, not under it (25 Nov 2026)', () => {
+    // Opening chosen so the March payday closes 30c under the $500 floor once the insurance is out.
+    const p0 = billPrompts(input())[0]
+    const cents = billPrompts(input({ openingBalanceCents: 100000 + p0.shortCents - 30 }))
+    expect(cents).toEqual([])
+    expect(underFloor(49970, 50000)).toBe(false)
+    expect(underFloor(49949, 50000)).toBe(true)
+    expect(overdrawn(-30)).toBe(false)
   })
 
   it('a payday you chose to let dip is not asked about again', () => {
@@ -707,5 +724,23 @@ describe('skipping a goal’s set-aside this cycle', () => {
     const plain = run({ numCycles: 2, savingsGoals: [goal()] })
     const skipped = run({ numCycles: 2, savingsGoals: [goal({ overrides: [{ cycleStart: first, amountCents: 0 }] })] })
     expect(skipped[0].committedClosingBalanceCents - plain[0].committedClosingBalanceCents).toBe(16700)
+  })
+})
+
+// ── "$0 under your floor" (found 25 Nov 2026) ───────────────────────
+// On "whatever's spare" a payday closes exactly at the floor. With amounts
+// in fractions of a cent (a budget counted by the day, card interest), the
+// floor came back as $99.9999999… and every check called it "under".
+describe('a spare plan closes at the floor, not a hair under it', () => {
+  it('fractions of a cent in, whole cents out', () => {
+    const c: CreditAccount = {
+      id: 'c', name: 'Card', aprBasisPoints: 2190, minPaymentPct: 1.5, minPaymentFloorCents: 1000, assumedSpendCents: 0,
+      strategyExtraCents: 0, strategyCommitted: true, strategyMode: 'spare', currentBalanceCents: 5000011.7, paymentFrequency: 'per_cycle',
+    }
+    const out = run({ numCycles: 12, creditAccount: c, openingBalanceCents: 100000.3, safetyFloorCents: 10000 })
+    for (const x of out) {
+      expect(Number.isInteger(x.committedClosingBalanceCents)).toBe(true)
+      if (x.creditClosingBalanceCents > 0) expect(x.committedClosingBalanceCents).toBe(10000)
+    }
   })
 })

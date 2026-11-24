@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { parseDate } from '../engine/dates'
 import { KeyDone, KeyLands } from './LegendKeys'
+import { underFloor, overdrawn } from '../engine/floor'
 
 /**
  * The universal preview: what a change does to each payday. One component
@@ -24,7 +25,7 @@ export function previewStats(nowCents: number[], newCents: number[], floorCents:
   const lowestCents = newCents.length ? Math.min(...newCents) : 0
   const lowestIdx = newCents.indexOf(lowestCents)
   const nowLow = nowCents.length ? Math.min(...nowCents) : 0
-  const level = lowestCents < 0 ? 'under' : lowestCents < floorCents ? 'near' : 'ok'
+  const level = overdrawn(lowestCents) ? 'under' : underFloor(lowestCents, floorCents) ? 'near' : 'ok'
   return { lowestCents, lowestIdx, level, worse: level !== 'ok' && lowestCents < nowLow }
 }
 
@@ -91,7 +92,7 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
           <line x1={X0} x2={X1} y1={Y(floorCents)} y2={Y(floorCents)} stroke="var(--rw-under-floor)" strokeDasharray="3 3" />
           <polyline points={line(nowCents)} fill="none" stroke="var(--rw-ink)" strokeOpacity=".5" strokeWidth="2" strokeLinejoin="round" />
           <polyline points={line(newCents)} fill="none" stroke="var(--rw-line)" strokeWidth="2.4" strokeLinejoin="round" />
-          {newCents.map((c, i) => c < floorCents
+          {newCents.map((c, i) => underFloor(c, floorCents)
             ? <circle key={i} cx={X(i)} cy={Y(c)} r="3.4" fill={c < 0 ? 'var(--rw-under-floor)' : 'var(--rw-near-floor)'} />
             : null)}
           {done?.now != null && done.now !== done.next && done.now < n && (

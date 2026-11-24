@@ -461,7 +461,7 @@ export function billPromptsFromRows(
   numCycles: number
 ): BillPrompt[] {
   const accepted = (rows.acceptedDipRows ?? []).map((r: any) => ({ expenseId: r.expense_id, cycleStart: r.cycle_start }))
-  return billPrompts(engineInputFromRows(rows, safetyFloorCents, numCycles), accepted)
+  return billPrompts(engineInputFromRows(rows, safetyFloorCents, numCycles), accepted, formatDate(new Date()))
 }
 
 /**

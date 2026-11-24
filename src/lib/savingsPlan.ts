@@ -13,6 +13,7 @@
 import { projectFromRows, type ForecastResult } from './forecast'
 import { contributionCents } from './savings'
 import { parseDate, formatDate, addDays } from '../engine/dates'
+import { underFloor } from '../engine/floor'
 
 export interface Draft {
   per: number              // the standing amount from the cycle after the one shown
@@ -106,11 +107,11 @@ export function makePlanner(rows: ForecastResult, goal: any, accountId: string, 
   }
   /** Fits: no payday the change lowers ends under the floor (the Wishlist's rule). */
   const fits = (proj: typeof cycles, ref: typeof cycles) =>
-    proj.every((c, k) => k < k0 || c.committedClosingBalanceCents >= floorCents || c.committedClosingBalanceCents >= ref[k].committedClosingBalanceCents - 50)
+    proj.every((c, k) => k < k0 || !underFloor(c.committedClosingBalanceCents, floorCents) || c.committedClosingBalanceCents >= ref[k].committedClosingBalanceCents - 50)
   const lowest = (proj: typeof cycles, ref: typeof cycles) => {
     let li = -1
     proj.forEach((c, k) => {
-      if (k < k0 || c.committedClosingBalanceCents >= floorCents || c.committedClosingBalanceCents >= ref[k].committedClosingBalanceCents - 50) return
+      if (k < k0 || !underFloor(c.committedClosingBalanceCents, floorCents) || c.committedClosingBalanceCents >= ref[k].committedClosingBalanceCents - 50) return
       if (li < 0 || c.committedClosingBalanceCents < proj[li].committedClosingBalanceCents) li = k
     })
     return li
@@ -123,7 +124,7 @@ export type Planner = ReturnType<typeof makePlanner>
 
 /** The plain goals' set-asides take this payday under the floor: the first such one ahead, or -1. */
 export function savingsDip(base: ForecastResult['cycles'], without: ForecastResult['cycles'], floorCents: number, within = 24): number {
-  return base.findIndex((c, k) => k < within && c.committedClosingBalanceCents < floorCents && (without[k]?.committedClosingBalanceCents ?? -Infinity) >= floorCents)
+  return base.findIndex((c, k) => k < within && underFloor(c.committedClosingBalanceCents, floorCents) && !underFloor(without[k]?.committedClosingBalanceCents ?? -Infinity, floorCents))
 }
 
 /** This goal's confirmed cycles with no amount of their own, each with what it counts for now. */

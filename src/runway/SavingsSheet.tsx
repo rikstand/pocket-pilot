@@ -15,6 +15,7 @@ import { notifyDataChanged } from '../lib/dataEvents'
 import { useToast } from './toastContext'
 import { DateChips } from './controls'
 import Preview from './Preview'
+import { overdrawn } from '../engine/floor'
 import { makePlanner, perFor, type Draft } from '../lib/savingsPlan'
 import { saveDraft } from '../lib/savingsSave'
 
@@ -291,7 +292,7 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
               onChange={e => setD({ ...d, per: Math.max(0, Math.round((parseFloat(e.target.value) || 0) * 100)), catchUp: false })} /></div>
           <div className={`rw-gain${kD >= 0 && fin > kD ? ' flat' : ''}`}><b>{fin >= 0 ? `Saved by ${short(P.startOf(fin))}` : 'Not saved yet'}</b>
             <span>{kD >= 0 ? (fin > kD ? `after your ${short(goal.target_date)} date` : `your date is ${short(goal.target_date)}`) : fin >= 0 ? `${fin - k0} cycles` : ''}</span></div>
-          {lo != null && <div className="rw-sl-tag">{lo < 0 ? <span className="n">Overdrawn before pay {short(P.startOf(lowAt + 1))}</span> : <span className="w">Into your floor before pay {short(P.startOf(lowAt + 1))}</span>}</div>}
+          {lo != null && <div className="rw-sl-tag">{overdrawn(lo) ? <span className="n">Overdrawn before pay {short(P.startOf(lowAt + 1))}</span> : <span className="w">Into your floor before pay {short(P.startOf(lowAt + 1))}</span>}</div>}
           <div className="rw-sl">
             <div className="sl-rail" />
             {fitPer != null && fitPer < hi && <div className="sl-zone" style={{ left: pct(fitPer) + '%', right: 0 }} />}
@@ -335,7 +336,7 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
               onChange={e => setNow(Math.min(potNeed, Math.max(0, Math.round((parseFloat(e.target.value) || 0) * 100))))} /></div>
           <div className={`rw-gain${potShort > 0 ? ' flat' : ''}`}><b>{potShort > 0 ? `${money(potShort)} short` : `Ready by ${due ? short(due) : 'the due date'}`}</b>
             <span>{now === 0 ? 'skipped · the rest spreads over the cycles left' : now !== l0 ? 'the rest spreads over the cycles left' : `${money(potNeed)} still to put away`}</span></div>
-          {potLo != null && <div className="rw-sl-tag">{potLo < 0 ? <span className="n">Overdrawn before pay {short(P.startOf(potLowAt + 1))}</span> : <span className="w">Into your floor before pay {short(P.startOf(potLowAt + 1))}</span>}</div>}
+          {potLo != null && <div className="rw-sl-tag">{overdrawn(potLo) ? <span className="n">Overdrawn before pay {short(P.startOf(potLowAt + 1))}</span> : <span className="w">Into your floor before pay {short(P.startOf(potLowAt + 1))}</span>}</div>}
           <div className="rw-sl">
             <div className="sl-rail" />
             {potFits != null && potFits < potNeed && <div className="sl-zone" style={{ left: potPct(potFits) + '%', right: 0 }} />}
@@ -407,10 +408,10 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
           <button type="button" className="rw-cta" disabled={busy || fixCents === have} onClick={saveFix}>{busy ? 'Saving…' : `Save ${money(fixCents)}`}</button>
         </> : isPot && state === 'todo' && now !== l0 ? <>
           <button type="button" className="rw-cta sec" onClick={() => setNow(l0)}>Cancel</button>
-          <button type="button" className="rw-cta" disabled={busy} onClick={savePot}>{busy ? 'Saving…' : <>{now === 0 ? `Skip ${that.toLowerCase()} cycle` : `Put away ${money(now)} ${that.toLowerCase()} cycle`}{potLo != null && potLo < 0 ? ' anyway' : ''}</>}</button>
+          <button type="button" className="rw-cta" disabled={busy} onClick={savePot}>{busy ? 'Saving…' : <>{now === 0 ? `Skip ${that.toLowerCase()} cycle` : `Put away ${money(now)} ${that.toLowerCase()} cycle`}{potLo != null && overdrawn(potLo) ? ' anyway' : ''}</>}</button>
         </> : dirty && !isPot ? <>
           <button type="button" className="rw-cta sec" onClick={() => changed ? (setD(base0), setDated(!!goal.target_date)) : onClose()}>{changed ? 'Cancel' : 'Not now'}</button>
-          <button type="button" className="rw-cta" disabled={busy} onClick={savePlan}>{busy ? 'Saving…' : <>{cta}{lo != null && lo < 0 ? ' anyway' : ''}</>}</button>
+          <button type="button" className="rw-cta" disabled={busy} onClick={savePlan}>{busy ? 'Saving…' : <>{cta}{lo != null && overdrawn(lo) ? ' anyway' : ''}</>}</button>
         </> : <button type="button" className="rw-cta" onClick={onClose}>Close</button>}
       </div>
     </Sheet>

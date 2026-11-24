@@ -22,6 +22,7 @@
 //   in some fortnightly cycles and not others; that is a more complex model
 //   and not what was designed.
 
+import { underFloor } from './floor'
 export interface CreditAccountModel {
   aprBasisPoints: number        // 2190 = 21.90% p.a.
   minPaymentPct: number         // monthly, e.g. 3 = 3% of balance
@@ -274,7 +275,7 @@ export function firstFloorBreach(
   for (let i = 0; i < cycleSurplusCents.length; i++) {
     cumulativePaidCents += proj.lines[i]?.paymentCents ?? 0
     const closing = cycleSurplusCents[i] - cumulativePaidCents
-    if (closing < safetyFloorCents) return { index: i, closingCents: closing }
+    if (underFloor(closing, safetyFloorCents)) return { index: i, closingCents: closing }
   }
   return null
 }

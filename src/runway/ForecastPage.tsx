@@ -4,6 +4,7 @@ import { parseDate, formatDate, addMonths } from '../engine/dates'
 import { useToast } from './toastContext'
 import { Segmented } from './controls'
 import { KeyUnder, KeyDone } from './LegendKeys'
+import { underFloor, overdrawn } from '../engine/floor'
 
 /**
  * Journey 6: the Forecast tab in the new look. One point per payday: what's
@@ -60,7 +61,7 @@ export default function ForecastPage(p: Props) {
   const n = pts.length
   const vals = pts.map(x => x.closeCents)
   const level = (x: ForecastPoint): Level =>
-    x.closeCents < p.floorCents && x.accepted ? 'chosen' : x.closeCents < 0 ? 'under' : x.closeCents < p.floorCents ? 'near' : 'ok'
+    underFloor(x.closeCents, p.floorCents) && x.accepted ? 'chosen' : overdrawn(x.closeCents) ? 'under' : underFloor(x.closeCents, p.floorCents) ? 'near' : 'ok'
   const lowIdx = vals.indexOf(Math.min(...vals))
   const low = pts[lowIdx]
   const last = pts[n - 1]

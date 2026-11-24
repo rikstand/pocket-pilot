@@ -45,10 +45,13 @@ describe('draftOverrides: what a plan change stores', () => {
 describe('savingsDip: a payday the goals take under the floor', () => {
   const c = (v: number) => ({ committedClosingBalanceCents: v }) as any
   it('finds the first payday under the floor that is fine without the goals', () => {
-    expect(savingsDip([c(500), c(50), c(-200)], [c(900), c(700), c(400)], 100)).toBe(1)
+    expect(savingsDip([c(50000), c(5000), c(-20000)], [c(90000), c(70000), c(40000)], 10000)).toBe(1)
   })
   it('ignores a payday that is under the floor anyway', () => {
-    expect(savingsDip([c(500), c(50)], [c(900), c(80)], 100)).toBe(-1)
+    expect(savingsDip([c(50000), c(5000)], [c(90000), c(8000)], 10000)).toBe(-1)
+  })
+  it('a payday short by cents is at the floor', () => {
+    expect(savingsDip([c(9970)], [c(90000)], 10000)).toBe(-1)
   })
 })
 

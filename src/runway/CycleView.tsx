@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { parseDate, addDays, formatDate } from '../engine/dates'
 import type { Runway } from './runwaySeries'
+import { underFloor, overdrawn } from '../engine/floor'
 
 /**
  * The Cycle screen in the new look (Journey 8): Hero E, the runway, and one
@@ -109,8 +110,9 @@ export default function CycleView(p: Props) {
 
   /* ── hero E ── */
   const spare = p.closingCents - p.floorCents
-  const level = p.closingCents < 0 ? 'under' : spare < 0 ? 'near' : 'ok'
-  const heroValue = level === 'under' ? p.closingCents : spare
+  const level = overdrawn(p.closingCents) ? 'under' : underFloor(p.closingCents, p.floorCents) ? 'near' : 'ok'
+  // At the floor by cents shows as $0 spare, not −$0 (25 Nov 2026).
+  const heroValue = level === 'under' ? p.closingCents : level === 'ok' ? Math.max(0, spare) : spare
   const heroWords = level === 'under' ? 'overdrawn before pay' : level === 'near' ? 'into your floor before pay' : 'spare before pay'
 
   /* ── the list, ordered around today ── */

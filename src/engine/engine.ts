@@ -7,6 +7,7 @@ import { parseDate, formatDate, addDays, daysBetween } from './dates'
 import { getOccurrencesInRange, nthOccurrence, stepOf, occurrencesOf, scheduleOn, scheduleSegments, changesInOrder } from './recurrence'
 import type { Scheduled, Schedule } from './recurrence'
 import { stepCredit } from './credit'
+import { underFloor } from './floor'
 
 /** How the pay cycle repeats: the primary income's frequency and every-N. */
 export interface CycleRule {
@@ -599,7 +600,7 @@ export function projectCycles(input: CycleInput): CycleResult[] {
       creditClosingBalanceCents, creditSpareCents,
       committedClosingBalanceCents, potentialClosingBalanceCents,
       safetyFloorCents,
-      breachesFloor: committedClosingBalanceCents < safetyFloorCents,
+      breachesFloor: underFloor(committedClosingBalanceCents, safetyFloorCents),
     })
 
     committedBalance = committedClosingBalanceCents
@@ -645,7 +646,11 @@ export interface BillPrompt {
 export function billPrompts(
   input: CycleInput,
   // Paydays the user already chose to let dip for a bill. Not asked again.
-  accepted: { expenseId: string; cycleStart: string }[] = []
+  accepted: { expenseId: string; cycleStart: string }[] = [],
+  // Today. A payment already gone out can't be put away for or moved, so
+  // dates before today aren't asked about (25 Nov 2026: every expense paid
+  // earlier this cycle was showing under Needs you).
+  today?: string
 ): BillPrompt[] {
   const floor = input.safetyFloorCents
   const base = projectCycles(input)
@@ -656,11 +661,11 @@ export function billPrompts(
     (everyCycleMemo[exp.id] ??= base.every(b => occurrencesOf(exp, b.startDate, b.endDate).length > 0))
 
   base.forEach((c, i) => {
-    if (c.committedClosingBalanceCents >= floor) return
+    if (!underFloor(c.committedClosingBalanceCents, floor)) return
     for (const exp of input.expenses) {
       if (exp.mode === 'budget' || hasPot.has(exp.id)) continue
       if (accepted.some(a => a.expenseId === exp.id && a.cycleStart === c.startDate)) continue
-      const dates = occurrencesOf(exp, c.startDate, c.endDate)
+      const dates = occurrencesOf(exp, c.startDate, c.endDate).filter(d => !today || d >= today)
       if (dates.length === 0) continue
       // A bill in every cycle can't be what makes one payday the low one, and
       // a pot for it would set aside and pay the same amount each cycle —
@@ -671,7 +676,7 @@ export function billPrompts(
       if (billCents <= 0) continue
 
       // 1. Is this bill the reason?
-      if (c.committedClosingBalanceCents + billCents < floor) continue
+      if (underFloor(c.committedClosingBalanceCents + billCents, floor)) continue
 
       // 2. Would a pot for it fix this payday without breaking an earlier one?
       const trial: SavingsGoal = {
@@ -679,9 +684,9 @@ export function billPrompts(
         startCycleStart: input.startDate, savedSoFarCents: 0, overrides: [], expenseId: exp.id,
       }
       const tried = projectCycles({ ...input, savingsGoals: [...(input.savingsGoals ?? []), trial] })
-      let fixes = tried[i].committedClosingBalanceCents >= floor
+      let fixes = !underFloor(tried[i].committedClosingBalanceCents, floor)
       for (let j = 0; j < i && fixes; j++) {
-        if (base[j].committedClosingBalanceCents >= floor && tried[j].committedClosingBalanceCents < floor) fixes = false
+        if (!underFloor(base[j].committedClosingBalanceCents, floor) && underFloor(tried[j].committedClosingBalanceCents, floor)) fixes = false
       }
       const lines = tried.slice(0, i + 1).map(t => t.savingsLines.find(l => l.goalId === '__trial')?.amountCents ?? 0)
 

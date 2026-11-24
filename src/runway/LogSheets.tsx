@@ -17,6 +17,7 @@ import { notifyDataChanged } from '../lib/dataEvents'
 import { useToast } from './toastContext'
 import { LogContext, type LogApi } from './logContext'
 import AddSheet from './AddSheet'
+import { underFloor, overdrawn } from '../engine/floor'
 
 /**
  * Journey 5: one sheet to log spend, behind both + buttons, and a budget's
@@ -475,7 +476,7 @@ function LogSheet({ data, accountId, view, onClose, onDone, onAddOther, currency
   }, [data, budgetId, cents, date, extra, e])
   const baseClose = sim?.baseClose ?? data.closingCents
   const newClose = sim?.newClose ?? data.closingCents
-  const level = newClose < 0 ? 'under' : newClose < data.floorCents ? 'near' : 'ok'
+  const level = overdrawn(newClose) ? 'under' : underFloor(newClose, data.floorCents) ? 'near' : 'ok'
   // The card took all of it: less goes to the card, the balance stays put.
   const cardTookIt = !!sim && sim.newClose === sim.baseClose && sim.cardAfter < sim.cardBefore
 
