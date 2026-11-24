@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import Sheet, { reportError } from './Sheet'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
-import { loadForecast, type ForecastResult } from '../lib/forecast'
+import { loadForecast, projectFromRows, toEngineExpenses, type ForecastResult } from '../lib/forecast'
+import { occurrencesOf } from '../engine/recurrence'
+import { addDays, formatDate } from '../engine/dates'
 import { savedSoFarCents } from '../lib/savings'
 import {
   confirmSavingsContribution, unconfirmSavingsContribution, setSavingsOverride, clearSavingsOverride,
@@ -157,17 +159,19 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
   }
 
   const setAside = () => act(async () => {
-    await confirmSavingsContribution(goal.id, accountId, c.startDate, isPot ? l0 : null)
-    toast(`${name}: ${money(l0)} set aside`, { undo: async () => { await unconfirmSavingsContribution(goal.id, c.startDate); notifyDataChanged() } })
+    // Money for an expense is set aside at the slider's amount; that amount is
+    // stored for the cycle too, so the rest spreads over the cycles left.
+    const amt = isPot ? now : l0, was = ovOf(c.startDate)
+    if (isPot && now !== l0) await setSavingsOverride(goal.id, accountId, c.startDate, now)
+    await confirmSavingsContribution(goal.id, accountId, c.startDate, isPot ? amt : null)
+    toast(`${name}: ${money(amt)} set aside`, { undo: async () => {
+      await unconfirmSavingsContribution(goal.id, c.startDate)
+      if (isPot && now !== l0) await putBack([{ start: c.startDate, was }])
+      notifyDataChanged() } })
   }, 'That wasn’t saved.')
   const unsetAside = () => act(async () => {
     await unconfirmSavingsContribution(goal.id, c.startDate)
     toast(`${name}: not set aside`, { undo: async () => { await confirmSavingsContribution(goal.id, accountId, c.startDate, contribution?.amount_cents ?? null); notifyDataChanged() } })
-  }, 'That wasn’t saved.')
-  // Money put away for an expense: a skip is spread over the cycles left (release 6).
-  const skipPot = () => act(async () => {
-    await setSavingsOverride(goal.id, accountId, c.startDate, 0)
-    toast(`${name}: skipped ${that.toLowerCase()} cycle`, { undo: () => putBack([{ start: c.startDate, was: ov }]) })
   }, 'That wasn’t saved.')
   // Undo a stored skip: this cycle's $0 goes, and a catch-up stored for next cycle goes with it.
   const unskip = () => act(async () => {
@@ -224,7 +228,45 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
     setD(sk)
   }
 
-  const head = isPot ? `Put away for ${potExpense?.name ?? 'an expense'}`
+  /* ── money put away for an expense: this cycle's amount, like the card's "Pay this cycle" (24 Nov 2026).
+   * The expense fixes the total and the due date; the forecast spreads whatever
+   * this cycle doesn't put away over the cycles left until it's due. ── */
+  const potExp = useMemo(() => isPot ? toEngineExpenses(rows.expenseRows).find(e => e.id === goal.expense_id) : undefined, [rows])
+  const due = useMemo(() => potExp ? occurrencesOf(potExp, c.startDate, formatDate(addDays(parseDate(c.startDate), 3 * 366)))[0] ?? null : null, [potExp])
+  const kDue = due ? P.kOf(due) : -1
+  const potLines = (p2: typeof cycles) => p2.slice(k0, kDue >= k0 ? kDue + 1 : k0 + 1).map((_x, i) => P.lineOf(p2, k0 + i))
+  const potNeed = isPot ? potLines(cycles).reduce((a, b) => a + b, 0) : 0
+  const dueCents = isPot ? (cycles.slice(k0).flatMap(x => x.savingsLines).find(l => l.goalId === goal.id)?.targetCents ?? 0) : 0
+  const potRows = (cents: number) => ({ ...rows, savingsOverrideRows: [
+    ...(rows.savingsOverrideRows ?? []).filter((o: any) => !(o.savings_goal_id === goal.id && o.cycle_start === c.startDate)),
+    { savings_goal_id: goal.id, account_id: accountId, cycle_start: c.startDate, amount_cents: cents }] })
+  const potProject = (cents: number) => projectFromRows(potRows(cents), floorCents, cycles.length)
+  const [now, setNow] = useState(l0)
+  const potBase = useMemo(() => isPot ? projectFromRows(rows, floorCents, cycles.length) : cycles, [rows])
+  const potProj = useMemo(() => isPot && now !== l0 ? potProject(now) : potBase, [now, potBase])
+  const potFits = useMemo(() => {
+    if (!isPot || potNeed <= 0) return null
+    const ok = (v: number) => P.fits(potProject(v), potBase)
+    if (ok(potNeed)) return potNeed
+    let lo2 = 0, hi2 = potNeed
+    while (hi2 - lo2 > 500) { const mid = Math.round((lo2 + hi2) / 2 / 500) * 500; if (ok(mid)) lo2 = mid; else hi2 = mid }
+    return lo2
+  }, [potBase, potNeed])
+  const potLeft = isPot ? potLines(potProj).reduce((a, b) => a + b, 0) : 0
+  const potShort = Math.max(0, potNeed - potLeft)
+  const potLowAt = isPot ? P.lowest(potProj, potBase) : -1
+  const potLo = potLowAt >= 0 ? potProj[potLowAt].committedClosingBalanceCents : null
+  const potSpan = Math.min(cycles.length - k0, Math.max(8, kDue - k0 + 2))
+  const potReady = (() => { let last = -1; potLines(potProj).forEach((a, i) => { if (a > 0) last = k0 + i }); return last })()
+  const potReadyNow = (() => { let last = -1; potLines(potBase).forEach((a, i) => { if (a > 0) last = k0 + i }); return last })()
+  const potPct = (v: number) => Math.min(100, Math.max(0, v / Math.max(1, potNeed) * 100))
+  const savePot = () => act(async () => {
+    const was = ovOf(c.startDate)
+    await setSavingsOverride(goal.id, accountId, c.startDate, now)
+    toast(now === 0 ? `${name}: skipped ${that.toLowerCase()} cycle` : `${name}: ${money(now)} ${that.toLowerCase()} cycle`, { undo: () => putBack([{ start: c.startDate, was }]) })
+  }, 'That wasn’t saved.')
+
+  const head = isPot ? (due ? `${money(dueCents)} due ${short(due)} · ${money(have)} put away` : `Put away for ${potExpense?.name ?? 'an expense'}`)
     : <>{money(have)} of {money(goal.target_cents)} · {goal.target_date ? <>by {short(goal.target_date)}{behind ? <> · <span className="rw-warn">behind</span></> : ''}</> : 'no date'}</>
   const cta = d.restart != null ? `Pause until ${short(P.startOf(d.restart))}`
     : d.skip ? (d.catchUp ? `Skip · ${money(l0 + d.per)} next cycle` : d.per !== goal.per_cycle_cents ? `Skip · ${money(d.per)} a cycle` : `Skip ${that.toLowerCase()} cycle`)
@@ -285,12 +327,44 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
         </>}
       </div>}
 
+      {isPot && state === 'todo' && potNeed > 0 && <>
+        <div className="rw-card rw-sl-card">
+          <div className="rw-pv-k"><span>Put away {that.toLowerCase()} cycle</span>{now !== l0 && <span>planned {money(l0)}</span>}</div>
+          <div className="rw-amt"><span>{sym}</span>
+            <input type="number" inputMode="decimal" aria-label={`Put away ${that.toLowerCase()} cycle`} value={now / 100}
+              onChange={e => setNow(Math.min(potNeed, Math.max(0, Math.round((parseFloat(e.target.value) || 0) * 100))))} /></div>
+          <div className={`rw-gain${potShort > 0 ? ' flat' : ''}`}><b>{potShort > 0 ? `${money(potShort)} short` : `Ready by ${due ? short(due) : 'the due date'}`}</b>
+            <span>{now === 0 ? 'skipped · the rest spreads over the cycles left' : now !== l0 ? 'the rest spreads over the cycles left' : `${money(potNeed)} still to put away`}</span></div>
+          {potLo != null && <div className="rw-sl-tag">{potLo < 0 ? <span className="n">Overdrawn before pay {short(P.startOf(potLowAt + 1))}</span> : <span className="w">Into your floor before pay {short(P.startOf(potLowAt + 1))}</span>}</div>}
+          <div className="rw-sl">
+            <div className="sl-rail" />
+            {potFits != null && potFits < potNeed && <div className="sl-zone" style={{ left: potPct(potFits) + '%', right: 0 }} />}
+            <div className="sl-fill" style={{ width: potPct(now) + '%' }} />
+            <div className={`sl-mk${now === l0 ? ' on' : ''}`} style={{ left: potPct(l0) + '%' }} />
+            <input type="range" aria-label={`Put away ${that.toLowerCase()} cycle`} aria-valuetext={money(now)} min={0} max={potNeed / 100} step={5}
+              value={now / 100} onChange={e => setNow(Math.min(potNeed, Math.round(+e.target.value * 100)))} />
+          </div>
+          <div className="rw-ends">
+            <button type="button" onClick={() => setNow(0)}><b>{money(0)}</b>skip</button>
+            <button type="button" className="r" onClick={() => setNow(potNeed)}><b>{money(potNeed)}</b>all of it</button>
+          </div>
+          <div className="rw-snaps">
+            <button type="button" className={now === l0 ? 'on' : ''} onClick={() => setNow(l0)}>Planned {money(l0)}</button>
+            {potFits != null && potFits !== l0 && potFits !== potNeed && <button type="button" className={now === potFits ? 'on' : ''} onClick={() => setNow(potFits)}>Fits {money(potFits)}</button>}
+            {potNeed !== l0 && <button type="button" className={now === potNeed ? 'on' : ''} onClick={() => setNow(potNeed)}>All of it {money(potNeed)}</button>}
+          </div>
+        </div>
+        <Preview nowCents={potBase.slice(k0, k0 + potSpan).map(x => x.committedClosingBalanceCents)} newCents={potProj.slice(k0, k0 + potSpan).map(x => x.committedClosingBalanceCents)}
+          payDates={Array.from({ length: potSpan }, (_, i) => P.startOf(k0 + i + 1))} floorCents={floorCents} money={money}
+          title={`Before each payday until it’s due`} done={{ now: at(potReadyNow), next: at(potReady) }} doneLabel="ready"
+          third={{ k: 'Due', v: due ? short(due) : '—', d: potShort > 0 ? `${money(potShort)} short` : 'ready in time', cls: potShort > 0 ? 'near' : 'good' }} tilesFirst />
+      </>}
       {!isPot && !reached && <Preview nowCents={closes(base)} newCents={closes(proj)} payDates={payDates} floorCents={floorCents} money={money}
         title="Before each payday until it’s saved" third={third} done={{ now: at(baseFin), next: at(fin) }} doneLabel="saved" tilesFirst />}
 
       <div className="rw-group flush" style={{ marginTop: 10 }}>
         <div className="rw-row static">
-          <div className="rw-tx"><div className="rw-row-name">{that} cycle · {money(state === 'skipped' || d.skip ? 0 : l0)}</div>
+          <div className="rw-tx"><div className="rw-row-name">{that} cycle · {money(state === 'skipped' || d.skip ? 0 : isPot && state === 'todo' ? now : l0)}</div>
             <div className="rw-sub">{state === 'done' ? <span className="rw-ok">Set aside ✓</span>
               : state === 'skipped' || d.skip ? (proj[k0] && base[k0] && proj[k0].creditPaymentCents > base[k0].creditPaymentCents + 50 ? `Skipped · the ${money(l0)} goes to your card` : 'Skipped')
               : reached ? 'Fully saved' : 'Not set aside yet'}</div></div>
@@ -298,7 +372,7 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
             : state === 'skipped' ? <button type="button" className="rw-mini sec" disabled={busy} onClick={unskip}>Undo</button>
             : d.skip ? <button type="button" className="rw-mini sec" onClick={() => setD(base0)}>Undo</button>
             : l0 > 0 && <span className="rw-pair">
-                <button type="button" className="rw-mini sec" disabled={busy || d.restart != null} onClick={isPot ? skipPot : skipDraft}>Skip</button>
+                <button type="button" className="rw-mini sec" disabled={busy || d.restart != null} onClick={isPot ? () => setNow(0) : skipDraft}>Skip</button>
                 <button type="button" className="rw-mini" disabled={busy} onClick={setAside}>Set aside</button></span>}
         </div>
         <button type="button" className="rw-row" aria-expanded={openHist} onClick={() => setOpenHist(v => !v)}>
@@ -331,6 +405,9 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
         {fixing ? <>
           <button type="button" className="rw-cta sec" onClick={() => setFixing(false)}>Cancel</button>
           <button type="button" className="rw-cta" disabled={busy || fixCents === have} onClick={saveFix}>{busy ? 'Saving…' : `Save ${money(fixCents)}`}</button>
+        </> : isPot && state === 'todo' && now !== l0 ? <>
+          <button type="button" className="rw-cta sec" onClick={() => setNow(l0)}>Cancel</button>
+          <button type="button" className="rw-cta" disabled={busy} onClick={savePot}>{busy ? 'Saving…' : <>{now === 0 ? `Skip ${that.toLowerCase()} cycle` : `Put away ${money(now)} ${that.toLowerCase()} cycle`}{potLo != null && potLo < 0 ? ' anyway' : ''}</>}</button>
         </> : dirty && !isPot ? <>
           <button type="button" className="rw-cta sec" onClick={() => changed ? (setD(base0), setDated(!!goal.target_date)) : onClose()}>{changed ? 'Cancel' : 'Not now'}</button>
           <button type="button" className="rw-cta" disabled={busy} onClick={savePlan}>{busy ? 'Saving…' : <>{cta}{lo != null && lo < 0 ? ' anyway' : ''}</>}</button>
