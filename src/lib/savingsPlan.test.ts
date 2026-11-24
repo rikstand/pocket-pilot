@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 // The planner runs the forecast; these tests cover the pure parts only.
 vi.mock('./forecast', () => ({ projectFromRows: () => [] }))
-import { perFor, draftOverrides, savingsDip, unstamped, type Draft } from './savingsPlan'
+import { perFor, draftOverrides, savingsDip, unstamped, makePlanner, type Draft } from './savingsPlan'
 
 const draft = (p: Partial<Draft>): Draft => ({ per: 15000, skip: false, catchUp: false, restart: null, ...p })
 const none = () => undefined
@@ -65,5 +65,16 @@ describe('unstamped: what confirmed cycles count for before a new amount', () =>
       savingsOverrideRows: [{ savings_goal_id: 'g', cycle_start: '2026-10-24', amount_cents: 5000 }],
     } as any
     expect(unstamped(rows, goal).map(c => [c.cycle_start, c.amount_cents])).toEqual([['2026-10-10', 16700], ['2026-10-24', 5000]])
+  })
+})
+
+describe('makePlanner: dates for any cycle', () => {
+  const rows: any = { cycles: [{ startDate: '2026-11-15', savingsLines: [] }, { startDate: '2026-11-29', savingsLines: [] }],
+    savingsOverrideRows: [], savingsContributionRows: [], savingsGoalRows: [] }
+  const P = makePlanner(rows, { id: 'g', per_cycle_cents: 0, target_cents: 0 }, 'a', 10000, 0, 0)
+  it('a goal with nothing left (finish -1) still has a date, so the sheet opens (blank-screen fix, 24 Nov)', () => {
+    expect(P.startOf(-1)).toBe('2026-11-01')
+    expect(P.startOf(3)).toBe('2026-12-27')
+    expect(P.kOf('2026-12-01')).toBe(1)
   })
 })

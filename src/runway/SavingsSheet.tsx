@@ -111,8 +111,8 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
   }, [P, rem, from])
   const fitPer = early != null ? perFor(rem, from, early) : null
   const keep = kD >= from ? perFor(rem, from, kD) : null
-  const behind = kD >= 0 && baseFin > kD
-  const moved = !!goal.target_date && fin > kD
+  const behind = !isPot && kD >= 0 && baseFin > kD
+  const moved = !isPot && !!goal.target_date && fin > kD
   const changed = d.per !== goal.per_cycle_cents || d.skip || d.catchUp || d.restart != null || (dated && !goal.target_date)
   const dirty = changed || (moved && behind)
   const lowAt = P.lowest(proj, base)
@@ -229,6 +229,7 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
   const cta = d.restart != null ? `Pause until ${short(P.startOf(d.restart))}`
     : d.skip ? (d.catchUp ? `Skip · ${money(l0 + d.per)} next cycle` : d.per !== goal.per_cycle_cents ? `Skip · ${money(d.per)} a cycle` : `Skip ${that.toLowerCase()} cycle`)
     : d.per !== goal.per_cycle_cents ? `Save · ${money(d.per)} a cycle`
+    : fin < 0 ? 'Save'
     : changed ? `Save · by ${short(P.startOf(fin))}`
     : `Move to ${short(P.startOf(fin))}`
 

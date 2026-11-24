@@ -55,7 +55,10 @@ export function makePlanner(rows: ForecastResult, goal: any, accountId: string, 
   const cycles = rows.cycles
   const n = cycles.length
   const len = n > 1 ? Math.round((parseDate(cycles[1].startDate).getTime() - parseDate(cycles[0].startDate).getTime()) / 864e5) : 14
-  const startOf = (k: number) => k < n ? cycles[k].startDate : formatDate(addDays(parseDate(cycles[n - 1].startDate), len * (k - n + 1)))
+  // Any cycle, before or past the forecast too (k < 0 is before it).
+  const startOf = (k: number) => k >= 0 && k < n ? cycles[k].startDate
+    : k < 0 ? formatDate(addDays(parseDate(cycles[0].startDate), len * k))
+    : formatDate(addDays(parseDate(cycles[n - 1].startDate), len * (k - n + 1)))
   /** The cycle a date falls in (any date, past the forecast too). */
   const kOf = (d: string) => {
     let k = 0
