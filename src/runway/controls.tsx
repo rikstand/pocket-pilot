@@ -42,42 +42,61 @@ export function Segmented<T extends string>({ options, value, onChange, small }:
   )
 }
 
-/* ── Date chips: any date from today on ──────────────────────────────────
- * Today, the next three pay dates, and Custom (any date, from the phone's
- * own date picker). Two lines: the date, then what it is. Pick a start;
- * never a start and an end in one place. */
-// The year only when it's more than about 11 months away (design system).
+/* ── Date chips: one row, at most three dates and Other ─────────────────
+ * Agreed 24 Nov 2026 (mock pp-savings-by-date-6b, 3.1): the Segmented
+ * control's track with four equal slots. The first date (today, or `min`),
+ * then pay dates, then Other, which opens the phone's own date picker. A date
+ * from Other, or one set elsewhere (a slider), sits in the Other slot and
+ * stays selected. Two short lines per slot: the date, then what it is; the
+ * full wording is read out. When text is large the row splits into two per
+ * line. Pick a start; never a start and an end in one place. */
+// No weekday; the year only when it's more than about 11 months away (design system).
 const chipDate = (d: string) => {
   const x = parseDate(d), far = (x.getTime() - Date.now()) / 864e5 > 330
-  return x.toLocaleDateString('en-NZ', far ? { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }
-    : { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
+  const dm = x.toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+  return far ? `${dm} ’${String(x.getFullYear()).slice(2)}` : dm
 }
+const CHIP_SAYS: Record<string, string> = { earliest: 'earliest date that fits', 'too soon': 'too soon, a payday goes under your floor' }
+const chipTone = (tag: string) => tag === 'earliest' ? ' good' : tag === 'too soon' ? ' near' : ''
 
-export function DateChips({ value, onChange, today, payDates, min, label, tagFor }: {
+export function DateChips({ value, onChange, today, payDates, min, otherMin, keep, label, tagFor }: {
   value: string; onChange: (d: string) => void; today: string; payDates: string[]; min?: string; label: string
-  // The second line for each date, where "today" / "payday" isn't right.
+  // Other may go earlier than the first slot (a date that's too soon is still allowed).
+  otherMin?: string
+  // A date that must keep its slot when there are more than three (the earliest that fits).
+  keep?: string | null
+  // The second line for each date, where "today" / "payday" isn't right. Keep it to a word or two.
   tagFor?: (d: string, i: number) => string
 }) {
   const input = useRef<HTMLInputElement>(null)
   const floor = min && min > today ? min : today
-  const opts: { d: string; tag: string }[] = []
-  if (floor === today) opts.push({ d: today, tag: 'today' })
-  else opts.push({ d: floor, tag: 'first date' })
-  for (const p of payDates) if (p > floor && opts.length < 4 && !opts.some(o => o.d === p)) opts.push({ d: p, tag: 'payday' })
+  let opts: { d: string; tag: string }[] = [{ d: floor, tag: floor === today ? 'today' : 'first date' }]
+  for (const p of payDates) if (p > floor && !opts.some(o => o.d === p)) opts.push({ d: p, tag: 'payday' })
+  if (opts.length > 3) {
+    const kept = keep ? opts.find((o, i) => i > 2 && o.d === keep) : null
+    opts = kept ? [...opts.slice(0, 2), kept] : opts.slice(0, 3)
+  }
   if (tagFor) opts.forEach((o, i) => { o.tag = tagFor(o.d, i) })
-  const custom = !opts.some(o => o.d === value)
+  const other = !!value && !opts.some(o => o.d === value)
+  const otherTag = other && tagFor ? tagFor(value, 3) : 'other'
+  const pickMin = otherMin && otherMin < floor ? otherMin : floor
   return (
-    <div className="rw-dchips" role="group" aria-label={label}>
-      {opts.map(o => (
-        <button key={o.d} type="button" className={value === o.d ? 'on' : ''} onClick={() => onChange(o.d)}>
-          <b>{chipDate(o.d)}</b><span>{o.tag}</span>
-        </button>
-      ))}
-      <label className={`rw-dchip-custom${custom ? ' on' : ''}`}>
-        <b>{custom ? chipDate(value) : 'Custom'}</b><span>any date</span>
-        <input ref={input} type="date" min={floor} value={value} aria-label={`${label}: any date`}
-          onChange={e => { if (e.target.value && e.target.value >= floor) onChange(e.target.value) }} />
-      </label>
+    <div className="rw-dchips-w">
+      <div className="rw-dchips" role="radiogroup" aria-label={label}>
+        {opts.map(o => (
+          <button key={o.d} type="button" role="radio" aria-checked={value === o.d} className={value === o.d ? 'on' : ''}
+            aria-label={`${chipDate(o.d)}, ${CHIP_SAYS[o.tag] ?? o.tag}`} onClick={() => onChange(o.d)}>
+            <b>{chipDate(o.d)}</b><span className={chipTone(o.tag)}>{o.tag}</span>
+          </button>
+        ))}
+        <label className={`rw-dchip-custom${other ? ' on' : ''}`}>
+          <b>{other ? chipDate(value) : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><rect x="4" y="5" width="16" height="16" rx="2" /><path d="M16 3v4M8 3v4M4 11h16" /></svg>}</b>
+          <span className={other ? chipTone(otherTag) : ''}>{other ? otherTag : 'other'}</span>
+          <input ref={input} type="date" min={pickMin} value={value}
+            aria-label={other ? `${label}: ${chipDate(value)}, ${CHIP_SAYS[otherTag] ?? otherTag}. Pick another date` : `${label}: another date`}
+            onChange={e => { if (e.target.value && e.target.value >= pickMin) onChange(e.target.value) }} />
+        </label>
+      </div>
     </div>
   )
 }

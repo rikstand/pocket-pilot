@@ -32,6 +32,7 @@ import {
 import { loadForecast, projectFromRows, cardWithPlanOn, cycleTickLabel, cycleDateLabel, baseYearOf, baselineChecks, previewBudgetChange, toEngineExpenses, toEngineIncome } from './lib/forecast'
 import type { ForecastResult } from './lib/forecast'
 import { savedSoFarCents } from './lib/savings'
+import { unstamped } from './lib/savingsPlan'
 import { nthOccurrence, occurrencesOf, scheduleOn } from './engine/recurrence'
 import { budgetAmountForCycle, cycleEndAt, nextCycleFor } from './engine/engine'
 import type { CycleRule } from './engine/engine'
@@ -182,6 +183,15 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
   // the same as their own ‹ buttons.
   useBackLayer(newLook && showPast, () => setShowPast(false))
   useBackLayer(newLook && fcOpen, () => { setFcOpen(false); setActiveIdx(findCurrentIdx(cycles)) })
+  // A later cycle opened with › on Cycle (fix 24 Nov 2026): kept across reloads
+  // (a save there shouldn't jump back), and Back returns to this cycle.
+  const viewStart = useRef<string | null>(null)
+  const goCycle = (idx: number) => { setActiveIdx(idx); viewStart.current = idx === findCurrentIdx(cycles) ? null : cycles[idx]?.startDate ?? null }
+  const shownIdx = (list: any[]) => {
+    const k = variant === 'cycle' && viewStart.current ? list.findIndex((c: any) => c.startDate === viewStart.current) : -1
+    return k >= 0 ? k : findCurrentIdx(list)
+  }
+  useBackLayer(newLook && variant === 'cycle' && cycles.length > 0 && activeIdx > findCurrentIdx(cycles), () => goCycle(findCurrentIdx(cycles)))
   // An item opened from a cycle in the new look: the Journey 9 item sheet,
   // set to that cycle (Journey 6).
   const [rwItem,             setRwItem]             = useState<{ id: string; isIncome: boolean } | null>(null)
@@ -392,7 +402,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
           return stored ? { ...p, id: stored.id } : p
         })
         setCycles(cyclesWithIds)
-        setActiveIdx(findCurrentIdx(cyclesWithIds))
+        setActiveIdx(shownIdx(cyclesWithIds))
       } catch (e: any) { setError(e.message) }
       finally { loadedFor.current = loadKey; setLoading(false) }
     }
@@ -412,7 +422,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
 
   useEffect(() => {
     if (variant === 'cycle' && cycles.length) {
-      setActiveIdx(findCurrentIdx(cycles))
+      setActiveIdx(shownIdx(cycles))
     }
   }, [variant, cycles])
 
@@ -1483,6 +1493,10 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
       if (savAdjScope === 'always') {
         // New standing amount. Clear this cycle's exception too, or the old
         // one-off would override the plan you just set.
+        // Fix earlier confirmed cycles at what they count for now first, or the
+        // new amount would rewrite what's already saved (found 24 Nov 2026).
+        for (const c of unstamped({ savingsContributionRows: savingsDone, savingsOverrideRows: forecastRows?.savingsOverrideRows ?? [] }, savAdjust))
+          await confirmSavingsContribution(savAdjust.id, accountId, c.cycle_start, c.amount_cents)
         await updateSavingsGoal(savAdjust.id, { per_cycle_cents: cents })
         await clearSavingsOverride(savAdjust.id, activeCycle.startDate)
       } else if (cents === savAdjust.per_cycle_cents) {
@@ -2662,11 +2676,17 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
         ended={status === 'overdue'}
         onClose={() => setRwCloseOpen(true)}
         onForecast={() => onForecast?.()}
+        onNext={!isForecast && currentIdx + 1 < cycles.length ? () => goCycle(currentIdx + 1) : undefined}
         onPast={hasClosed && !isForecast ? () => setShowPast(true) : undefined}
         forecastNav={isForecast ? {
           onPrev: activeIdx > currentIdx ? () => setActiveIdx(activeIdx - 1) : undefined,
           onNext: activeIdx < cycles.length - 1 ? () => setActiveIdx(activeIdx + 1) : undefined,
           onBack: () => { setFcOpen(false); setActiveIdx(currentIdx) },
+        } : activeIdx > currentIdx ? {
+          onPrev: () => goCycle(activeIdx - 1),
+          onNext: activeIdx < cycles.length - 1 ? () => goCycle(activeIdx + 1) : undefined,
+          onBack: () => goCycle(currentIdx),
+          backLabel: 'Back to this cycle',
         } : undefined}
         onAddToCycle={openAddToCycle}
         byType={cycleBody}

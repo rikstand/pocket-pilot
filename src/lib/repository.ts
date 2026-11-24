@@ -958,7 +958,7 @@ export async function commitWishlistBnpl(
 export async function commitWishlistSaving(
   accountId: string,
   item: { id: string; name: string; amountCents: number },
-  goal: { perCycleCents: number; cyclesTotal: number; startCycleStart: string }
+  goal: { perCycleCents: number; cyclesTotal: number; startCycleStart: string; targetDate?: string | null }
 ) {
   await claimWishlistItem(item.id)
   let made: any = null
@@ -966,6 +966,7 @@ export async function commitWishlistSaving(
     made = await createSavingsGoal(accountId, {
       name: item.name, target_cents: item.amountCents, per_cycle_cents: goal.perCycleCents,
       cycles_total: goal.cyclesTotal, start_cycle_start: goal.startCycleStart, wishlist_item_id: item.id,
+      target_date: goal.targetDate ?? null,
     })
     const { error } = await supabase
       .from('wishlist_items')
@@ -1365,6 +1366,7 @@ export async function createSavingsGoal(
     cycles_total: number
     start_cycle_start: string
     wishlist_item_id?: string | null
+    target_date?: string | null    // saved by (release 6b); the start of the cycle its last set-aside falls in
   }
 ) {
   const { data, error } = await supabase
@@ -1405,6 +1407,7 @@ export async function updateSavingsGoal(
     adjusted_total_cents?: number | null
     adjusted_at?: string | null
     status?: 'active' | 'completed' | 'cancelled'
+    target_date?: string | null
   }
 ) {
   const { data, error } = await supabase

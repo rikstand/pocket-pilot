@@ -555,17 +555,28 @@ body.is-runway #root { border-inline: none; }
 .rw-stepper b { min-width: 26px; text-align: center; font: var(--rw-text-tile); }
 .rw-every { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; font: var(--rw-text-row-name); }
 
-/* Date chips: two lines, the date then what it is. radius-md, the one
-   exception to pill chips. Custom opens the phone's own date picker. */
-.rw-dchips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Date chips (24 Nov 2026): one row on the Segmented control's track, four
+   equal slots of two short lines. Other opens the phone's own date picker.
+   With large text (the slots would need more than about 18rem) it splits
+   into two per line. */
+.rw-dchips-w { container-type: inline-size; }
+.rw-pair { display: flex; gap: 6px; flex: 0 0 auto; }
+/* Picking one of a list (release 6b): a tick at the end of the row. */
+.rw-pick { width: calc(22 * var(--rw-u)); height: calc(22 * var(--rw-u)); flex: 0 0 auto; border-radius: 50%; border: 1.5px solid var(--rw-control-edge);
+  display: grid; place-items: center; font-size: calc(12 * var(--rw-u)); font-weight: 700; color: var(--rw-bg); }
+.rw-pick.on { background: var(--rw-ink); border-color: var(--rw-ink); }
+.rw-dchips { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; padding: 3px;
+  background: var(--rw-surface-2); border-radius: 11px; box-shadow: inset 0 0 0 1px var(--rw-control-edge); }
+@container (max-width: 18.5rem) { .rw-dchips { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .rw-dchips > button, .rw-dchip-custom {
-  position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; cursor: pointer;
-  border: 1px solid var(--rw-control-edge); background: var(--rw-surface); border-radius: var(--rw-radius-md); padding: 6px 10px; text-align: left;
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; cursor: pointer;
+  border: none; background: transparent; border-radius: 8px; padding: 6px 2px; min-height: calc(44 * var(--rw-u)); color: var(--rw-ink); font: inherit;
 }
-.rw-dchips b { font: var(--rw-text-row-name); font-size: calc(12 * var(--rw-u)); }
-.rw-dchips span { font: var(--rw-text-label); font-weight: 600; color: var(--rw-muted); }
-.rw .rw-dchips .on { background: var(--rw-ink); border-color: var(--rw-ink); color: var(--rw-bg); }
-.rw-dchips .on span { color: var(--rw-bg); opacity: .7; }
+.rw-dchips b { font: var(--rw-text-row-name); font-size: calc(13 * var(--rw-u)); white-space: nowrap; display: flex; align-items: center; }
+.rw-dchips span { font: var(--rw-text-label); font-weight: 600; color: var(--rw-muted); white-space: nowrap; }
+.rw-dchips span.good { color: var(--rw-good); }
+.rw-dchips span.near { color: var(--rw-near-floor-text); }
+.rw .rw-dchips .on { background: var(--rw-surface); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
 .rw-dchip-custom input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
 
 .rw-next { margin-top: 10px; font: var(--rw-text-sub); color: var(--rw-muted); }

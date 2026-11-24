@@ -827,7 +827,7 @@ function PayChange({ row: r, rows, floorCents, accountId, onBack, onSaved }: {
       <div className="rw-lab">First payday on the new schedule</div>
       <DateChips value={first} onChange={setFirst} today={P} min={P} label="First payday on the new schedule"
         payDates={[shift(P, 7), shift(P, 14)]}
-        tagFor={(_d, i) => i === 0 ? 'next payday' : i === 1 ? 'a week later' : 'two weeks later'} />
+        tagFor={(_d, i) => i === 0 ? 'next payday' : i === 1 ? '+1 week' : '+2 weeks'} />
 
       <div className="rw-lab">Each pay</div>
       <div className="rw-amtrow"><span>{sym}</span>

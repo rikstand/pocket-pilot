@@ -14,13 +14,19 @@ import { useToast } from './toastContext'
 import Preview from './Preview'
 import { Segmented, TextField } from './controls'
 import SavingsSheet from './SavingsSheet'
+import { saveDraft } from '../lib/savingsSave'
+import { DateChips } from './controls'
+import { makePlanner, perFor, savingsDip, type Draft } from '../lib/savingsPlan'
 
 /**
  * Plan › Savings (Journey 4, release 6; mock claude/pp-savings-6.html,
  * signed off 22 Nov).
  *
- *   Needs you              an expense ahead that takes a payday under the
- *                          floor (the engine's billPrompts), with Options
+ *   Needs you              a goal behind its date (release 6b); a payday
+ *                          the goals' set-asides take under the floor
+ *                          (release 6b); an expense ahead that takes a
+ *                          payday under the floor (the engine's
+ *                          billPrompts), with Options
  *   Set aside so far       and this cycle's total, with Mark all set aside
  *   Goals                  saving up
  *   Put away for expenses  pots for an expense
@@ -56,7 +62,7 @@ function Body({ rows, accountId, floorCents, fmt, sym }: {
   const toast = useToast()
   const money = (c: number) => (c < 0 ? '−' : '') + fmt(Math.abs(c), false)
   const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
-  const [open, setOpen] = useState<{ kind: 'goal' | 'prompt' | 'add'; id?: string } | null>(null)
+  const [open, setOpen] = useState<{ kind: 'goal' | 'prompt' | 'add' | 'dip'; id?: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const c0 = rows.cycles[0]
   const active = rows.savingsGoalRows.filter((g: any) => g.is_active !== false && (g.status ?? 'active') === 'active')
@@ -77,6 +83,19 @@ function Body({ rows, accountId, floorCents, fmt, sym }: {
   }, [rows, floorCents])
   const prompt = prompts.find(p => p.expenseId === open?.id)
 
+  // Each goal's "saved by" as the forecast has it, against its date (release 6b).
+  const status = useMemo(() => new Map(goals.map((g: any) => {
+    const P = makePlanner(rows, g, accountId, floorCents, 0, have(g))
+    const fin = P.finishOf(rows.cycles, g.per_cycle_cents)
+    return [g.id, { fin: fin >= 0 ? P.startOf(fin) : null, behind: !!g.target_date && fin > P.kOf(g.target_date) }]
+  })), [rows])
+  const late = goals.filter((g: any) => status.get(g.id)?.behind)
+  // A payday the goals' set-asides take under the floor (a pay drop, a new expense).
+  const without = useMemo(() => projectFromRows({ ...rows, savingsGoalRows: rows.savingsGoalRows.filter((g: any) => g.expense_id) }, floorCents, rows.cycles.length), [rows])
+  const projected = useMemo(() => projectFromRows(rows, floorCents, rows.cycles.length), [rows])
+  const dipK = useMemo(() => goals.length ? savingsDip(projected, without, floorCents) : -1, [projected, without])
+  const needs = prompts.length + late.length + (dipK >= 0 ? 1 : 0)
+
   async function markAll() {
     if (busy || !todo.length) return
     setBusy(true)
@@ -95,7 +114,9 @@ function Body({ rows, accountId, floorCents, fmt, sym }: {
       <button key={g.id} type="button" className="rw-row" onClick={() => setOpen({ kind: 'goal', id: g.id })}>
         <span className="rw-savmark" aria-hidden="true" />
         <div className="rw-tx"><div className="rw-row-name">{g.name ?? exp?.name}</div>
-          <div className="rw-sub">{g.expense_id ? `${money(h)} put away${exp ? ` for ${exp.name}` : ''}` : `${money(h)} of ${money(g.target_cents)}`}</div>
+          <div className="rw-sub">{g.expense_id ? `${money(h)} put away${exp ? ` for ${exp.name}` : ''}` : <>{money(h)} of {money(g.target_cents)} · {g.target_date
+            ? <>by {short(g.target_date)}{status.get(g.id)?.behind ? <> · <span className="rw-warn">behind</span></> : ''}</>
+            : <>no date{status.get(g.id)?.fin ? ` · yours ${short(status.get(g.id)!.fin!)}` : ''}</>}</>}</div>
           {!g.expense_id && <div className="rw-pb" aria-hidden="true"><i style={{ width: Math.min(100, h / Math.max(1, g.target_cents) * 100) + '%' }} /></div>}</div>
         <div className="rw-am">{skipped ? '' : money(lineOf(g))}<small className={done ? 'rw-ok' : ''}>{done ? 'set aside ✓' : skipped ? 'skipped' : lineOf(g) > 0 ? 'this cycle' : 'nothing this cycle'}</small></div>
         <span className="rw-chev">›</span>
@@ -110,9 +131,28 @@ function Body({ rows, accountId, floorCents, fmt, sym }: {
         <button type="button" className="rw-addb" onClick={() => setOpen({ kind: 'add' })}>+ Goal</button>
       </div>
 
-      {prompts.length > 0 && <>
-        <div role="heading" aria-level={2} className="rw-dl needs">Needs you<b>{prompts.length}</b><span>coming up</span></div>
+      {needs > 0 && <>
+        <div role="heading" aria-level={2} className="rw-dl needs">Needs you<b>{needs}</b><span>coming up</span></div>
         <div className="rw-group">
+          {late.map((g: any) => (
+            <div key={g.id} className="rw-row needs">
+              <button type="button" className="rw-row-main" onClick={() => setOpen({ kind: 'goal', id: g.id })}>
+                <span className="rw-savmark" aria-hidden="true" style={{ opacity: .45 }} />
+                <div className="rw-tx"><div className="rw-row-name">{g.name} · behind</div>
+                  <div className="rw-sub"><span className="rw-warn">Saved by {status.get(g.id)?.fin ? short(status.get(g.id)!.fin!) : 'later'}, not {short(g.target_date)}</span></div></div>
+              </button>
+              <button type="button" className="rw-mini sec" aria-label={`Options · ${g.name}`} onClick={() => setOpen({ kind: 'goal', id: g.id })}>Options</button>
+            </div>
+          ))}
+          {dipK >= 0 && (() => { const v = projected[dipK].committedClosingBalanceCents; return (
+            <div className="rw-row needs">
+              <button type="button" className="rw-row-main" onClick={() => setOpen({ kind: 'dip' })}>
+                <span className="rw-savmark" aria-hidden="true" style={{ opacity: .45 }} />
+                <div className="rw-tx"><div className="rw-row-name">Before pay {short(shift(rows.cycles[dipK].endDate, 1))}</div>
+                  <div className="rw-sub"><span className="rw-warn">{v < 0 ? `${money(-v)} overdrawn` : `${money(floorCents - v)} under your floor`} · from savings</span></div></div>
+              </button>
+              <button type="button" className="rw-mini sec" aria-label="Options · that payday" onClick={() => setOpen({ kind: 'dip' })}>Options</button>
+            </div>) })()}
           {prompts.map(p => (
             // Cycle's structure: the row's own button, and Options beside it, never inside it.
             <div key={p.expenseId} className="rw-row needs">
@@ -146,7 +186,8 @@ function Body({ rows, accountId, floorCents, fmt, sym }: {
 
       {open?.kind === 'goal' && open.id && <SavingsSheet accountId={accountId} goalId={open.id} rows={rows} onClose={() => setOpen(null)} />}
       {open?.kind === 'prompt' && prompt && <OptionsSheet prompt={prompt} rows={rows} accountId={accountId} floorCents={floorCents} money={money} short={short} onClose={() => setOpen(null)} />}
-      {open?.kind === 'add' && <AddGoalSheet accountId={accountId} startCycle={c0.startDate} sym={sym} money={money} onClose={() => setOpen(null)} />}
+      {open?.kind === 'add' && <AddGoalSheet accountId={accountId} rows={rows} floorCents={floorCents} sym={sym} money={money} short={short} onClose={() => setOpen(null)} />}
+      {open?.kind === 'dip' && dipK >= 0 && <DipSheet k={dipK} rows={rows} base={projected} without={without} goals={goals} have={have} accountId={accountId} floorCents={floorCents} money={money} short={short} onClose={() => setOpen(null)} />}
     </div>
   )
 }
@@ -237,17 +278,50 @@ function OptionsSheet({ prompt: p, rows, accountId, floorCents, money, short, on
 }
 
 /* ── + Goal: saving with nothing to buy (things to buy start on the Wishlist) ── */
-function AddGoalSheet({ accountId, startCycle, sym, money, onClose }: { accountId: string; startCycle: string; sym: string; money: (c: number) => string; onClose: () => void }) {
+/* ── New goal: the goal sheet's controls (release 6b). It starts next cycle and
+ * opens at the earliest "saved by" that fits; every new goal gets a date. ── */
+function AddGoalSheet({ accountId, rows, floorCents, sym, money, short, onClose }: {
+  accountId: string; rows: ForecastResult; floorCents: number; sym: string; money: (c: number) => string; short: (d: string) => string; onClose: () => void
+}) {
   const toast = useToast()
-  const [name, setName] = useState(''), [target, setTarget] = useState(''), [per, setPer] = useState(''), [busy, setBusy] = useState(false)
-  const t = Math.round((parseFloat(target) || 0) * 100), p = Math.round((parseFloat(per) || 0) * 100)
-  const n = t > 0 && p > 0 ? Math.ceil(t / p) : 0
+  const [name, setName] = useState(''), [tot, setTot] = useState(''), [busy, setBusy] = useState(false)
+  const target = Math.max(0, Math.round((parseFloat(tot) || 0) * 100))
+  const start = rows.cycles[1]?.startDate ?? rows.cycles[0].startDate
+  const mk = (per: number) => ({ id: '__new', account_id: accountId, name: name || 'New goal', target_cents: target, per_cycle_cents: per,
+    cycles_total: 0, start_cycle_start: start, status: 'active', is_active: true })
+  const plannerFor = (per: number) => {
+    const r = { ...rows, savingsGoalRows: [...rows.savingsGoalRows, mk(per)] }
+    return makePlanner(r, mk(per), accountId, floorCents, 0, 0)
+  }
+  const P = useMemo(() => plannerFor(10000), [rows, target])
+  const ref = useMemo(() => projectFromRows(rows, floorCents, rows.cycles.length), [rows])
+  const projFor = (per: number) => P.project({ per, skip: false, catchUp: false, restart: null })
+  const early = useMemo(() => {
+    if (!target) return null
+    for (let k = 1; k < P.n + 26; k++) if (P.fits(projFor(perFor(target, 1, k)), ref)) return k
+    return null
+  }, [P, target])
+  const fitPer = early != null ? perFor(target, 1, early) : null
+  const [pick, setPick] = useState<number | null>(null)
+  const per = pick ?? fitPer ?? perFor(target, 1, 26)
+  const proj = useMemo(() => target ? projFor(per) : ref, [P, per])
+  const fin = target ? P.finishOf(proj, per) : -1
+  const lowAt = P.lowest(proj, ref), lo = lowAt >= 0 ? proj[lowAt].committedClosingBalanceCents : null
+  const hi = Math.ceil(Math.max((fitPer ?? 0) * 1.5, per + 5000, 30000) / 5000) * 5000
+  const pct = (v: number) => Math.min(100, Math.max(0, v / hi * 100))
+  const cardMoves = proj.reduce((s2, x, k) => s2 + Math.abs((x.creditPaymentCents ?? 0) - (ref[k]?.creditPaymentCents ?? 0)), 0) >= 100
+  const clNow = P.clearedAt(ref), clNew = P.clearedAt(proj), dC = clNew >= 0 && clNow >= 0 ? clNew - clNow : 0
+  const span = Math.min(rows.cycles.length, Math.max(8, fin + 2, cardMoves && clNew >= 0 ? clNew + 2 : 0))
+  const third = cardMoves
+    ? { k: 'Card cleared', v: clNew >= 0 ? short(P.startOf(clNew + 1)) : 'Later', d: dC ? `${Math.abs(dC)} cycle${Math.abs(dC) > 1 ? 's' : ''} ${dC > 0 ? 'later' : 'sooner'}` : 'no change', cls: dC > 0 ? 'near' : '' }
+    : { k: 'Saved by', v: fin >= 0 ? short(P.startOf(fin)) : '—', d: `${Math.max(0, fin)} cycles` }
   async function add() {
-    if (!name.trim() || !t || !p || busy) return
+    if (!name.trim() || !target || !per || busy) return
     setBusy(true)
     try {
-      const g = await createSavingsGoal(accountId, { name: name.trim(), target_cents: t, per_cycle_cents: p, cycles_total: n, start_cycle_start: startCycle })
-      toast(`${name.trim()}: saving ${money(p)} a cycle`, { undo: async () => { await deleteSavingsGoal(g.id); notifyDataChanged() } })
+      const g = await createSavingsGoal(accountId, { name: name.trim(), target_cents: target, per_cycle_cents: per, cycles_total: Math.max(1, fin),
+        start_cycle_start: start, target_date: fin >= 0 ? P.startOf(fin) : null })
+      toast(`${name.trim()}: ${money(per)} a cycle${fin >= 0 ? `, by ${short(P.startOf(fin))}` : ''}`, { undo: async () => { await deleteSavingsGoal(g.id); notifyDataChanged() } })
       notifyDataChanged(); onClose()
     } catch (e: any) { reportError('That goal wasn’t added.', e) }
     finally { setBusy(false) }
@@ -256,15 +330,103 @@ function AddGoalSheet({ accountId, startCycle, sym, money, onClose }: { accountI
     <Sheet onClose={onClose} busy={busy}>
       <div className="rw-grab" />
       <div className="rw-sh-h"><h2 className="rw-sheet-title">New goal</h2><button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>
-      <TextField label="Name" value={name} onChange={setName} placeholder="e.g. Emergency fund" autoFocus />
+      <TextField label="Name" value={name} onChange={setName} placeholder="Emergency fund" autoFocus />
       <div className="rw-lab">How much in total</div>
-      <div className="rw-amtrow"><span>{sym}</span><input type="number" inputMode="decimal" placeholder="0" aria-label="How much in total" value={target} onChange={e => setTarget(e.target.value)} /></div>
-      <div className="rw-lab">Set aside each cycle</div>
-      <div className="rw-amtrow"><span>{sym}</span><input type="number" inputMode="decimal" placeholder="0" aria-label="Set aside each cycle" value={per} onChange={e => setPer(e.target.value)} /></div>
-      {n > 0 && <div className="rw-hint">{n} cycle{n > 1 ? 's' : ''}, starting this one.</div>}
+      <div className="rw-amtrow"><span>{sym}</span><input type="number" inputMode="decimal" placeholder="0" aria-label="How much in total" value={tot} onChange={e => { setTot(e.target.value); setPick(null) }} /></div>
+      {target > 0 && <>
+        <div className="rw-card rw-sl-card">
+          <div className="rw-pv-k"><span>Each cycle from {short(start)}</span></div>
+          <div className="rw-amt"><span>{sym}</span>
+            <input type="number" inputMode="decimal" aria-label="Each cycle" value={per / 100} onChange={e => setPick(Math.max(100, Math.round((parseFloat(e.target.value) || 0) * 100)))} /></div>
+          <div className="rw-gain"><b>{fin >= 0 ? `Saved by ${short(P.startOf(fin))}` : 'Not within the forecast'}</b><span>{fin >= 0 ? `${fin} cycles` : ''}</span></div>
+          {lo != null && <div className="rw-sl-tag">{lo < 0 ? <span className="n">Overdrawn before pay {short(P.startOf(lowAt + 1))}</span> : <span className="w">Into your floor before pay {short(P.startOf(lowAt + 1))}</span>}</div>}
+          <div className="rw-sl">
+            <div className="sl-rail" />
+            {fitPer != null && fitPer < hi && <div className="sl-zone" style={{ left: pct(fitPer) + '%', right: 0 }} />}
+            <div className="sl-fill" style={{ width: pct(per) + '%' }} />
+            {fitPer != null && <div className={`sl-mk${per === fitPer ? ' on' : ''}`} style={{ left: pct(fitPer) + '%' }} />}
+            <input type="range" aria-label="Each cycle" aria-valuetext={`${money(per)} a cycle`} min={5} max={hi / 100} step={5}
+              value={Math.min(hi, per) / 100} onChange={e => setPick(Math.round(+e.target.value * 100))} />
+          </div>
+          <div className="rw-ends">
+            <button type="button" onClick={() => setPick(500)}><b>{money(500)}</b>smallest</button>
+            <button type="button" className="r" onClick={() => setPick(hi)}><b>{money(hi)}</b>top of range</button>
+          </div>
+          {fitPer != null && <div className="rw-snaps"><button type="button" className={per === fitPer ? 'on' : ''} onClick={() => setPick(fitPer)}>Fits {money(fitPer)}</button></div>}
+          <div className="rw-lab">Saved by</div>
+          <DateChips value={fin >= 0 ? P.startOf(fin) : ''} today={P.startOf(1)} min={P.startOf(early ?? 1)} otherMin={P.startOf(1)} label="Saved by"
+            payDates={[13, 26].map(x => (early ?? 1) + x).map(P.startOf)}
+            tagFor={v => { const k = P.kOf(v); return k === early ? 'earliest' : P.fits(projFor(perFor(target, 1, k)), ref) ? 'fits' : 'too soon' }}
+            onChange={v => setPick(perFor(target, 1, Math.max(1, P.kOf(v))))} />
+        </div>
+        <Preview nowCents={ref.slice(0, span).map(x => x.committedClosingBalanceCents)} newCents={proj.slice(0, span).map(x => x.committedClosingBalanceCents)}
+          payDates={Array.from({ length: span }, (_, i) => P.startOf(i + 1))} floorCents={floorCents} money={money}
+          title="Before each payday until it’s saved" third={third} done={{ now: null, next: fin >= 1 && fin - 1 < span ? fin - 1 : null }} doneLabel="saved" tilesFirst />
+      </>}
       <div className="rw-ctas">
         <button type="button" className="rw-cta sec" onClick={onClose}>Cancel</button>
-        <button type="button" className="rw-cta" disabled={!name.trim() || !t || !p || busy} onClick={add}>{busy ? 'Saving…' : `Add ${name.trim() || 'goal'}`}</button>
+        <button type="button" className="rw-cta" disabled={!name.trim() || !target || busy} onClick={add}>{busy ? 'Saving…' : <>{`Add · ${money(per)} a cycle`}{lo != null && lo < 0 ? ' anyway' : ''}</>}</button>
+      </div>
+    </Sheet>
+  )
+}
+
+/* ── A payday the goals' set-asides take under the floor (release 6b). Pick one
+ * goal to spread out: its date moves to the first that keeps every such
+ * payday above the floor. Only goals that can do it on their own are offered. ── */
+function DipSheet({ k, rows, base, without, goals, have, accountId, floorCents, money, short, onClose }: {
+  k: number; rows: ForecastResult; base: ForecastResult['cycles']; without: ForecastResult['cycles']; goals: any[]; have: (g: any) => number; accountId: string; floorCents: number
+  money: (c: number) => string; short: (d: string) => string; onClose: () => void
+}) {
+  const toast = useToast()
+  const [busy, setBusy] = useState(false)
+  const v = base[k].committedClosingBalanceCents
+  const opts = useMemo(() => goals.map((g: any) => {
+    const P = makePlanner(rows, g, accountId, floorCents, 0, have(g))
+    if (!base.slice(0, k + 1).some((_c, j) => P.lineOf(base, j) > 0)) return null
+    const d0: Draft = { per: g.per_cycle_cents, skip: false, catchUp: false, restart: null }
+    const rem = P.remFrom(d0), fin = P.finishOf(base, g.per_cycle_cents)
+    if (rem <= 0) return null
+    for (let kD = Math.max(1, fin); kD < P.n + 26; kD++) {
+      const d: Draft = { ...d0, per: perFor(rem, 1, kD) }
+      const proj = P.project(d)
+      if (savingsDip(proj, without, floorCents) < 0) return { g, P, d, proj, date: P.startOf(P.finishOf(proj, d.per)) }
+    }
+    return { g, P, d: null, proj: null, date: null }
+  }).filter(Boolean) as any[], [rows])
+  const [sel, setSel] = useState<string | null>(opts.find(o => o.d)?.g.id ?? null)
+  const o = opts.find(x => x.g.id === sel)
+  async function save() {
+    if (!o?.d || busy) return
+    setBusy(true)
+    try {
+      const r = await saveDraft(o.P, o.g, accountId, o.d, o.date)
+      toast(`${o.g.name}: ${money(o.d.per)} a cycle, by ${short(o.date)}`, { undo: async () => { await r.undo(); notifyDataChanged() } })
+      notifyDataChanged(); onClose()
+    } catch (e: any) { reportError('That wasn’t saved.', e) }
+    finally { setBusy(false) }
+  }
+  const span = Math.min(rows.cycles.length, Math.max(8, k + 3))
+  return (
+    <Sheet onClose={onClose} busy={busy}>
+      <div className="rw-grab" />
+      <div className="rw-sh-h"><div className="rw-sh-t"><span className="rw-savmark" aria-hidden="true" /><div>
+        <h2 className="rw-sheet-title">Before pay {short(shift(rows.cycles[k].endDate, 1))}</h2>
+        <div className="rw-sd">{v < 0 ? `${money(-v)} overdrawn` : `${money(floorCents - v)} under your floor`} · from savings</div></div></div>
+        <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button></div>
+      {o?.proj && <Preview nowCents={base.slice(0, span).map(x => x.committedClosingBalanceCents)} newCents={o.proj.slice(0, span).map((x: any) => x.committedClosingBalanceCents)}
+        payDates={Array.from({ length: span }, (_, i) => shift(rows.cycles[i].endDate, 1))} floorCents={floorCents} money={money} tilesFirst />}
+      <div className="rw-result" style={{ padding: '8px 2px 10px' }}>{opts.some(x => x.d) ? 'Spread one goal out to fix it:' : 'No one goal fixes it on its own. Pause or lower one from its sheet.'}</div>
+      <div className="rw-group flush" role="radiogroup" aria-label="Goal to spread out">
+        {opts.map(x => (
+          <button key={x.g.id} type="button" className="rw-row" role="radio" aria-checked={sel === x.g.id} disabled={!x.d} onClick={() => setSel(x.g.id)}>
+            <div className="rw-tx"><div className="rw-row-name">{x.g.name}</div>
+              <div className="rw-sub">{x.d ? <>{money(x.d.per)} a cycle · by {short(x.date)}</> : 'Not enough on its own'}</div></div>
+            <span className={`rw-pick${sel === x.g.id ? ' on' : ''}`} aria-hidden="true">{sel === x.g.id ? '✓' : ''}</span></button>))}
+      </div>
+      <div className="rw-ctas">
+        <button type="button" className="rw-cta sec" onClick={onClose}>Not now</button>
+        <button type="button" className="rw-cta" disabled={!o?.d || busy} onClick={save}>{busy ? 'Saving…' : o?.d ? `Move ${o.g.name} to ${short(o.date)}` : 'Pick a goal'}</button>
       </div>
     </Sheet>
   )

@@ -371,7 +371,7 @@ function CompareSheet({ item, m, floorCents, sym, money, moneyC, accountId, user
       } else {
         const k0 = m.idx(sStart)
         const goal = await commitWishlistSaving(accountId, { id: item.id, name: item.name, amountCents: price },
-          { perCycleCents: per, cyclesTotal: sList.length, startCycleStart: m.startOf(k0) })
+          { perCycleCents: per, cyclesTotal: sList.length, startCycleStart: m.startOf(k0), targetDate: m.startOf(sList[sList.length - 1].k) })
         toast(`${item.name}: saving ${money(per)} a cycle.`,
           { undo: async () => { await deleteSavingsGoal(goal.id); await releaseWishlistItem(item.id); notifyDataChanged() } })
       }
@@ -420,8 +420,8 @@ function CompareSheet({ item, m, floorCents, sym, money, moneyC, accountId, user
           </div>
           <div className="rw-gain flat"><b>{n} × {moneyC(bList[0].cents)}</b><span>{fq} · {short(bList[0].date)} to {short(bList[bList.length - 1].date)}</span></div>
           <div className="rw-lab">First payment</div>
-          <DateChips value={bStart} onChange={setBPick} today={t} payDates={bChips} label="First payment"
-            tagFor={d => d === earlyB ? 'earliest that fits' : okB(d) ? 'fits' : 'too soon'} />
+          <DateChips value={bStart} onChange={setBPick} today={t} payDates={bChips} label="First payment" keep={earlyB}
+            tagFor={d => d === earlyB ? 'earliest' : okB(d) ? 'fits' : 'too soon'} />
           {!earlyB && <div className="rw-hint">No start in the next year keeps every payday above your floor. Try more payments.</div>}
           <div className="rw-fld flush">
             <div className="l">Fees, if any<small>Any the provider charges on top</small></div>
@@ -665,7 +665,7 @@ function RunningSheet({ plan, m, floorCents, sym, money, moneyC, accountId, user
           <div className="rw-lab">Pay it all on</div>
           <DateChips value={offDay} onChange={setOffDay} today={t} label="Pay it all on"
             payDates={(earlyOff && earlyOff > t && !nextPays.slice(0, 3).includes(earlyOff) ? [...nextPays.slice(0, 2), earlyOff] : nextPays.slice(0, 3)).sort()}
-            tagFor={d => d === earlyOff ? 'earliest that fits' : offOk(d) ? 'fits' : 'too soon'} />
+            keep={earlyOff} tagFor={d => d === earlyOff ? 'earliest' : offOk(d) ? 'fits' : 'too soon'} />
         </>}
         {mode === 'miss' && (paid.length === 0
           ? <div className="rw-hint" style={{ marginTop: 0 }}>No payments have come due yet. Once one has, mark it here if it didn’t go out.</div>

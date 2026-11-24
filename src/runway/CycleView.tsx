@@ -64,7 +64,8 @@ interface Props {
   onPast?: () => void            // ‹ to closed cycles (Journey 10), when there are any
   // A future cycle opened from Forecast (Journey 6): ‹ › step between cycles,
   // and a way back to the Forecast page.
-  forecastNav?: { onPrev?: () => void; onNext?: () => void; onBack: () => void }
+  forecastNav?: { onPrev?: () => void; onNext?: () => void; onBack: () => void; backLabel?: string }
+  onNext?: () => void            // › to the next cycle (fix 24 Nov 2026); without it, › opens Forecast
   onAddToCycle: () => void
   byType: ReactNode
   money: (cents: number) => string
@@ -202,7 +203,7 @@ export default function CycleView(p: Props) {
         <button type="button" className="rw-cnav-b" aria-label="Later cycle" disabled={!p.forecastNav.onNext} onClick={p.forecastNav.onNext}>›</button>
       </div>
       <div style={{ textAlign: 'center', marginTop: 6 }}>
-        <button type="button" className="rw-today" onClick={p.forecastNav.onBack}>Back to Forecast</button>
+        <button type="button" className="rw-today" onClick={p.forecastNav.onBack}>{p.forecastNav.backLabel ?? 'Back to Forecast'}</button>
       </div>
       </> : <div className="rw-cnav">
         {p.onPast
@@ -212,7 +213,7 @@ export default function CycleView(p: Props) {
           <h1>{day(p.start)} – {day(p.end, true)}</h1>
           <span>{inCycle ? `day ${todayIdx + 1} of ${n} · ` : 'ended · '}{p.payName} {day(p.payDate)}</span>
         </div>
-        <button type="button" className="rw-cnav-b" aria-label="Next cycles (Forecast)" onClick={p.onForecast}>›</button>
+        <button type="button" className="rw-cnav-b" aria-label={p.onNext ? 'Next cycle' : 'Next cycles (Forecast)'} onClick={p.onNext ?? p.onForecast}>›</button>
       </div>}
 
       {/* ── hero E ── */}

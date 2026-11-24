@@ -30,7 +30,7 @@ export function previewStats(nowCents: number[], newCents: number[], floorCents:
 
 const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
 
-export default function Preview({ nowCents, newCents, payDates, floorCents, money, ticks = [], title, done, third, tilesFirst }: {
+export default function Preview({ nowCents, newCents, payDates, floorCents, money, ticks = [], title, done, doneLabel = 'card cleared', third, tilesFirst }: {
   nowCents: number[]
   newCents: number[]
   payDates: string[]           // the payday each closing balance is "before"
@@ -43,6 +43,8 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
   // Where something finishes (a card cleared): a ringed tick on the new line,
   // a faint ring where it would have finished as things stand. Payday indexes.
   done?: { now: number | null; next: number | null }
+  // What the ✓ means: a card cleared, or a savings goal saved.
+  doneLabel?: string
   // The third tile, when the change has a better one than "By <date>".
   third?: { k: string; v: string; d: string; cls?: string }
   // Tiles and the warning above the chart: for a sheet whose answer must be
@@ -126,7 +128,7 @@ export default function Preview({ nowCents, newCents, payDates, floorCents, mone
           <span><i className="ln" />new</span>
           <span><i className="fl" />floor</span>
           {ticks.some(f => f >= 0 && f <= n - 1) && <span><KeyLands />when it lands</span>}
-          {done?.next != null && <span><KeyDone />card cleared</span>}
+          {done?.next != null && <span><KeyDone />{doneLabel}</span>}
         </div>
       </div>
 
