@@ -2487,7 +2487,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
         items.push({
           key: `sav-${line.goalId}`, date: c.startDate, name: goal.name, mark: 'savings', amountCents: line.amountCents,
           sub: goal.expense_id ? 'Set aside before it’s due' : `${fmt(savedSoFar(line.goalId), false)} of ${fmt(goal.target_cents, false)}`,
-          needs: !done && c.startDate < t, needsText: 'not set aside',
+          needs: !done && c.startDate <= t, needsText: 'not set aside',
           action: done ? undefined : { label: 'Set aside', run: () => toggleSetAside(line.goalId) },
           donePill: done ? 'Set aside ✓' : undefined,
           onOpen: () => newLook ? setRwSav(goal.id) : setSavTarget(goal),

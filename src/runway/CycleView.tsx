@@ -262,7 +262,7 @@ export default function CycleView(p: Props) {
         <>
           {needs.length > 0 && (
             <>
-              <div role="heading" aria-level={2} className="rw-dl needs">Needs you<b>{needs.length}</b><span>from earlier this cycle</span></div>
+              <div role="heading" aria-level={2} className="rw-dl needs">Needs you<b>{needs.length}</b><span>this cycle</span></div>
               <div className="rw-group">{needs.map(i => row(i, 'needs'))}</div>
             </>
           )}
