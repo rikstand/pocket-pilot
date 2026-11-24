@@ -328,6 +328,7 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
         </>}
       </div>}
 
+      {/* This cycle's amount can change until it's set aside or skipped; the chart stays either way (25 Nov 2026). */}
       {isPot && state === 'todo' && potNeed > 0 && <>
         <div className="rw-card rw-sl-card">
           <div className="rw-pv-k"><span>Put away {that.toLowerCase()} cycle</span>{now !== l0 && <span>planned {money(l0)}</span>}</div>
@@ -355,6 +356,8 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
             {potNeed !== l0 && <button type="button" className={now === potNeed ? 'on' : ''} onClick={() => setNow(potNeed)}>All of it {money(potNeed)}</button>}
           </div>
         </div>
+      </>}
+      {isPot && kDue >= k0 && <>
         <Preview nowCents={potBase.slice(k0, k0 + potSpan).map(x => x.committedClosingBalanceCents)} newCents={potProj.slice(k0, k0 + potSpan).map(x => x.committedClosingBalanceCents)}
           payDates={Array.from({ length: potSpan }, (_, i) => P.startOf(k0 + i + 1))} floorCents={floorCents} money={money}
           title={`Before each payday until it’s due`} done={{ now: at(potReadyNow), next: at(potReady) }} doneLabel="ready"
@@ -366,7 +369,7 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
       <div className="rw-group flush" style={{ marginTop: 10 }}>
         <div className="rw-row static">
           <div className="rw-tx"><div className="rw-row-name">{that} cycle · {money(state === 'skipped' || d.skip ? 0 : isPot && state === 'todo' ? now : l0)}</div>
-            <div className="rw-sub">{state === 'done' ? <span className="rw-ok">Set aside ✓</span>
+            <div className="rw-sub">{state === 'done' ? <><span className="rw-ok">Set aside ✓</span>{lineOf(k0 + 1) > 0 ? ` · next cycle ${money(lineOf(k0 + 1))}` : ''}</>
               : state === 'skipped' || d.skip ? (proj[k0] && base[k0] && proj[k0].creditPaymentCents > base[k0].creditPaymentCents + 50 ? `Skipped · the ${money(l0)} goes to your card` : 'Skipped')
               : reached ? 'Fully saved' : 'Not set aside yet'}</div></div>
           {state === 'done' ? <button type="button" className="rw-mini sec" disabled={busy} onClick={unsetAside}>Undo</button>
