@@ -122,13 +122,18 @@ export default function CycleView(p: Props) {
   } : null
   const needs = p.items.filter(i => i.needs)
   const rest = p.items.filter(i => !i.needs)
-  const todays = rest.filter(i => i.date === today)
-  const tomorrows = rest.filter(i => i.date === tomorrow)
-  const coming = rest.filter(i => i.date > tomorrow)
-  const earlier = rest.filter(i => i.date < today)
-  if (payRow) (payRow.date === tomorrow ? tomorrows : coming).push(payRow)
-  const nextUp = p.items.filter(i => i.date > today).sort((a, b) => a.date.localeCompare(b.date))[0] ?? payRow
   const inCycle = todayIdx >= 0
+  // Today and Tomorrow are groups of this cycle only. Viewing a later cycle on
+  // the last day of this one, its first day is "tomorrow": those rows went
+  // into a group that isn't drawn there and vanished — the payday, a set-aside
+  // and everything else on that day (found 25 Nov 2026). Outside this cycle
+  // every later row is Coming up.
+  const todays = inCycle ? rest.filter(i => i.date === today) : []
+  const tomorrows = inCycle ? rest.filter(i => i.date === tomorrow) : []
+  const coming = rest.filter(i => inCycle ? i.date > tomorrow : i.date >= today)
+  const earlier = rest.filter(i => i.date < today)
+  if (payRow) (inCycle && payRow.date === tomorrow ? tomorrows : coming).push(payRow)
+  const nextUp = p.items.filter(i => i.date > today).sort((a, b) => a.date.localeCompare(b.date))[0] ?? payRow
 
   const earlierIn = earlier.filter(i => i.isIn).reduce((s, i) => s + i.amountCents, 0)
   const earlierOut = earlier.filter(i => !i.isIn).reduce((s, i) => s + i.amountCents, 0)
