@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import Sheet, { reportError } from './Sheet'
+import SheetGuard from './SheetGuard'
 import type { Page } from '../AppShell'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
@@ -275,8 +276,8 @@ export default function ItemsPage({ accountId, onNavigate }: { accountId: string
       )}
 
       {open && (
-        <ItemSheet item={open} rows={rows} floorCents={floorCents} accountId={accountId}
-          onClose={() => setOpen(null)} onSaved={() => { setOpen(null); notifyDataChanged() }} />
+<SheetGuard onClose={() => setOpen(null)}><ItemSheet item={open} rows={rows} floorCents={floorCents} accountId={accountId}
+          onClose={() => setOpen(null)} onSaved={() => { setOpen(null); notifyDataChanged() }} /></SheetGuard>
       )}
     </div>
   )

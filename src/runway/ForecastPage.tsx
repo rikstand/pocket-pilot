@@ -94,6 +94,13 @@ export default function ForecastPage(p: Props) {
   }
 
   // The list, grouped by the month of each payday.
+  // Rows are named by cycle (release 7): This cycle, Next cycle, then dates.
+  const nowAt = p.points.findIndex(x => x.start <= p.today && p.today <= x.end)
+  const span = (x: ForecastPoint) => `${short(x.start)} – ${short(x.end)}`
+  const nameOf = (x: ForecastPoint) => {
+    const i = p.points.indexOf(x)
+    return nowAt >= 0 && i === nowAt ? 'This cycle' : nowAt >= 0 && i === nowAt + 1 ? 'Next cycle' : span(x)
+  }
   const groups: { label: string; rows: ForecastPoint[] }[] = []
   for (const x of pts) {
     const label = monthYear(x.payDate)
@@ -151,9 +158,9 @@ export default function ForecastPage(p: Props) {
               const lv = level(x)
               return (
                 <button key={x.start} type="button" className="rw-row" onClick={() => p.onOpen(x.idx)}>
-                  <div className="rw-tx"><div className="rw-row-name">{day(x.payDate)}
+                  <div className="rw-tx"><div className="rw-row-name">{nameOf(x)}
                     {lv !== 'ok' && <span className={`rw-fc-pill ${lv}`}>{lv === 'chosen' ? 'your choice' : `${lv === 'under' ? 'Overdrawn' : 'Under floor'}${x.driver?.name ? ' · ' + x.driver.name : ''}`}</span>}
-                  </div></div>
+                  </div><div className="rw-sub">{nameOf(x) !== span(x) ? `${span(x)} · ` : ''}before pay {day(x.payDate)}</div></div>
                   <div className={`rw-am ${lvlClass(lv)}`}>{money(x.closeCents)}</div>
                   <span className="rw-chev">›</span>
                 </button>

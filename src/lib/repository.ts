@@ -133,7 +133,7 @@ export async function addIncomeSource(
 
 export async function updateIncomeSource(
   incomeId: string,
-  fields: { name?: string; is_potential?: boolean }
+  fields: { name?: string; is_potential?: boolean; anchor_date?: string }
 ) {
   const { error } = await supabase.from('income_sources').update(fields).eq('id', incomeId)
   if (error) throw error

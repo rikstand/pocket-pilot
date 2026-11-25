@@ -23,6 +23,9 @@
   --rw-action: #0e1116;
   --rw-action-ink: #ffffff;
   --rw-line: #12a06a;           /* graphics only, never small text */
+  --rw-t-fixed: #4a5059;        /* By type: Fixed, Budgets, Estimates (graphics only) */
+  --rw-t-budgets: #7d8ca3;
+  --rw-t-est: #b4bdc9;
   --rw-good: #096b46;
   --rw-near-floor: #c27a12;
   --rw-near-floor-text: #9a5e0a;
@@ -90,6 +93,9 @@
   --rw-action: #f2f3f5;
   --rw-action-ink: #0b0d10;
   --rw-line: #3ddc97;
+  --rw-t-fixed: #a3aab4;
+  --rw-t-budgets: #77859a;
+  --rw-t-est: #4c5563;
   --rw-good: #3ddc97;
   --rw-near-floor: #f2b44b;
   --rw-near-floor-text: #f2b44b;
@@ -229,6 +235,16 @@ body.is-runway #root { border-inline: none; }
 .rw .rw-ink { color: var(--rw-ink); font-weight: 650; }
 
 .rw-cnav { display: flex; align-items: center; justify-content: space-between; padding: 8px var(--rw-space-3) 0; }
+/* The cycle dates and arrows float at the top while the page scrolls (release 7).
+   A hairline shows once content passes under them. */
+.rw-dock { position: sticky; top: 0; z-index: 2; background: var(--rw-bg); padding-bottom: 8px; transition: box-shadow .15s; }
+.rw-dock.stuck { box-shadow: 0 1px 0 var(--rw-hairline); }
+.rw-dock + .rw-hero-card { margin-top: 2px; }
+/* One block per day of the cycle (J1), under the dates in the floating header. */
+.rw-dstrip { display: flex; gap: 3px; padding: 8px var(--rw-space-4) 0; }
+.rw-dstrip i { flex: 1; height: 4px; border-radius: 2px; background: var(--rw-hairline); }
+.rw-dstrip i.gone { background: var(--rw-ink); opacity: .7; }
+.rw-dstrip i.now { background: var(--rw-line); }
 .rw-cnav-gap { width: 30px; }
 .rw-cnav-b {
   width: 30px; height: 30px; border-radius: 50%; cursor: pointer; font-size: calc(16 * var(--rw-u));
@@ -494,6 +510,9 @@ body.is-runway #root { border-inline: none; }
 .rw-warn-ban.near { background: color-mix(in srgb, var(--rw-near-floor) 12%, var(--rw-surface)); border: 1px solid color-mix(in srgb, var(--rw-near-floor) 30%, transparent); }
 .rw-warn-ban.near b { color: var(--rw-near-floor-text); }
 .rw-warn-ban.under { background: var(--rw-under-floor); color: #fff; }
+/* Dark mode's red is light, so white text on it fails contrast: dark text instead (release 7). */
+[data-theme="dark"] .rw-warn-ban.under, .rw[data-theme="dark"] .rw-warn-ban.under { color: #0e1116; }
+[data-theme="dark"] .rw-warn-ban.under .i, .rw[data-theme="dark"] .rw-warn-ban.under .i { background: #0e1116; }
 .rw-warn-ban .i { width: 20px; height: 20px; flex: 0 0 20px; border-radius: 50%; display: grid; place-items: center;
   background: #fff; color: var(--rw-under-floor); font-weight: 800; font-size: calc(12 * var(--rw-u)); }
 
@@ -557,7 +576,7 @@ body.is-runway #root { border-inline: none; }
 
 /* Date chips (24 Nov 2026): one row on the Segmented control's track, four
    equal slots of two short lines. Other opens the phone's own date picker.
-   With large text (the slots would need more than about 18rem) it splits
+   With large text (the slots would need more than about 17rem) it splits
    into two per line. */
 .rw-dchips-w { container-type: inline-size; }
 .rw-pair { display: flex; gap: 6px; flex: 0 0 auto; }
@@ -567,7 +586,7 @@ body.is-runway #root { border-inline: none; }
 .rw-pick.on { background: var(--rw-ink); border-color: var(--rw-ink); }
 .rw-dchips { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; padding: 3px;
   background: var(--rw-surface-2); border-radius: 11px; box-shadow: inset 0 0 0 1px var(--rw-control-edge); }
-@container (max-width: 18.5rem) { .rw-dchips { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (max-width: 17rem) { .rw-dchips { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .rw-dchips > button, .rw-dchip-custom {
   position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; cursor: pointer;
   border: none; background: transparent; border-radius: 8px; padding: 6px 2px; min-height: calc(44 * var(--rw-u)); color: var(--rw-ink); font: inherit;
@@ -903,3 +922,43 @@ button.rw-row:not(:disabled):active, .rw-row:has(> .rw-row-main:active) { backgr
 .rw .rw-cdot.now i { border: 2px solid var(--rw-ink); }
 .rw .rw-cdot.now.ok i { border-color: var(--rw-good); }
 .rw .rw-u { color: var(--rw-under-floor); font-weight: 650; }
+
+/* ── By type (release 7, Journey 7) ───────────────────────────────────── */
+.rw-bt-svg { display: block; width: 100%; height: auto; margin-top: 8px; }
+.rw-bt-card { display: block; width: calc(100% - 2 * var(--rw-space-3)); margin: 10px var(--rw-space-3) 0; background: var(--rw-surface); border: none; border-radius: var(--rw-radius-lg); padding: 12px; text-align: left; cursor: pointer; color: var(--rw-ink); font: inherit; }
+.rw-bt-t { display: flex; justify-content: space-between; align-items: center; }
+.rw-bt-big { display: flex; align-items: baseline; gap: 8px; margin-top: 2px; flex-wrap: wrap; }
+.rw-bt-big b { font: var(--rw-text-page-title); letter-spacing: -.02em; }
+.rw-bt-big b.w { color: var(--rw-near-floor-text); } .rw-bt-big b.g { color: var(--rw-good); }
+.rw-bt-big span { font: var(--rw-text-sub); color: var(--rw-muted); }
+.rw-bt-kg { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; margin-top: 8px; font: var(--rw-text-sub); color: var(--rw-muted); }
+.rw-bt-kg span { display: flex; align-items: center; gap: 5px; white-space: nowrap; min-width: 0; }
+.rw-bt-kg em { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 9px; }
+.rw-bt-kg b { margin-left: auto; color: var(--rw-ink); font-weight: 650; }
+.rw-bt-empty { margin: 10px var(--rw-space-3) 0; border: 1px dashed var(--rw-control-edge); border-radius: var(--rw-radius-lg); padding: 12px; font: var(--rw-text-sub); color: var(--rw-muted); }
+.rw-bt-empty b { color: var(--rw-ink); }
+.rw-bt-sq { display: inline-flex; gap: 2px; vertical-align: middle; }
+.rw-bt-sq i { width: 8px; height: 8px; border-radius: 2px; background: var(--rw-surface-2); display: inline-block; box-shadow: inset 0 0 0 1px var(--rw-control-edge); }
+.rw-bt-sq i.o { background: var(--rw-near-floor); box-shadow: none; } .rw-bt-sq i.u { background: var(--rw-good); opacity: .75; box-shadow: none; }
+.rw-bt-sp { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.rw-bt-dot { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 10px; }
+.rw-bt-cr { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 4px 0; font: var(--rw-text-row-name); }
+.rw-bt-cr .w, .rw-bt-mvv.w, .rw-bt-hb b.w { color: var(--rw-near-floor-text); } .rw-bt-cr .g, .rw-bt-mvv.g { color: var(--rw-good); }
+.rw-bt-hb { display: grid; grid-template-columns: 6.2em 1fr 3.2em; align-items: center; gap: 8px; font: var(--rw-text-sub); padding: 4px 0; }
+.rw-bt-hb b { text-align: right; font-weight: 650; color: var(--rw-ink); }
+.rw-bt-hbb { height: 9px; background: var(--rw-surface-2); border-radius: 3px; position: relative; }
+.rw-bt-hbb i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; }
+.rw-bt-mv { padding: 10px 12px 6px; }
+.rw-bt-mvh, .rw-bt-mvr { display: grid; grid-template-columns: minmax(0, 6.6em) 1fr 5.4em; align-items: center; gap: 10px; }
+.rw-bt-mvh { margin: 6px 0 2px; }
+.rw-bt-ax { display: flex; justify-content: center; gap: 12px; font: var(--rw-text-caption); color: var(--rw-muted); padding: 0 4px; }
+.rw-bt-ax span:first-child { flex: 1; text-align: right; } .rw-bt-ax span:last-child { flex: 1; }
+.rw-bt-mvr { width: 100%; min-height: 44px; padding: 4px 0; border: none; border-top: 1px solid var(--rw-hairline); background: none; color: var(--rw-ink); font: inherit; text-align: left; cursor: pointer; }
+div.rw-bt-mvr { cursor: default; }
+.rw-bt-mvr.tot { border-top: 1px solid var(--rw-control-edge); font-weight: 700; }
+.rw-bt-mvn { font: var(--rw-text-row-name); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rw-bt-mvn small { display: block; font: var(--rw-text-sub); color: var(--rw-muted); }
+.rw-bt-mvv { text-align: right; white-space: nowrap; font: var(--rw-text-row-name); }
+.rw-bt-dv { position: relative; height: 10px; background: linear-gradient(var(--rw-control-edge), var(--rw-control-edge)) center/1px 100% no-repeat; }
+.rw-bt-dv i { position: absolute; top: 0; bottom: 0; border-radius: 2px; }
+.rw-body-t { font: var(--rw-text-body); color: var(--rw-ink); }

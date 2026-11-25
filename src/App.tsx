@@ -85,10 +85,10 @@ function AuthedApp({ userId }: { userId: string }) {
   const pages = (
     <>
       {shown === 'cycle' && (
-        <Dashboard key={'cycle-' + dataVersion} userId={userId} accountId={activeAccount.id} variant="cycle" onForecast={() => navigate('forecast')} onCredit={() => navigate('credit')} />
+        <Dashboard key={'cycle-' + dataVersion} userId={userId} accountId={activeAccount.id} variant="cycle" onForecast={() => navigate('forecast')} onCredit={() => navigate('credit')} onNavigate={navigate} />
       )}
       {shown === 'forecast' && (
-        <Dashboard key={'forecast-' + dataVersion} userId={userId} accountId={activeAccount.id} variant="forecast" onCredit={() => navigate('credit')} />
+        <Dashboard key={'forecast-' + dataVersion} userId={userId} accountId={activeAccount.id} variant="forecast" onCredit={() => navigate('credit')} onNavigate={navigate} />
       )}
       {shown === 'items' && <ItemsPage accountId={activeAccount.id} onNavigate={navigate} />}
       {shown === 'expenses' && (

@@ -1,12 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import Sheet, { reportError } from './Sheet'
+import { useDock } from './useDock'
+import { DayStrip } from './CycleView'
+import { describeCycle, type CycleRecord } from './cycleRecord'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
-import { loadForecast, cycleRuleOn, toEngineExpenses, toEngineIncome, type ForecastResult } from '../lib/forecast'
+import { loadForecast, type ForecastResult } from '../lib/forecast'
 import { getCycleActuals, addCycleActual, deleteCycleActual, addBudgetSpendEntry, deleteBudgetSpendEntry, getPayees, fixLastClose } from '../lib/repository'
 import { versionForDate } from '../lib/versions'
-import { occurrencesOf } from '../engine/index'
-import { budgetAmountForCycle } from '../engine/engine'
 import { parseDate, formatDate, addDays } from '../engine/dates'
 import { notifyDataChanged, useDataChanged } from '../lib/dataEvents'
 import { useToast } from './toastContext'
@@ -27,6 +28,8 @@ const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'nu
 const dayName = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
 const LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 
+const dayCount = (a: string, b: string) => Math.round((parseDate(b).getTime() - parseDate(a).getTime()) / 86400000) + 1
+
 interface Data { rows: ForecastResult; actuals: any[]; payees: any[] }
 
 export default function PastCycles({ accountId, onBackToNow }: { accountId: string; onBackToNow: () => void }) {
@@ -38,6 +41,7 @@ export default function PastCycles({ accountId, onBackToNow }: { accountId: stri
   const [error, setError] = useState('')
   const [idx, setIdx] = useState<number | null>(null)
   const [tab, setTab] = useState<'what' | 'avf'>('what')
+  const dock = useDock(String(idx))
   const [sheet, setSheet] = useState<{ kind: 'est'; item: any } | { kind: 'bud'; budget: any } | { kind: 'fix' } | null>(null)
 
   async function load() {
@@ -64,7 +68,7 @@ export default function PastCycles({ accountId, onBackToNow }: { accountId: stri
   )
   const i = idx ?? closed.length - 1
   const c = closed[i]
-  const view = describe(c, data, floorCents)
+  const view = describeCycle(c, data.rows, data.actuals)
   const onForecast = !!c.closed_on_forecast
   const hasForecast = c.projected_close_cents != null && !onForecast
   const vsForecast = hasForecast ? c.closing_balance_cents - Number(c.projected_close_cents) : null
@@ -73,14 +77,14 @@ export default function PastCycles({ accountId, onBackToNow }: { accountId: stri
   const next = stored.find((x: any) => x.start_date > c.start_date) ?? null
 
   return (
-    <div className="rw-page">
-      <div className="rw-cnav">
+    <div className="rw-page" ref={dock.ref} onScroll={dock.onScroll}>
+      <div className={`rw-dock${dock.stuck ? ' stuck' : ''}`}><div className="rw-cnav">
         <button type="button" className="rw-cnav-b" aria-label="Earlier cycle" disabled={i === 0} onClick={() => setIdx(i - 1)}>‹</button>
         <div className="rw-cnav-t"><h1>{short(c.start_date)} – {short(c.end_date)}</h1><span>Closed</span></div>
         <button type="button" className="rw-cnav-b" aria-label="Later cycle"
           onClick={() => (i === closed.length - 1 ? onBackToNow() : setIdx(i + 1))}>›</button>
-      </div>
-      <div style={{ textAlign: 'center', marginTop: 6 }}>
+      </div><DayStrip n={dayCount(c.start_date, c.end_date)} today={Infinity} /></div>
+      <div style={{ textAlign: 'center' }}>
         <button type="button" className="rw-today" onClick={onBackToNow}>Back to this cycle</button>
       </div>
 
@@ -179,58 +183,8 @@ function group(label: string, rows: ReactNode[]) {
 }
 
 /* What happened in one closed cycle, from the saved rows. */
-function describe(c: any, data: Data, _floor: number) {
-  const { rows, actuals } = data
-  const s = c.start_date, e = c.end_date
-  const spread = (total: number, n: number, k: number) => { const each = Math.floor(total / n); return k === n - 1 ? total - each * (n - 1) : each }
-
-  const income = rows.incomeRows.filter((r: any) => !r.is_potential).flatMap((r: any) => {
-    const occs = occurrencesOf(toEngineIncome([r])[0], s, e)
-    const ov = (rows.incomeOverrideRows ?? []).find((o: any) => o.income_source_id === r.id && o.cycle_start === s)
-    return occs.map((d: string, k: number) => ({ key: `${r.id}-${d}`, name: r.name, date: d,
-      cents: ov ? spread(ov.amount_cents, occs.length, k) : versionForDate(r.income_amount_versions, d)?.amount_cents ?? 0 }))
-  })
-
-  const fixed: any[] = [], estimates: any[] = []
-  for (const r of rows.expenseRows) {
-    if ((r.mode ?? 'fixed') === 'budget') continue
-    const occs = occurrencesOf(toEngineExpenses([r])[0], s, e)
-    if (!occs.length) continue
-    const ov = (rows.expenseOverrideRows ?? []).find((o: any) => o.expense_id === r.id && o.cycle_start === s)
-    const usual = occs.reduce((t: number, d: string) => t + (versionForDate(r.expense_amount_versions, d)?.amount_cents ?? 0), 0)
-    if (r.mode === 'variable') {
-      const saved = actuals.filter(a => a.cycle_id === c.id && a.expense_id === r.id).pop()
-      estimates.push({ id: r.id, name: r.name, dates: occs, estimate: ov ? ov.amount_cents : usual,
-        actual: saved ? saved.actual_amount_cents : null, savedRow: saved ?? null })
-    } else {
-      occs.forEach((d: string, k: number) => fixed.push({ key: `${r.id}-${d}`, name: r.name, date: d, bnpl: !!r.lay_by_id,
-        cents: ov ? spread(ov.amount_cents, occs.length, k) : versionForDate(r.expense_amount_versions, d)?.amount_cents ?? 0 }))
-    }
-  }
-  fixed.sort((a, b) => a.date.localeCompare(b.date))
-
-  const paid = (rows.creditPaymentRows ?? []).find((p: any) => p.cycle_start === s)
-  const card = paid && rows.creditCard ? { name: rows.creditCard.name ?? 'Card', cents: paid.amount_cents ?? 0 } : null
-
-  const savings = (rows.savingsContributionRows ?? []).filter((x: any) => x.cycle_start === s).map((x: any) => {
-    const g = (rows.savingsGoalRows ?? []).find((g: any) => g.id === x.savings_goal_id)
-    const ov = (rows.savingsOverrideRows ?? []).find((o: any) => o.savings_goal_id === x.savings_goal_id && o.cycle_start === s)
-    return { key: x.id, name: g?.name ?? 'Savings', cents: x.amount_cents ?? ov?.amount_cents ?? g?.per_cycle_cents ?? 0 }
-  })
-
-  const rule = cycleRuleOn(rows.incomeRows, s)
-  const budgets = rows.expenseRows.filter((r: any) => r.mode === 'budget').map((r: any) => {
-    const ov = (rows.expenseOverrideRows ?? []).find((o: any) => o.expense_id === r.id && o.cycle_start === s)
-    const planned = ov ? ov.amount_cents : budgetAmountForCycle(toEngineExpenses([r])[0], s, e, rule)
-    const entries = (rows.budgetSpendRows ?? []).filter((x: any) => x.expense_id === r.id && x.spent_date >= s && x.spent_date <= e)
-    return { id: r.id, name: r.name, planned, entries, spent: entries.reduce((t: number, x: any) => t + x.amount_cents, 0) }
-  }).filter((b: any) => b.planned > 0 || b.spent !== 0)
-
-  return { income, fixed, card, estimates, savings, budgets }
-}
-
 /* What explains the difference from forecast, from the records. Positive = better. */
-function avfRows(v: ReturnType<typeof describe>, diff: number, money: (c: number) => string) {
+function avfRows(v: CycleRecord, diff: number, money: (c: number) => string) {
   const rows: { name: string; sub: string; v: number }[] = []
   for (const e of v.estimates) if (e.actual != null && e.actual !== e.estimate) rows.push({ name: e.name, sub: `estimate ${money(e.estimate)}`, v: e.estimate - e.actual })
   for (const b of v.budgets) if (b.planned - b.spent > 0) rows.push({ name: b.name, sub: `budget ${money(b.planned)}`, v: b.planned - b.spent })

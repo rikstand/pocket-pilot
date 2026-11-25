@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { parseDate, addDays, formatDate } from '../engine/dates'
 import type { Runway } from './runwaySeries'
 import { underFloor, overdrawn } from '../engine/floor'
+import { useDock } from './useDock'
 
 /**
  * The Cycle screen in the new look (Journey 8): Hero E, the runway, and one
@@ -40,6 +41,7 @@ export interface BudgetRow {
   onPlus?: () => void
   plusOpen?: boolean
   flag?: 'over' | 'under' | null    // usually off (budget nudge)
+  history?: ('o' | 'u')[]           // last closed cycles, over or under (By type squares)
   quickAdd?: ReactNode
 }
 
@@ -93,6 +95,14 @@ function MarkShape({ mark }: { mark: Mark }) {
   }
 }
 
+/** One block per day of the cycle (J1): days gone ink, today mint, days to come faint.
+ *  Decoration only; "day 6 of 14" beside it says the same in words. */
+export function DayStrip({ n, today }: { n: number; today: number }) {
+  return <div className="rw-dstrip" aria-hidden="true">
+    {Array.from({ length: n }, (_, i) => <i key={i} className={i < today ? 'gone' : i === today ? 'now' : ''} />)}
+  </div>
+}
+
 export default function CycleView(p: Props) {
   const [tab, setTab] = useState<'day' | 'type'>('day')
   const [earlyOpen, setEarlyOpen] = useState(false)
@@ -137,6 +147,8 @@ export default function CycleView(p: Props) {
 
   const earlierIn = earlier.filter(i => i.isIn).reduce((s, i) => s + i.amountCents, 0)
   const earlierOut = earlier.filter(i => !i.isIn).reduce((s, i) => s + i.amountCents, 0)
+
+  const dock = useDock(p.start)
 
   // A tap on a runway dot opens Earlier if needed and brings its row into view.
   function jump(date: string) {
@@ -198,30 +210,30 @@ export default function CycleView(p: Props) {
   const shownBudgets = allBudgets ? p.budgets : p.budgets.slice(0, 3)
 
   return (
-    <div className="rw-page">
-      {/* ── which cycle ── */}
+    <div className="rw-page" ref={dock.ref} onScroll={dock.onScroll}>
+      {/* ── which cycle: floats at the top while the page scrolls ── */}
       {p.forecastNav ? <>
-      <div className="rw-cnav">
+      <div className={`rw-dock${dock.stuck ? ' stuck' : ''}`}><div className="rw-cnav">
         <button type="button" className="rw-cnav-b" aria-label="Earlier cycle" disabled={!p.forecastNav.onPrev} onClick={p.forecastNav.onPrev}>‹</button>
         <div className="rw-cnav-t">
           <h1>{day(p.start)} – {day(p.end, true)}</h1>
           <span>{inCycle ? `This cycle · day ${todayIdx + 1} of ${n} · ` : 'Forecast · '}{p.payName} {day(p.payDate)}</span>
         </div>
         <button type="button" className="rw-cnav-b" aria-label="Later cycle" disabled={!p.forecastNav.onNext} onClick={p.forecastNav.onNext}>›</button>
-      </div>
-      <div style={{ textAlign: 'center', marginTop: 6 }}>
+      </div><DayStrip n={n} today={inCycle ? todayIdx : future ? -1 : n} /></div>
+      <div style={{ textAlign: 'center' }}>
         <button type="button" className="rw-today" onClick={p.forecastNav.onBack}>{p.forecastNav.backLabel ?? 'Back to Forecast'}</button>
       </div>
-      </> : <div className="rw-cnav">
+      </> : <div className={`rw-dock${dock.stuck ? ' stuck' : ''}`}><div className="rw-cnav">
         {p.onPast
           ? <button type="button" className="rw-cnav-b" aria-label="Earlier cycles" onClick={p.onPast}>‹</button>
           : <span className="rw-cnav-gap" />}
         <div className="rw-cnav-t">
           <h1>{day(p.start)} – {day(p.end, true)}</h1>
-          <span>{inCycle ? `day ${todayIdx + 1} of ${n} · ` : 'ended · '}{p.payName} {day(p.payDate)}</span>
+          <span>{inCycle ? `day ${todayIdx + 1} of ${n} · ` : future ? `starts ${day(p.start)} · ` : 'ended · '}{p.payName} {day(p.payDate)}</span>
         </div>
         <button type="button" className="rw-cnav-b" aria-label={p.onNext ? 'Next cycle' : 'Next cycles (Forecast)'} onClick={p.onNext ?? p.onForecast}>›</button>
-      </div>}
+      </div><DayStrip n={n} today={inCycle ? todayIdx : future ? -1 : n} /></div>}
 
       {/* ── hero E ── */}
       <div className="rw-hero-card">

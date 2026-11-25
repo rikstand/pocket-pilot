@@ -55,6 +55,12 @@ import { ItemSheet, itemFor } from './runway/ItemsPage'
 import { buildRunway, type RunwayEvent } from './runway/runwaySeries'
 import { budgetHistory, budgetFlag } from './runway/budgetHistory'
 import { useBackLayer } from './runway/Sheet'
+import SheetGuard from './runway/SheetGuard'
+import ByType, { type CommittedRow, type EstimateRow } from './runway/ByType'
+import EstimateSheet from './runway/EstimateSheet'
+import OneOffSheet from './runway/OneOffSheet'
+import type { TypeKey } from './lib/insights'
+import type { Page } from './AppShell'
 
 function fmtDate(d: string) {
   return parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
@@ -64,9 +70,14 @@ function daysUntil(dateStr: string) {
   return Math.max(0, Math.round((parseDate(dateStr).getTime() - now.getTime()) / 86400000))
 }
 function today() { return formatDate(new Date()) }
+// "This cycle" is never the closed record. Closing on a cycle's last day left
+// today inside the closed cycle's dates, so Cycle showed that record (old look,
+// "Closed") until the next day. After an early close, the next cycle is current.
 function findCurrentIdx(cycles: any[]) {
   const t = today()
-  const idx = cycles.findIndex(c => c.startDate <= t && c.endDate >= t)
+  const open = (c: any) => !c.isHistorical
+  let idx = cycles.findIndex(c => open(c) && c.startDate <= t && c.endDate >= t)
+  if (idx < 0) idx = cycles.findIndex(c => open(c) && c.endDate >= t)
   return idx >= 0 ? idx : 0
 }
 function addOneDay(dateStr: string): string {
@@ -109,8 +120,10 @@ const PERIOD_WORD: Record<string, string> = {
   daily: 'day', weekly: 'week', fortnightly: 'fortnight', monthly: 'month', annually: 'year',
 }
 
-export default function Dashboard({ userId, accountId, variant, onForecast, onCredit }: {
+export default function Dashboard({ userId, accountId, variant, onForecast, onCredit, onNavigate }: {
   userId: string, accountId: string, variant: 'cycle' | 'forecast'
+  // By type's rows open their own pages: Expenses & income, Wishlist, Savings.
+  onNavigate?: (page: Page) => void
   // The new look's Cycle screen links to Forecast with its › button.
   onForecast?: () => void
   // The card sheet's "Change my plan" (Journey 1), to Plan › Credit.
@@ -198,6 +211,8 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
   // The card's sheet in the new look (Journey 1), on what the cycle needs.
   const [rwCard,             setRwCard]             = useState<CardMode | null>(null)
   const [rwSav,              setRwSav]              = useState<string | null>(null)   // savings sheet (release 6)
+  const [rwEst,              setRwEst]              = useState<string | null>(null)   // confirm an estimate (release 7)
+  const [rwOne,              setRwOne]              = useState<{ id: string; isIncome: boolean } | null>(null)   // a one-off (release 7)
   const [closeVarActuals,  setCloseVarActuals]  = useState<Record<string, string>>({})
   const [closePayLanded,   setClosePayLanded]   = useState<boolean | null>(null)
   const [closePayAmount,   setClosePayAmount]   = useState('')
@@ -2425,6 +2440,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
     const t = today()
     const items: DayItem[] = []
     const events: RunwayEvent[] = []
+    const estMap = new Map<string, { id: string; name: string; cents: number; first: string; how: string }>()
     const cardFor = (pred: (cd: any) => boolean) => [...incomeCards, ...fixedCards, ...varCards].find(pred)
     // The new look opens the item sheet for this cycle, when the forecast knows it.
     const inRows = !!forecastRows?.cycles.some((x: any) => x.startDate === c.startDate)
@@ -2448,6 +2464,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
           key: `inc-${src.id}-${d}`, date: d, name: src.name, mark: 'income', amountCents: cents, isIn: true,
           sub: src.is_potential ? 'Not certain yet' : ov ? 'This cycle only' : howOften(toEngineIncome([src])[0]),
           onOpen: src.frequency !== 'once' && !src.is_potential && openItem(src.id, true)
+            || (src.frequency === 'once' && inRows ? () => setRwOne({ id: src.id, isIncome: true }) : undefined)
             || (cd ? () => (src.frequency === 'once' ? openOneOff(cd, !(cd.isPotential ?? true)) : openIncomeEdit(cd)) : undefined),
         })
       })
@@ -2469,6 +2486,10 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
           : (versionForDate(exp.expense_amount_versions, d)?.amount_cents ?? 0)
         events.push({ date: d, cents: -cents, name: exp.name })
         const isEstimate = mode === 'variable'
+        if (isEstimate) {
+          const e = estMap.get(exp.id) ?? { id: exp.id, name: exp.name, cents: 0, first: d, how: howOften(toEngineExpenses([exp])[0]) }
+          e.cents += cents; estMap.set(exp.id, e)
+        }
         const open = isEstimate && !ov
         let sub = howOften(toEngineExpenses([exp])[0])
         if (isLayby) {
@@ -2480,9 +2501,11 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
           key: `exp-${exp.id}-${d}`, date: d, name: exp.name, mark: isLayby ? 'bnpl' : isEstimate ? 'estimate' : 'fixed',
           amountCents: cents, estimate: open, sub,
           needs: open && d < t, needsText: 'not confirmed',
-          action: open && cd ? { label: 'Confirm', run: () => openVar(cd) } : undefined,
+          action: open && (inRows || cd) ? { label: 'Confirm', run: inRows ? () => setRwEst(exp.id) : () => openVar(cd) } : undefined,
           donePill: isEstimate && ov && c.startDate <= t ? '✓' : undefined,
           onOpen: !isLayby && exp.frequency !== 'once' && cd?.act !== 'oneoff' && openItem(exp.id, false)
+            || (exp.frequency === 'once' && !isLayby && inRows ? () => setRwOne({ id: exp.id, isIncome: false }) : undefined)
+            || (isEstimate && inRows ? () => setRwEst(exp.id) : undefined)
             || (!cd ? undefined
             : cd.act === 'oneoff' ? () => openOneOff(cd, false)
             : isEstimate ? () => openVar(cd)
@@ -2556,10 +2579,12 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
     const budgets: BudgetRow[] = budgetCards.map(cd => {
       const entries = entriesForExpenseInCycle(cd.expenseId)
       const row = rawExpenses.find((x: any) => x.id === cd.expenseId)
-      const flag = row ? budgetFlag(budgetHistory(toEngineExpenses([row])[0], closedCycles, rawBudgetEntries,
-        forecastRows?.expenseOverrideRows ?? [], ruleAt), cd.baseTotalCents) : null
+      const hist = row ? budgetHistory(toEngineExpenses([row])[0], closedCycles, rawBudgetEntries,
+        forecastRows?.expenseOverrideRows ?? [], ruleAt) : []
+      const flag = row ? budgetFlag(hist, cd.baseTotalCents) : null
       return {
         flag: flag?.dir ?? null,
+        history: hist.map(h => (h.spentCents > h.plannedCents ? 'o' : 'u') as 'o' | 'u'),
         id: cd.expenseId, name: cd.name,
         spentCents: entries.reduce((sum: number, e: any) => sum + e.amount_cents, 0),
         plannedCents: cd.totalCents,
@@ -2585,7 +2610,36 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
     if (Math.abs(runway.gapCents) >= 100) console.warn('Runway differs from the forecast by', runway.gapCents, 'cents')
 
     const spareCard = !!rawCredit?.strategy_committed && planModeOf(creditPlanCard) === 'spare'
-    return { items, budgets, runway, events, cardLine: spareCard ? { cents: creditExtraCents, name: rawCredit?.name ?? 'your card' } : null }
+
+    // By type (release 7): this cycle's items by type, from the same rows as By day.
+    const shortDay = (dt: string) => parseDate(dt).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+    const group = (mark: string, type: TypeKey, name: string, onOpen?: () => void): CommittedRow | null => {
+      const its = items.filter(i => i.mark === mark && !i.isIn)
+      if (!its.length) return null
+      const names = [...new Set(its.map(i => i.name))]
+      return { key: type, type, name, cents: its.reduce((sum, i) => sum + i.amountCents, 0), onOpen,
+        sub: type === 'card' ? its[0].sub ?? '' : names.slice(0, 3).join(' · ') + (names.length > 3 ? ` + ${names.length - 3} more` : '') }
+    }
+    const cardItem = items.find(i => i.mark === 'credit')
+    const committed = [
+      group('fixed', 'fixed', 'Fixed', onNavigate ? () => onNavigate('items') : undefined),
+      group('bnpl', 'bnpl', 'BNPL', onNavigate ? () => onNavigate('wishlist') : undefined),
+      group('savings', 'savings', 'Savings', onNavigate ? () => onNavigate('savings') : undefined),
+      group('credit', 'card', rawCredit?.name ?? 'Card', cardItem?.onOpen),
+    ].filter((x): x is CommittedRow => !!x)
+    const estimates: EstimateRow[] = [...estMap.values()].map(e => {
+      const hist = (forecastRows?.expenseOverrideRows ?? []).filter((o: any) => o.expense_id === e.id && o.cycle_start < c.startDate)
+        .sort((a: any, b: any) => a.cycle_start.localeCompare(b.cycle_start)).slice(-6).map((o: any) => o.amount_cents as number)
+      return { id: e.id, name: e.name, cents: e.cents, sub: `${shortDay(e.first)} · ${e.how}`,
+        usual: hist.length >= 3 ? Math.round(hist.reduce((a, b) => a + b, 0) / hist.length / 100) * 100 : null,
+        onOpen: inRows ? () => setRwEst(e.id) : () => {} }
+    })
+    const n = Math.round((parseDate(c.endDate).getTime() - parseDate(c.startDate).getTime()) / 86400000) + 1
+    const pace = t < c.startDate ? 0 : t > c.endDate ? 1
+      : (Math.round((parseDate(t).getTime() - parseDate(c.startDate).getTime()) / 86400000) + 1) / n
+
+    return { items, budgets, runway, events, cardLine: spareCard ? { cents: creditExtraCents, name: rawCredit?.name ?? 'your card' } : null,
+      committed, estimates, pace, spare: spareCard, inRows }
   }
 
   const money = (cents: number) => (cents < 0 ? '−' : '') + fmt(Math.abs(cents), false)
@@ -2689,7 +2743,10 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
           backLabel: 'Back to this cycle',
         } : undefined}
         onAddToCycle={openAddToCycle}
-        byType={cycleBody}
+        byType={d.inRows && forecastRows ? (
+          <ByType rows={forecastRows} accountId={accountId} cycleStart={activeCycle.startDate} floorCents={floorCents} money={money}
+            committed={d.committed} estimates={d.estimates} budgets={d.budgets} pace={d.pace} spare={d.spare} />
+        ) : cycleBody}
         money={money}
       />
       {rwCatchOpen && canCatchUp && (
@@ -2709,22 +2766,37 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
           onSubmit={({ lastCloseCents, enteredCents, payIn }) => submitCatchUp(missed, lastCloseCents, enteredCents, payIn)}
         />
       )}
-      {rwCard && rawCredit && forecastRows && (
+      {rwCard && rawCredit && forecastRows && (<SheetGuard onClose={() => setRwCard(null)}>
         <CardSheet mode={rwCard} rows={forecastRows} cycleStart={activeCycle.startDate} card={creditPlanCard} accountId={accountId}
           floorCents={floorCents} today={t} dueDate={creditDueDate} paidCents={creditState === 'paid' ? creditPaidCents : null}
           predictedTodayCents={isCurrentCycle ? predictedCardToday() : null} sym={sym} money={money}
-          onPlan={onCredit} onClose={() => setRwCard(null)} />
+          onPlan={onCredit} onClose={() => setRwCard(null)} /></SheetGuard>
       )}
-      {rwSav && (
-        <SavingsSheet accountId={accountId} goalId={rwSav} rows={forecastRows} cycleStart={activeCycle.startDate} onClose={() => setRwSav(null)} />
+      {rwSav && (<SheetGuard onClose={() => setRwSav(null)}>
+        <SavingsSheet accountId={accountId} goalId={rwSav} rows={forecastRows} cycleStart={activeCycle.startDate} onClose={() => setRwSav(null)} /></SheetGuard>
       )}
+      {rwEst && forecastRows && (() => {
+        const row = rawExpenses.find((x: any) => x.id === rwEst)
+        const k = forecastRows.cycles.findIndex((x: any) => x.startDate === activeCycle.startDate)
+        if (!row || k < 0) return null
+        return <SheetGuard onClose={() => setRwEst(null)}><EstimateSheet row={row} rows={forecastRows} cycleIdx={k} floorCents={floorCents}
+          accountId={accountId} today={t} money={money} onClose={() => setRwEst(null)} /></SheetGuard>
+      })()}
+      {rwOne && forecastRows && (() => {
+        const row = (rwOne.isIncome ? rawIncome : rawExpenses).find((x: any) => x.id === rwOne.id)
+        const k = forecastRows.cycles.findIndex((x: any) => x.startDate === activeCycle.startDate)
+        if (!row || k < 0) return null
+        return <SheetGuard onClose={() => setRwOne(null)}><OneOffSheet row={row} isIncome={rwOne.isIncome} rows={forecastRows} cycleIdx={k}
+          floorCents={floorCents} accountId={accountId} today={t} money={money}
+          payDates={forecastRows.cycles.slice(k, k + 3).map((x: any) => addOneDay(x.endDate))} onClose={() => setRwOne(null)} /></SheetGuard>
+      })()}
       {rwItem && forecastRows && (() => {
         const row = (rwItem.isIncome ? rawIncome : rawExpenses).find((x: any) => x.id === rwItem.id)
         const k = forecastRows.cycles.findIndex((x: any) => x.startDate === activeCycle.startDate)
         if (!row || k < 0) return null
-        return <ItemSheet item={itemFor(forecastRows, row, rwItem.isIncome)} rows={forecastRows} cycleIdx={k} fromCycle
+        return <SheetGuard onClose={() => setRwItem(null)}><ItemSheet item={itemFor(forecastRows, row, rwItem.isIncome)} rows={forecastRows} cycleIdx={k} fromCycle
           floorCents={floorCents} accountId={accountId}
-          onClose={() => setRwItem(null)} onSaved={() => { setRwItem(null); notifyDataChanged() }} />
+          onClose={() => setRwItem(null)} onSaved={() => { setRwItem(null); notifyDataChanged() }} /></SheetGuard>
       })()}
     </>)
   })() : null

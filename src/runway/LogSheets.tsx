@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import SheetGuard from './SheetGuard'
 import Sheet, { reportError } from './Sheet'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
@@ -111,7 +112,7 @@ export function LogSheetsProvider({ accountId, userId, children }: {
   return (
     <LogContext.Provider value={api}>
       {children}
-      {view && (
+      {view && (<SheetGuard onClose={close}>
         <Sheet onClose={close}>
             <div className="rw-grab" />
             {view.kind === 'add' ? <AddSheet accountId={accountId} userId={userId} onClose={close} />
@@ -130,7 +131,7 @@ export function LogSheetsProvider({ accountId, userId, children }: {
                     }}
                     onAddOther={() => setView({ kind: 'add' })}
                     currency={activeAccount?.currency_code} />}
-        </Sheet>
+        </Sheet></SheetGuard>
       )}
     </LogContext.Provider>
   )

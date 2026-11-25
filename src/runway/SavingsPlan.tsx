@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import SheetGuard from './SheetGuard'
 import Sheet, { reportError } from './Sheet'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
@@ -185,10 +186,10 @@ function Body({ rows, accountId, floorCents, fmt, sym }: {
         <div className="rw-group">{pots.map(row)}</div>
       </>}
 
-      {open?.kind === 'goal' && open.id && <SavingsSheet accountId={accountId} goalId={open.id} rows={rows} onClose={() => setOpen(null)} />}
+      {open?.kind === 'goal' && open.id && <SheetGuard onClose={() => setOpen(null)}><SavingsSheet accountId={accountId} goalId={open.id} rows={rows} onClose={() => setOpen(null)} /></SheetGuard>}
       {open?.kind === 'prompt' && prompt && <OptionsSheet prompt={prompt} rows={rows} accountId={accountId} floorCents={floorCents} money={money} short={short} onClose={() => setOpen(null)} />}
-      {open?.kind === 'add' && <AddGoalSheet accountId={accountId} rows={rows} floorCents={floorCents} sym={sym} money={money} short={short} onClose={() => setOpen(null)} />}
-      {open?.kind === 'dip' && dipK >= 0 && <DipSheet k={dipK} rows={rows} base={projected} without={without} goals={goals} have={have} accountId={accountId} floorCents={floorCents} money={money} short={short} onClose={() => setOpen(null)} />}
+      {open?.kind === 'add' && <SheetGuard onClose={() => setOpen(null)}><AddGoalSheet accountId={accountId} rows={rows} floorCents={floorCents} sym={sym} money={money} short={short} onClose={() => setOpen(null)} /></SheetGuard>}
+      {open?.kind === 'dip' && dipK >= 0 && <SheetGuard onClose={() => setOpen(null)}><DipSheet k={dipK} rows={rows} base={projected} without={without} goals={goals} have={have} accountId={accountId} floorCents={floorCents} money={money} short={short} onClose={() => setOpen(null)} /></SheetGuard>}
     </div>
   )
 }

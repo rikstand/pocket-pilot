@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import SheetGuard from './SheetGuard'
 import Sheet, { reportError } from './Sheet'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
@@ -196,10 +197,10 @@ export default function CreditPlan({ accountId }: { accountId: string }) {
         <DetailsSheet card={card} rows={rows} k0={k0} floorCents={floorCents} money={money} sym={sym} onClose={() => setSheet(null)} toast={toast} />
       )}
       {sheet?.kind === 'card' && (
-        <CardSheet mode={sheet.mode} rows={rows} cycleStart={cur.startDate} card={inForce} accountId={accountId}
+        <SheetGuard onClose={() => setSheet(null)}><CardSheet mode={sheet.mode} rows={rows} cycleStart={cur.startDate} card={inForce} accountId={accountId}
           floorCents={floorCents} today={today} dueDate={null} paidCents={paidRow?.amount_cents ?? null}
           predictedTodayCents={owingToday} sym={sym} money={money}
-          onPlan={() => setSheet({ kind: 'plan' })} onClose={() => setSheet(null)} />
+          onPlan={() => setSheet({ kind: 'plan' })} onClose={() => setSheet(null)} /></SheetGuard>
       )}
     </div>
   )

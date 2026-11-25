@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import SheetGuard from './SheetGuard'
 import Sheet, { reportError } from './Sheet'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
@@ -242,7 +243,7 @@ function WishlistBody({ rows, items, accountId, userId, floorCents, fmt, sym, op
         onRemove={() => removeItem(openItem, `${openItem.name} removed from your Wishlist`)} />}
       {open?.kind === 'running' && openPlan && <RunningSheet key={openPlan.row.id} plan={openPlan} m={m} floorCents={floorCents} sym={sym} money={money} moneyC={moneyC}
         accountId={accountId} userId={userId} onClose={close} onSaved={saved} />}
-      {open?.kind === 'saving' && openItem && goalOf(openItem) && <SavingsSheet accountId={accountId} goalId={goalOf(openItem).id} rows={rows} wishItem={openItem} onClose={close} />}
+      {open?.kind === 'saving' && openItem && goalOf(openItem) && <SheetGuard onClose={close}><SavingsSheet accountId={accountId} goalId={goalOf(openItem).id} rows={rows} wishItem={openItem} onClose={close} /></SheetGuard>}
       {open?.kind === 'done' && openItem && <DoneSheet item={openItem} last={lastOf(openItem)} money={money} onClose={close}
         onRemove={() => removeItem(openItem, `${openItem.name} removed from your Wishlist`)} />}
       {open?.kind === 'add' && <AddWantSheet accountId={accountId} userId={userId} sym={sym} onClose={close} onSaved={saved} />}
