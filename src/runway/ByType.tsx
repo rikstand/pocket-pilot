@@ -211,7 +211,7 @@ export default function ByType(p: Props) {
         {p.budgets.map(b => {
           const pct = b.plannedCents > 0 ? b.spentCents / b.plannedCents : 0
           return (
-            <button key={b.id} type="button" className="rw-row" onClick={b.onOpen}>
+            <button key={b.id} type="button" className="rw-row rw-bt-bud" onClick={b.onOpen}>
               <div className="rw-tx">
                 <div className="rw-row-name rw-bt-sp"><span>{b.name}</span>{b.history && b.history.length >= 3 && <Squares h={b.history} />}</div>
                 <div className="rw-pb" aria-hidden="true">

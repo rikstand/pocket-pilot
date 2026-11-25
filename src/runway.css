@@ -962,3 +962,6 @@ div.rw-bt-mvr { cursor: default; }
 .rw-bt-dv { position: relative; height: 10px; background: linear-gradient(var(--rw-control-edge), var(--rw-control-edge)) center/1px 100% no-repeat; }
 .rw-bt-dv i { position: absolute; top: 0; bottom: 0; border-radius: 2px; }
 .rw-body-t { font: var(--rw-text-body); color: var(--rw-ink); }
+/* Budget rows on By type: the amount column has one width, so every bar and row of squares ends on the same line. */
+.rw-bt-bud .rw-am { flex: 0 0 5.6em; width: 5.6em; text-align: right; }
+.rw-bt-bud .rw-tx { min-width: 0; }
