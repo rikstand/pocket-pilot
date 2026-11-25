@@ -207,7 +207,7 @@ export default function ByType(p: Props) {
     {p.budgets.length > 0 && <>
       <div role="heading" aria-level={2} className="rw-dl"><span className="rw-dl-k">Budgets</span>
         <span>{money(budgetSpent)} of {money(budgetPlanned)}</span></div>
-      <div className="rw-group">
+      <div className="rw-group rw-bt-budg">
         {p.budgets.map(b => {
           const pct = b.plannedCents > 0 ? b.spentCents / b.plannedCents : 0
           return (
