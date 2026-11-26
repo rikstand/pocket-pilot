@@ -44,7 +44,7 @@ export async function createAccount(
 
 export async function updateAccount(
   accountId: string,
-  fields: { name?: string; currency_code?: string; safety_floor_cents?: number }
+  fields: { name?: string; currency_code?: string; safety_floor_cents?: number; colour?: number; archived?: boolean }
 ) {
   const { data, error } = await supabase
     .from('accounts')
@@ -57,6 +57,14 @@ export async function updateAccount(
 }
 
 // --- PROFILE ---
+/** Delete for good: the account and everything under it, in one transaction
+ *  (database function delete_account). Only an archived account of the
+ *  signed-in user; the function checks both. */
+export async function deleteAccountForGood(accountId: string) {
+  const { error } = await supabase.rpc('delete_account', { p_account_id: accountId })
+  if (error) throw error
+}
+
 export async function getProfile(userId: string) {
   const { data, error } = await supabase
     .from('profiles')

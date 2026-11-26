@@ -17,8 +17,6 @@ interface Props {
   active: Page
   onNavigate: (page: Page) => void
   onAdd: () => void
-  darkMode: boolean
-  onToggleDark: () => void
   onAddAccount: () => void
   children: ReactNode
 }
@@ -27,12 +25,12 @@ interface Props {
 const TAB_OF: Record<Page, 'cycle' | 'forecast' | 'plan' | 'more'> = {
   cycle: 'cycle', forecast: 'forecast',
   plan: 'plan', items: 'plan', expenses: 'plan', wishlist: 'plan', credit: 'plan', savings: 'plan',
-  more: 'more', settings: 'more',
+  more: 'more', settings: 'more', accounts: 'more',
 }
 // The browser tab and the screen reader say which page this is.
 const TITLE: Record<Page, string> = {
   cycle: 'Cycle', forecast: 'Forecast', plan: 'Plan', items: 'Expenses & income', expenses: 'Expenses',
-  wishlist: 'Wishlist', credit: 'Credit', savings: 'Savings', more: 'More', settings: 'Settings',
+  wishlist: 'Wishlist', credit: 'Credit', savings: 'Savings', more: 'More', settings: 'Settings', accounts: 'Accounts',
 }
 export const BACK: Partial<Record<Page, { to: Page; label: string }>> = {
   items:    { to: 'plan', label: 'Plan' },
@@ -41,6 +39,7 @@ export const BACK: Partial<Record<Page, { to: Page; label: string }>> = {
   credit:   { to: 'plan', label: 'Plan' },
   savings:  { to: 'plan', label: 'Plan' },
   settings: { to: 'more', label: 'More' },
+  accounts: { to: 'settings', label: 'Settings' },
 }
 
 const svg = { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true }
@@ -52,7 +51,7 @@ const ICON = {
   add:      <svg {...svg} strokeWidth={2.2}><path d="M12 5v14M5 12h14" /></svg>,
 }
 
-export default function RunwayShell({ active, onNavigate, onAdd, darkMode, onToggleDark, onAddAccount, children }: Props) {
+export default function RunwayShell({ active, onNavigate, onAdd, onAddAccount, children }: Props) {
   useEffect(() => {
     document.body.classList.add('is-runway')
     return () => { document.body.classList.remove('is-runway') }
@@ -82,7 +81,7 @@ export default function RunwayShell({ active, onNavigate, onAdd, darkMode, onTog
 
         <main className="rw-main">
           {active === 'plan' ? <PlanHub onNavigate={onNavigate} />
-            : active === 'more' ? <MoreHub onNavigate={onNavigate} darkMode={darkMode} onToggleDark={onToggleDark} onAddAccount={onAddAccount} />
+            : active === 'more' ? <MoreHub onNavigate={onNavigate} onAddAccount={onAddAccount} />
             : children}
         </main>
 

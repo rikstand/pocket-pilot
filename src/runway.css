@@ -545,6 +545,7 @@ body.is-runway #root { border-inline: none; }
 .rw-note { margin-top: 12px; background: var(--rw-surface-2); border-radius: 11px; padding: 9px 11px; font: var(--rw-text-body); color: var(--rw-muted); }
 .rw .rw-danger { color: var(--rw-under-floor); }
 .rw .rw-cta.dang { background: var(--rw-under-floor); color: #fff; }
+[data-theme="dark"] .rw .rw-cta.dang, .rw[data-theme="dark"] .rw-cta.dang { color: #0e1116; }
 .rw .rw-mini.sec { background: var(--rw-surface-2); color: var(--rw-ink); }
 .rw-seg button:disabled { opacity: .45; cursor: default; }
 .rw-row:disabled { cursor: default; opacity: .6; }
@@ -968,3 +969,90 @@ div.rw-bt-mvr { cursor: default; }
 .rw-bt-budg > .rw-bt-bud { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; }
 .rw-bt-bud .rw-am { text-align: right; }
 .rw-bt-bud .rw-tx { min-width: 0; }
+
+/* ── Release 8a: welcome, loader, Settings, accounts ─────────────────────── */
+
+/* Account colours (agreed 27 Nov): solid, with a white letter (4.5:1 or better),
+ * the same six in light and dark. None is amber, red, mint, the card's teal or
+ * BNPL's purple, so an account never reads as a warning. */
+.rw { --rw-acct-0: #2f6bd6; --rw-acct-1: #5a4fcf; --rw-acct-2: #b83f78; --rw-acct-3: #647320; --rw-acct-4: #946330; --rw-acct-5: #586374; --rw-acct-ink: #ffffff; }
+.rw .rw-acct-0 { background: var(--rw-acct-0); } .rw .rw-acct-1 { background: var(--rw-acct-1); } .rw .rw-acct-2 { background: var(--rw-acct-2); }
+.rw .rw-acct-3 { background: var(--rw-acct-3); } .rw .rw-acct-4 { background: var(--rw-acct-4); } .rw .rw-acct-5 { background: var(--rw-acct-5); }
+.rw .rw-dot.rw-acct { color: var(--rw-acct-ink); }
+.rw .rw-dot.lg { width: 36px; height: 36px; flex: 0 0 36px; }
+.rw .rw-dot.sm { width: 20px; height: 20px; flex: 0 0 20px; font: var(--rw-text-label); }
+/* The colour row: one round button per colour, ✓ on the chosen one, · on one another account uses. */
+.rw .rw-swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+.rw .rw-swatch { width: 44px; height: 44px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; display: grid; place-items: center;
+  font: var(--rw-text-row-name); font-weight: 700; color: var(--rw-acct-ink); }
+.rw .rw-swatch.on { border-color: var(--rw-ink); box-shadow: inset 0 0 0 2px var(--rw-surface); }
+
+/* Rows: a value on the right, a field with its label above */
+.rw .rw-rval { font: var(--rw-text-sub); color: var(--rw-muted); white-space: nowrap; max-width: 46%; overflow: hidden; text-overflow: ellipsis; }
+.rw .rw-sec-acct { display: inline-flex; align-items: center; gap: 8px; }
+.rw .rw-flab { display: grid; gap: 4px; margin-top: 12px; font: var(--rw-text-sub); font-weight: 650; color: var(--rw-muted); }
+.rw .rw-flab.rw-flab-0 { margin-top: 0; }
+.rw .rw-flab .rw-field { margin-top: 0; }
+.rw .rw-acc-head { display: flex; align-items: center; justify-content: space-between; }
+.rw .rw-acc-list { margin-top: 12px; }
+.rw .rw-acc-acts { margin-top: 10px; }
+.rw .rw-floor-chips { margin-top: 8px; }
+
+/* The welcome stage (design system › Brand mark) */
+.rw.rw-wel .rw-main { position: relative; min-height: 100%; }
+.rw .rw-wel-bg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.rw .rw-wel-fg { position: relative; padding: 56px var(--rw-space-4) 28px; max-width: 440px; margin: 0 auto; }
+.rw .rw-wel-brand { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.rw .rw-wel-mark { display: block; }
+.rw .rw-wel-name { font: var(--rw-text-page-title); color: var(--rw-ink); margin-top: 10px; }
+.rw .rw-wel-sub { font: var(--rw-text-sheet-title); color: var(--rw-muted); margin: 2px 0 0; }
+.rw .rw-wel-wait { font: var(--rw-text-sub); margin-top: 6px; }
+.rw .rw-wel-p { font: var(--rw-text-body); color: var(--rw-muted); text-align: center; margin: 4px 0 0; }
+.rw .rw-wel-p b { color: var(--rw-ink); font-weight: 650; }
+.rw .rw-wel-who { margin-top: 18px; }
+.rw .rw-wel-notyou { margin: 0; min-height: 44px; }
+.rw .rw-wel-form { margin-top: 4px; }
+.rw .rw-wel-full { width: 100%; margin-top: 14px; }
+.rw .rw-wel-err { font: var(--rw-text-body); color: var(--rw-under-floor); margin-top: 10px; }
+.rw .rw-wel-warn { color: var(--rw-near-floor-text); }
+.rw .rw-wel-alt { text-align: center; font: var(--rw-text-sub); color: var(--rw-muted); margin-top: 22px; }
+.rw .rw-wel-alt button { border: none; background: none; padding: 0 2px; min-height: 44px; cursor: pointer; font: inherit; font-weight: 650; color: var(--rw-ink); text-decoration: underline; }
+.rw .rw-wel-floor { stroke: var(--rw-faint); }
+.rw .rw-wel-ink { stroke: var(--rw-ink); }
+.rw .rw-wel-dot { fill: var(--rw-line); }
+.rw .rw-wel-ring { stroke: var(--rw-bg); stroke-width: 3; }
+.rw .rw-wel-grid { fill: var(--rw-faint); opacity: .55; }
+.rw .rw-wel-line { stroke: var(--rw-line); }
+.rw .rw-wel-glow { stroke: var(--rw-line); opacity: .35; }
+.rw .rw-wel-a0 { stop-color: var(--rw-line); stop-opacity: .22; }
+.rw .rw-wel-a1 { stop-color: var(--rw-line); stop-opacity: 0; }
+.rw .rw-wel-halo { fill: var(--rw-line); }
+.rw .rw-wel-inline { display: flex; justify-content: center; padding: 120px 0; }
+/* The mark and runway draw once, the dot pops; loading loops the mark (loader 2a) and keeps the background still. */
+.rw .rw-wel-draw { stroke-dasharray: 100; stroke-dashoffset: 100; animation: rw-wel-draw 1.1s cubic-bezier(.6,0,.2,1) .15s forwards; }
+.rw .rw-wel-pop { opacity: 0; transform-box: fill-box; transform-origin: center; animation: rw-wel-pop .5s ease-out 1.15s forwards; }
+.rw .rw-wel-halo.rw-wel-pop { animation-name: rw-wel-halo; }
+.rw .rw-wel-fill, .rw .rw-wel-glow { animation: rw-wel-fade .8s ease-out .9s both; }
+.rw.rw-wel.still .rw-wel-bg * { animation: none; stroke-dashoffset: 0; }
+.rw.rw-wel.still .rw-wel-bg .rw-wel-pop { opacity: 1; }
+.rw.rw-wel.still .rw-wel-bg .rw-wel-halo { opacity: .2; }
+.rw .rw-wel-loop { stroke-dasharray: 100; stroke-dashoffset: 100; animation: rw-wel-loop 2s cubic-bezier(.6,0,.2,1) infinite; }
+.rw .rw-wel-loopdot { opacity: 0; transform-box: fill-box; transform-origin: center; animation: rw-wel-loopdot 2s ease-out infinite; }
+.rw .rw-wel-form, .rw .rw-wel-who, .rw .rw-wel-wait { animation: rw-wel-fade .3s ease-out both; }
+@keyframes rw-wel-draw { to { stroke-dashoffset: 0 } }
+@keyframes rw-wel-pop { 0% { opacity: 0; transform: scale(.3) } 60% { opacity: 1; transform: scale(1.3) } 100% { opacity: 1; transform: scale(1) } }
+@keyframes rw-wel-halo { 0% { opacity: 0; transform: scale(.3) } 60% { opacity: .3; transform: scale(1.2) } 100% { opacity: .2; transform: scale(1) } }
+@keyframes rw-wel-fade { from { opacity: 0 } }
+@keyframes rw-wel-loop { 0% { stroke-dashoffset: 100; opacity: 1 } 55% { stroke-dashoffset: 0; opacity: 1 } 85% { stroke-dashoffset: 0; opacity: 1 } 100% { stroke-dashoffset: 0; opacity: 0 } }
+@keyframes rw-wel-loopdot { 0%, 52% { opacity: 0; transform: scale(.3) } 62% { opacity: 1; transform: scale(1.3) } 70%, 85% { opacity: 1; transform: scale(1) } 100% { opacity: 0; transform: scale(1) } }
+@media (prefers-reduced-motion: reduce) {
+  .rw .rw-wel-draw, .rw .rw-wel-loop { animation: none; stroke-dashoffset: 0; }
+  .rw .rw-wel-pop, .rw .rw-wel-loopdot { animation: none; opacity: 1; }
+  .rw .rw-wel-halo.rw-wel-pop { opacity: .2; }
+  .rw .rw-wel-fill, .rw .rw-wel-glow, .rw .rw-wel-form, .rw .rw-wel-who, .rw .rw-wel-wait { animation: none; }
+}
+.rw .rw-row.rw-col { flex-direction: column; align-items: stretch; gap: 8px; }
+.rw .rw-lab.rw-lab-0 { margin-top: 0; }
+.rw .rw-wel-form, .rw .rw-flab { text-align: left; }
+.rw .rw-wel-form .rw-lnk, .rw .rw-wel-alt { text-align: center; }
+.rw .rw-group.rw-wel-who { margin-left: 0; margin-right: 0; }

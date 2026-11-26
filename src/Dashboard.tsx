@@ -42,6 +42,7 @@ import { byOldest, versionForDate } from './lib/versions'
 import { ExpenseIcon, guessIcon } from './lib/icons'
 import { useViewport } from './lib/useViewport'
 import { useNewLook } from './lib/look'
+import { LoadingMark } from './runway/Welcome'
 import { useDataChanged, notifyDataChanged } from './lib/dataEvents'
 import { useLog } from './runway/logContext'
 import CycleView, { type DayItem, type BudgetRow } from './runway/CycleView'
@@ -451,7 +452,8 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
     return () => clearTimeout(t)
   }, [undoEntry])
 
-  if (loading) return <div className="app" style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh' }}><p style={{ color:'var(--mut)' }}>Loading…</p></div>
+  if (loading) return newLook ? <LoadingMark />
+    : <div className="app" style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh' }}><p style={{ color:'var(--mut)' }}>Loading…</p></div>
   if (error)   return <div className="app" style={{ padding:24 }}><p style={{ color:'var(--floor)' }}>{error}</p></div>
   if (!cycles.length) return <div className="app" style={{ padding:24 }}><p style={{ color:'var(--mut)' }}>No cycle data.</p></div>
 

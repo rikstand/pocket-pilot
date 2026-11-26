@@ -9,10 +9,18 @@ export interface Account {
   opening_balance_cents: number
   safety_floor_cents: number
   created_at: string
+  // Release 8: a colour of its own (0–5, see ACCOUNT_COLOURS) and archiving.
+  // Null colour on an account made before the SQL ran: it follows the list order.
+  colour?: number | null
+  archived?: boolean | null
 }
 
+export { ACCOUNT_COLOURS, colourOf } from './accountColours'
+
 interface AccountContextValue {
+  // Accounts in use. Archived ones are hidden everywhere but Settings › Accounts.
   accounts: Account[]
+  allAccounts: Account[]
   activeAccount: Account | null
   setActiveAccountId: (id: string) => void
   reloadAccounts: () => Promise<void>
@@ -36,12 +44,14 @@ export function AccountProvider({ userId, children }: { userId: string; children
       .order('created_at')
     if (error) throw error
 
-    setAccounts(data ?? [])
+    const all = data ?? []
+    setAccounts(all)
 
-    // If no stored preference, or stored id no longer exists, default to first account
-    const storedStillValid = data?.some(a => a.id === activeAccountId)
-    if (!storedStillValid && data && data.length > 0) {
-      setActiveAccountId(data[0].id)
+    // If no stored preference, or the stored account is gone or archived, open the first in use
+    const live = all.filter(a => !a.archived)
+    const stored = localStorage.getItem(`pp_active_account_${userId}`)
+    if (!live.some(a => a.id === stored) && live.length > 0) {
+      setActiveAccountId(live[0].id)
     }
 
     setLoading(false)
@@ -62,11 +72,13 @@ export function AccountProvider({ userId, children }: { userId: string; children
     setActiveAccountId(id)
   }
 
-  const activeAccount = accounts.find(a => a.id === activeAccountId) ?? null
+  const live = accounts.filter(a => !a.archived)
+  const activeAccount = live.find(a => a.id === activeAccountId) ?? null
 
   return (
     <AccountContext.Provider value={{
-      accounts,
+      accounts: live,
+      allAccounts: accounts,
       activeAccount,
       setActiveAccountId: handleSetActiveAccountId,
       reloadAccounts: loadAccounts,
