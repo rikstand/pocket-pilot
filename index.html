@@ -4,7 +4,22 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>pocket-pilot</title>
+    <title>Pocket Pilot</title>
+    <meta name="theme-color" content="#f6f6f3" />
+    <script>
+      // Light, Dark or Match my phone (Settings › Theme), set before the app starts so a dark phone never flashes white.
+      (function () {
+        var p = 'light'; try { p = localStorage.getItem('pp.theme') || 'light' } catch (e) {}
+        var t = p === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : (p === 'dark' ? 'dark' : 'light')
+        document.documentElement.setAttribute('data-theme', t)
+        document.addEventListener('DOMContentLoaded', function () { document.body.setAttribute('data-theme', t) })
+        // No zoom on iPhone and iPad (rule T3): stops Safari zooming into a field when it's tapped.
+        // iOS still lets people pinch to zoom, so nothing is taken away from anyone.
+        var ios = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+        var vp = document.querySelector('meta[name=viewport]')
+        if (ios && vp) vp.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1')
+      })()
+    </script>
   </head>
   <body data-theme="light">
     <div id="root"></div>
