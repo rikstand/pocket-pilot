@@ -1063,3 +1063,6 @@ div.rw-bt-mvr { cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   .rw-row.flash, .rw-sheet { animation: none; }
 }
+
+/* No double-tap zoom (rule T3): a quick second tap on a field or button never zooms the page. Pinch still works. */
+html { touch-action: manipulation; }

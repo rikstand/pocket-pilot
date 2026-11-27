@@ -99,6 +99,12 @@ describe('Type and layout', () => {
     expect(CSS).toMatch(/\.rw :is\(input:not\(\[type=range\]\)[^{]*\{\s*font-size: max\(16px/)
     expect(CSS).not.toMatch(/\.rw :is\(\.rw-page, \.rw-sheet\) :is\(input/)
   })
+  it('T3: iPhone never zooms into a tapped field or on a double tap', () => {
+    const html = read(join(ROOT, 'index.html'))
+    expect(html).toMatch(/maximum-scale=1/)
+    expect(html).toMatch(/iP\(hone\|ad\|od\)/)
+    expect(CSS).toMatch(/html \{ touch-action: manipulation; \}/)
+  })
 })
 
 describe('Controls and sheets', () => {

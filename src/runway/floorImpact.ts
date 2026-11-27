@@ -25,19 +25,21 @@ export function floorImpact(rows: ForecastResult, savedFloor: number, floor: num
   const reach = wishlistCents.filter(w => next.some(v => v - w >= floor)).length
   const spareCard = !!rows.creditCard?.strategy_committed && planModeOf(rows.creditCard) === 'spare'
 
+  // One tile per card plan, so it never swaps meaning as the amount changes (Rick, 27 Nov):
+  // on "whatever's spare" the floor moves the card's payoff, so the tile is always Card cleared;
+  // on every other plan it counts the paydays under the floor.
   let third: { k: string; v: string; d: string; cls?: string } = { k: 'Under the floor', v: `${under} of ${next.length}`, d: 'paydays', cls: under ? 'near' : '' }
-  if (spareCard && floor !== savedFloor) {
-    const la = projectFromRows(rows, savedFloor, LONG), lb = projectFromRows(rows, floor, LONG)
+  if (spareCard) {
+    const la = projectFromRows(rows, savedFloor, LONG), lb = floor === savedFloor ? la : projectFromRows(rows, floor, LONG)
     const clear = (cs: typeof la) => cs.findIndex(c => c.creditOpeningBalanceCents > 0 && c.creditClosingBalanceCents <= 0)
     const ca = clear(la), cb = clear(lb)
-    if (ca >= 0 && ca !== cb) {
-      const dC = cb < 0 ? null : cb - ca
-      third = {
-        k: 'Card cleared',
-        v: cb >= 0 ? monthYear(shift(lb[cb].endDate, 1)) : 'Later',
-        d: dC == null ? `after ${monthYear(shift(la[la.length - 1].endDate, 1))}` : `${Math.abs(dC)} cycle${Math.abs(dC) > 1 ? 's' : ''} ${dC > 0 ? 'later' : 'sooner'}`,
-        cls: dC == null || dC > 0 ? 'near' : 'good',
-      }
+    const when = (cs: typeof la, k: number) => k >= 0 ? monthYear(shift(cs[k].endDate, 1)) : `After ${monthYear(shift(cs[cs.length - 1].endDate, 1))}`
+    const dC = ca >= 0 && cb >= 0 ? cb - ca : null
+    third = {
+      k: 'Card cleared',
+      v: when(lb, cb),
+      d: floor === savedFloor || ca === cb ? 'same as now' : dC == null ? (cb < 0 ? 'later than now' : 'sooner than now') : `${Math.abs(dC)} cycle${Math.abs(dC) > 1 ? 's' : ''} ${dC > 0 ? 'later' : 'sooner'}`,
+      cls: dC != null && dC !== 0 ? (dC > 0 ? 'near' : 'good') : cb < 0 && ca >= 0 ? 'near' : '',
     }
   }
   return { now, next, payDates, under, reach, spareCard, third }
