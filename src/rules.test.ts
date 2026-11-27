@@ -6,7 +6,7 @@
  * ones, and the list shrinks as findings are fixed.
  */
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
 const ROOT = join(__dirname, '..')
@@ -57,6 +57,21 @@ describe('Brand', () => {
     expect(w).toContain(`'${MARK}'`)
     // Any other copy of the mark's line must be the same points.
     for (const p of NEW_LOOK) for (const m of read(p).matchAll(/'(12,58 [0-9, ]+)'/g)) expect(`${rel(p)}: ${m[1]}`).toBe(`${rel(p)}: ${MARK}`)
+  })
+  it('B8: the app icon is icon C, and every icon the page names exists', () => {
+    const MARK = '12,58 25,49 38,54 50,38 62,45 71,67 81,60 88,46'
+    const fav = read(join(ROOT, 'public/favicon.svg'))
+    expect(fav).toContain(`points="${MARK}"`)
+    expect(fav).toContain('stroke-width="7.5"')
+    expect(fav).toContain('scale(0.84)')
+    const html = read(join(ROOT, 'index.html'))
+    expect(html).toMatch(/rel="apple-touch-icon" href="\/apple-touch-icon\.png"/)
+    expect(html).toMatch(/rel="manifest" href="\/manifest\.webmanifest"/)
+    const man = JSON.parse(read(join(ROOT, 'public/manifest.webmanifest')))
+    expect(man.name).toBe('Pocket Pilot')
+    const srcs = [...man.icons.map((i: { src: string }) => i.src), ...[...html.matchAll(/href="(\/[\w.-]+\.(?:png|svg|webmanifest))"/g)].map(m => m[1])]
+    for (const s of srcs) expect(existsSync(join(ROOT, 'public', s)), s).toBe(true)
+    expect(man.icons.some((i: { purpose?: string }) => i.purpose === 'maskable')).toBe(true)
   })
   it('B4: loading waits 0.4 seconds before showing anything', () => {
     const w = read(join(SRC, 'runway/Welcome.tsx'))
