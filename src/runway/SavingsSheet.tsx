@@ -18,6 +18,8 @@ import Preview from './Preview'
 import { overdrawn } from '../engine/floor'
 import { makePlanner, perFor, type Draft } from '../lib/savingsPlan'
 import { saveDraft } from '../lib/savingsSave'
+import { dateLocale } from '../lib/dateFormat'
+import { FitsQ } from './Terms'
 
 /**
  * One goal, or money put away for an expense. Cycle, Plan › Savings and the
@@ -72,7 +74,7 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
 }) {
   const toast = useToast()
   const money = (c: number) => (c < 0 ? '−' : '') + fmt(Math.abs(c), false)
-  const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+  const short = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
   const [busy, setBusy] = useState(false)
   const [openHist, setOpenHist] = useState(false)
   const [fixing, setFixing] = useState(false)
@@ -308,6 +310,7 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
           <div className="rw-snaps">
             {snaps.map(m => <button key={m.k} type="button" className={d.per === m.v && !d.catchUp ? 'on' : ''} onClick={() => setD({ ...d, per: m.v, catchUp: false })}>{m.k} {money(m.v)}</button>)}
             {d.skip && next && <button type="button" className={d.catchUp ? 'on' : ''} onClick={() => setD({ ...d, per: goal.per_cycle_cents, catchUp: true })}>Catch up next cycle</button>}
+            {snaps.some(m => m.k === 'Fits') && <FitsQ />}
           </div>
           <div className="rw-lab">Saved by</div>
           <DateChips value={fin >= 0 ? P.startOf(fin) : ''} today={P.startOf(from)} min={P.startOf(early ?? from)} otherMin={P.startOf(from)} label="Saved by"
@@ -354,6 +357,7 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
             <button type="button" className={now === l0 ? 'on' : ''} onClick={() => setNow(l0)}>Planned {money(l0)}</button>
             {potFits != null && potFits !== l0 && potFits !== potNeed && <button type="button" className={now === potFits ? 'on' : ''} onClick={() => setNow(potFits)}>Fits {money(potFits)}</button>}
             {potNeed !== l0 && <button type="button" className={now === potNeed ? 'on' : ''} onClick={() => setNow(potNeed)}>All of it {money(potNeed)}</button>}
+            {potFits != null && potFits !== l0 && potFits !== potNeed && <FitsQ />}
           </div>
         </div>
       </>}

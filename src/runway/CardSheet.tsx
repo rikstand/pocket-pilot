@@ -8,6 +8,8 @@ import { parseDate, formatDate, addDays } from '../engine/dates'
 import { notifyDataChanged } from '../lib/dataEvents'
 import { useToast } from './toastContext'
 import Preview, { previewStats } from './Preview'
+import { dateLocale, weekdayDay } from '../lib/dateFormat'
+import { FitsQ } from './Terms'
 
 /**
  * Journey 1: the card payment for one cycle. The amount, a slider from the
@@ -45,9 +47,9 @@ interface Props {
 }
 
 const HORIZON = 80                   // cycles projected, enough to see most cards cleared
-const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
-const monYr = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { month: 'short', year: 'numeric' })
-const day = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric' }).replace(',', '')
+const short = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
+const monYr = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { month: 'short', year: 'numeric' })
+const day = (d: string) => weekdayDay(parseDate(d))
 const nextDay = (d: string) => formatDate(addDays(parseDate(d), 1))
 const dollars = (c: number) => Math.round(c / 100)
 
@@ -275,6 +277,7 @@ export default function CardSheet(p: Props) {
             </div>
             <div className="rw-snaps">
               {marks.map(m => <button key={m.k} type="button" className={Math.abs(payC - m.v) < 100 ? 'on' : ''} onClick={() => setPay(m.v)}>{m.k} {money(m.v)}</button>)}
+              {marks.some(m => m.k === 'Fits') && <FitsQ />}
             </div>
             <div className="rw-ends">
               <button type="button" onClick={() => setPay(minC)}><b>{money(minC)}</b>minimum</button>

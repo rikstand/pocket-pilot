@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Sheet, { reportError } from './Sheet'
 import { parseDate } from '../engine/dates'
+import { dateLocale } from '../lib/dateFormat'
 
 /**
  * Journey 10: catch up on cycles that ended without being closed.
@@ -27,8 +28,8 @@ interface Props {
   onSubmit: (c: { lastCloseCents: number; enteredCents: number | null; payIn: boolean | null }) => Promise<void>
 }
 
-const day = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
-const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+const day = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
+const short = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
 
 export default function CatchUpSheet(p: Props) {
   const [step, setStep] = useState(0)

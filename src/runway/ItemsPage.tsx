@@ -24,6 +24,7 @@ import { useToast } from './toastContext'
 import { useLog } from './logContext'
 import Preview, { previewStats } from './Preview'
 import { underFloor, overdrawn } from '../engine/floor'
+import { dateLocale } from '../lib/dateFormat'
 
 /**
  * Journey 9, part one: Expenses & income. Everything that repeats, with what
@@ -38,10 +39,10 @@ const shift = (d: string, n: number) => formatDate(addDays(parseDate(d), n))
 const far = () => shift(todayStr(), 2 * 366)
 const dayName = (d: string) => {
   const x = parseDate(d), soon = (x.getTime() - Date.now()) / 864e5 < 330
-  return x.toLocaleDateString('en-NZ', soon ? { weekday: 'short', day: 'numeric', month: 'short' }
+  return x.toLocaleDateString(dateLocale(), soon ? { weekday: 'short', day: 'numeric', month: 'short' }
     : { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }).replace(',', '')
 }
-const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+const short = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
 const ord = (n: number) => { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]) }
 
 // How many times a year something on this schedule happens.
@@ -165,7 +166,7 @@ export default function ItemsPage({ accountId, onNavigate }: { accountId: string
     if (i.kind === 'budget') return `${money(i.amountCents)} a pay`
     const n = Math.max(1, r.every_n ?? 1)
     const first = parseDate(r.anchor_date)
-    const wd = first.toLocaleDateString('en-NZ', { weekday: 'short' })
+    const wd = first.toLocaleDateString(dateLocale(), { weekday: 'short' })
     let s: string
     if (r.frequency === 'weekly' && n === 1) s = `Weekly · ${wd}`
     else if (r.frequency === 'fortnightly' && n === 1) s = `Fortnightly · ${wd}`

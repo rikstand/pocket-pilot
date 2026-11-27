@@ -10,6 +10,7 @@ import { useToast } from './toastContext'
 import Preview, { previewStats } from './Preview'
 import { TextField, Segmented, ScheduleFields, newSchedule, ruleOf, nextDates, type Schedule } from './controls'
 import { Mark } from './ItemsPage'
+import { dateLocale } from '../lib/dateFormat'
 
 /**
  * Journey 9, part two: one form to add anything that goes out or comes in,
@@ -32,7 +33,7 @@ const PER_YEAR: Record<string, number> = { daily: 365.25, weekly: 52.18, fortnig
 const PREVIEW_PAYS = 12
 const todayStr = () => formatDate(new Date())
 const shift = (d: string, n: number) => formatDate(addDays(parseDate(d), n))
-const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+const short = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
 
 export default function AddSheet({ accountId, userId, onClose }: { accountId: string; userId: string; onClose: () => void }) {
   const { activeAccount } = useAccount()

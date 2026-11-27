@@ -47,6 +47,14 @@ export default function MoreHub({ onNavigate, onAddAccount }: Props) {
 
       <div role="heading" aria-level={2} className="rw-section" />
       <div className="rw-group">
+        <button type="button" className="rw-row" onClick={() => onNavigate('places')}>
+          <div className="rw-tx"><div className="rw-row-name">Places</div><div className="rw-sub">Where you spend</div></div>
+          <span className="rw-chev">›</span>
+        </button>
+        <button type="button" className="rw-row" onClick={() => onNavigate('help')}>
+          <div className="rw-tx"><div className="rw-row-name">How this works</div><div className="rw-sub">The floor, spare, Fits and the rest</div></div>
+          <span className="rw-chev">›</span>
+        </button>
         <button type="button" className="rw-row" onClick={() => onNavigate('settings')}>
           <div className="rw-tx">
             <div className="rw-row-name">Settings</div>

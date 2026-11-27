@@ -12,6 +12,7 @@ import {
   TYPE_ORDER, TYPE_NAME, splitOfProjected, splitOfClosed, averageSplit, outOf,
   movesOf, averageMoves, hasForecast, type TypeKey, type Split,
 } from '../lib/insights'
+import { dateLocale } from '../lib/dateFormat'
 
 /**
  * Release 7, Journey 7: By type on the Cycle screen. Where each pay goes,
@@ -28,7 +29,7 @@ export const TYPE_COLOUR: Record<TypeKey, string> = {
   bnpl: 'var(--rw-bnpl)', savings: 'var(--rw-line)', card: 'var(--rw-credit)',
 }
 const shift = (d: string, n: number) => formatDate(addDays(parseDate(d), n))
-const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+const short = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
 const HISTORY = 6        // closed cycles looked back on
 const AHEAD = 6          // cycles looked forward to on the columns
 

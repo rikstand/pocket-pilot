@@ -1,6 +1,7 @@
 import { useRef, type ReactNode } from 'react'
 import { parseDate, formatDate, addDays } from '../engine/dates'
 import { occurrencesOf, nthOccurrence } from '../engine/index'
+import { dateLocale } from '../lib/dateFormat'
 
 /**
  * Approved controls shared by the new-look sheets. Each one is in the design
@@ -53,7 +54,7 @@ export function Segmented<T extends string>({ options, value, onChange, small }:
 // No weekday; the year only when it's more than about 11 months away (design system).
 const chipDate = (d: string) => {
   const x = parseDate(d), far = (x.getTime() - Date.now()) / 864e5 > 330
-  const dm = x.toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+  const dm = x.toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
   return far ? `${dm} ’${String(x.getFullYear()).slice(2)}` : dm
 }
 const CHIP_SAYS: Record<string, string> = { earliest: 'earliest date that fits', 'too soon': 'too soon, a payday goes under your floor' }

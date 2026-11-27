@@ -22,6 +22,9 @@ import { BACK } from './runway/RunwayShell'
 import Welcome, { LoadingStage } from './runway/Welcome'
 import SettingsHub from './runway/SettingsHub'
 import AccountsPage from './runway/AccountsPage'
+import PlacesPage from './runway/PlacesPage'
+import HowItWorks from './runway/HowItWorks'
+import { TermsProvider } from './runway/Terms'
 import { useTheme, setTheme } from './lib/theme'
 
 function AuthedApp({ userId, email }: { userId: string; email: string | null }) {
@@ -37,7 +40,9 @@ function AuthedApp({ userId, email }: { userId: string; email: string | null }) 
 
   // Plan, More and Expenses & income only exist in the new shell. Turning the new look off
   // while on one of them shows Cycle.
-  const shown: Page = !newLook && (page === 'plan' || page === 'more' || page === 'items' || page === 'savings' || page === 'accounts') ? 'cycle' : page
+  const shown: Page = !newLook && (page === 'plan' || page === 'more' || page === 'items' || page === 'savings' || page === 'accounts' || page === 'places' || page === 'help') ? 'cycle' : page
+  // Which How this works answer to open, when a tapped word sent you there.
+  const [helpKey, setHelpKey] = useState<string | null>(null)
 
   // The phone's Back goes one level up in the new look, as the ‹ link does:
   // a page under Plan or More goes back to it, and a tab goes back to Cycle.
@@ -45,6 +50,7 @@ function AuthedApp({ userId, email }: { userId: string; email: string | null }) 
 
   function navigate(to: Page) {
     setPage(to)
+    if (to !== 'help') setHelpKey(null)
     // Off the page, so coming back to Expenses later doesn't reopen the add sheet.
     if (to !== 'expenses') setAddSignal(0)
   }
@@ -109,6 +115,8 @@ function AuthedApp({ userId, email }: { userId: string; email: string | null }) 
         : <SettingsPage key={'settings-' + dataVersion} userId={userId} accountId={activeAccount.id} />
       )}
       {shown === 'accounts' && <AccountsPage onAddAccount={() => setAddingAccount(true)} />}
+      {shown === 'places' && <PlacesPage key={'places-' + activeAccount.id} />}
+      {shown === 'help' && <HowItWorks openKey={helpKey} />}
     </>
   )
 
@@ -120,7 +128,7 @@ function AuthedApp({ userId, email }: { userId: string; email: string | null }) 
       onAdd={addFromShell}
       onAddAccount={() => setAddingAccount(true)}
     >
-      {pages}
+      <TermsProvider onHelp={k => { setHelpKey(k); navigate('help') }}>{pages}</TermsProvider>
     </RunwayShell>
     </LogSheetsProvider>
   )

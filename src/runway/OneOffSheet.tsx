@@ -12,6 +12,7 @@ import { versionForDate } from '../lib/versions'
 import { parseDate } from '../engine/dates'
 import { notifyDataChanged } from '../lib/dataEvents'
 import { useToast } from './toastContext'
+import { dateLocale } from '../lib/dateFormat'
 
 /**
  * A one-off, money in or out (release 7): name, amount, date and, for money
@@ -20,7 +21,7 @@ import { useToast } from './toastContext'
  * An amount or date change is a new dated amount on the new date (never an
  * edit of the old row), so the history stays and the newest row wins.
  */
-const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+const short = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
 
 export default function OneOffSheet({ row, isIncome, rows, cycleIdx, floorCents, accountId, today, payDates, money, onClose }: {
   row: any; isIncome: boolean; rows: ForecastResult; cycleIdx: number; floorCents: number; accountId: string

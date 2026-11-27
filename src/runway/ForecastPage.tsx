@@ -5,6 +5,7 @@ import { useToast } from './toastContext'
 import { Segmented } from './controls'
 import { KeyUnder, KeyDone } from './LegendKeys'
 import { underFloor, overdrawn } from '../engine/floor'
+import { dateLocale } from '../lib/dateFormat'
 
 /**
  * Journey 6: the Forecast tab in the new look. One point per payday: what's
@@ -40,11 +41,11 @@ interface Props {
   onUndoDip: (expenseId: string, cycleStart: string) => Promise<void>
 }
 
-const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
-const day = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
-const monthYear = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { month: 'long', year: 'numeric' })
-const monShort = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { month: 'short' })
-const monYr = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { month: 'short', year: 'numeric' })
+const short = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
+const day = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
+const monthYear = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { month: 'long', year: 'numeric' })
+const monShort = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { month: 'short' })
+const monYr = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { month: 'short', year: 'numeric' })
 
 type Level = 'ok' | 'near' | 'under' | 'chosen'
 

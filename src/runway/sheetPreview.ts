@@ -1,8 +1,9 @@
 import { projectFromRows, type ForecastResult } from '../lib/forecast'
 import { parseDate, formatDate, addDays } from '../engine/dates'
+import { dateLocale } from '../lib/dateFormat'
 
 const shift = (d: string, n: number) => formatDate(addDays(parseDate(d), n))
-const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+const short = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
 const PAYS = 8
 
 /**

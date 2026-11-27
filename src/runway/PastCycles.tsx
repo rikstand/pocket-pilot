@@ -13,6 +13,7 @@ import { notifyDataChanged, useDataChanged } from '../lib/dataEvents'
 import { useToast } from './toastContext'
 import { Mark } from './ItemsPage'
 import { Segmented } from './controls'
+import { dateLocale } from '../lib/dateFormat'
 
 /**
  * Journey 10, part one: past cycles. ‹ steps back through every closed cycle.
@@ -24,8 +25,8 @@ import { Segmented } from './controls'
  */
 
 const shift = (d: string, n: number) => formatDate(addDays(parseDate(d), n))
-const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
-const dayName = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
+const short = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
+const dayName = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
 const LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 
 const dayCount = (a: string, b: string) => Math.round((parseDate(b).getTime() - parseDate(a).getTime()) / 86400000) + 1

@@ -25,12 +25,12 @@ interface Props {
 const TAB_OF: Record<Page, 'cycle' | 'forecast' | 'plan' | 'more'> = {
   cycle: 'cycle', forecast: 'forecast',
   plan: 'plan', items: 'plan', expenses: 'plan', wishlist: 'plan', credit: 'plan', savings: 'plan',
-  more: 'more', settings: 'more', accounts: 'more',
+  more: 'more', settings: 'more', accounts: 'more', places: 'more', help: 'more',
 }
 // The browser tab and the screen reader say which page this is.
 const TITLE: Record<Page, string> = {
   cycle: 'Cycle', forecast: 'Forecast', plan: 'Plan', items: 'Expenses & income', expenses: 'Expenses',
-  wishlist: 'Wishlist', credit: 'Credit', savings: 'Savings', more: 'More', settings: 'Settings', accounts: 'Accounts',
+  wishlist: 'Wishlist', credit: 'Credit', savings: 'Savings', more: 'More', settings: 'Settings', accounts: 'Accounts', places: 'Places', help: 'How this works',
 }
 export const BACK: Partial<Record<Page, { to: Page; label: string }>> = {
   items:    { to: 'plan', label: 'Plan' },
@@ -40,6 +40,8 @@ export const BACK: Partial<Record<Page, { to: Page; label: string }>> = {
   savings:  { to: 'plan', label: 'Plan' },
   settings: { to: 'more', label: 'More' },
   accounts: { to: 'settings', label: 'Settings' },
+  places: { to: 'more', label: 'More' },
+  help: { to: 'more', label: 'More' },
 }
 
 const svg = { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true }

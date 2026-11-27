@@ -20,6 +20,8 @@ import { Mark } from './ItemsPage'
 import { KeyDone } from './LegendKeys'
 import SavingsSheet from './SavingsSheet'
 import { underFloor } from '../engine/floor'
+import { dateLocale } from '../lib/dateFormat'
+import { FitsQ } from './Terms'
 
 /**
  * Plan › Wishlist (Journey 3 and the wishlist comparison, release 5a; mock
@@ -43,7 +45,7 @@ const shift = (d: string, n: number) => formatDate(addDays(parseDate(d), n))
 // The year only when it's more than about 11 months away (design system).
 const short = (d: string) => {
   const x = parseDate(d), far = (x.getTime() - Date.now()) / 864e5 > 330
-  return x.toLocaleDateString('en-NZ', far ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' })
+  return x.toLocaleDateString(dateLocale(), far ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' })
 }
 
 type Pay = { date: string; cents: number }
@@ -449,7 +451,7 @@ function CompareSheet({ item, m, floorCents, sym, money, moneyC, accountId, user
             <input type="range" aria-label="Set aside each cycle" aria-valuetext={`${money(per)} a cycle`} min={lo / 100} max={hi / 100} step={5}
               value={Math.min(hi, Math.max(lo, per)) / 100} onChange={e => setPer(Math.round(+e.target.value * 100))} />
           </div>
-          {sFit != null && <div className="rw-snaps"><button type="button" className={per === sFit ? 'on' : ''} onClick={() => setPer(sFit)}>Fits {money(sFit)}</button></div>}
+          {sFit != null && <div className="rw-snaps"><button type="button" className={per === sFit ? 'on' : ''} onClick={() => setPer(sFit)}>Fits {money(sFit)}</button><FitsQ /></div>}
           <div className="rw-ends">
             <button type="button" onClick={() => setPer(lo)}><b>{money(lo)}</b>smallest</button>
             <button type="button" className="r" onClick={() => setPer(hi)}><b>{money(hi)}</b>{hi >= price ? 'all at once' : 'top of range'}</button>
@@ -495,7 +497,7 @@ function CompareChart({ lines, done, now, payDates, floorCents, way, span, onPic
   const order: Way[] = way === 'save' ? ['bnpl', 'save'] : ['save', 'bnpl']
   const di = Math.min(n - 1, done[way])
   const axis = [0, Math.round((n - 1) / 3), Math.round(2 * (n - 1) / 3), n - 1]
-  const d = (s: string) => parseDate(s).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+  const d = (s: string) => parseDate(s).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
   return (
     <div className="rw-card rw-pv" style={{ marginTop: 10 }}>
       <div className="rw-pv-k"><span>Left before each payday</span></div>

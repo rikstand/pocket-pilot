@@ -46,8 +46,7 @@ function where(p: string, re: RegExp): string[] {
 const KNOWN: Record<string, string[]> = {
   // F1: Plan › Credit and Forecast charts are drawn 340 wide, so their text renders smaller than other charts.
   T2: ['src/runway/CreditPlan.tsx', 'src/runway/ForecastPage.tsx'],
-  // F2: one old-look salary save in Dashboard still writes to the database directly.
-  S2: ['src/Dashboard.tsx'],
+  S2: [],
 }
 const known = (id: string, file: string) => (KNOWN[id] ?? []).some(k => file.startsWith(k))
 
@@ -105,6 +104,16 @@ describe('Type and layout', () => {
     expect(html).toMatch(/iP\(hone\|ad\|od\)/)
     expect(CSS).toMatch(/html \{ touch-action: manipulation; \}/)
   })
+  it('T8: every rw- class a new-look screen uses has a style (a misspelt class fails silently)', () => {
+    const css = ALL.filter(p => p.endsWith('.css')).map(read).join('\n')
+    const styled = new Set([...css.matchAll(/\.(rw-[\w-]+)/g)].map(m => m[1]))
+    const bad = [...NEW_LOOK, join(SRC, 'App.tsx')].flatMap(p => {
+      const s = stripComments(read(p))
+      const names = [...s.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\})/g)].flatMap(m => (m[1] ?? m[2]).match(/\brw-[\w-]+/g) ?? [])
+      return names.filter(c => !c.endsWith('-') && !styled.has(c)).map(c => `${rel(p)}: ${c}`)
+    })
+    expect([...new Set(bad)]).toEqual([])
+  })
 })
 
 describe('Controls and sheets', () => {
@@ -138,6 +147,15 @@ describe('Wording', () => {
 describe('Numbers and dates', () => {
   it('N4: calendar dates never go through toISOString', () => {
     expect(CODE.flatMap(p => where(p, /toISOString\(\)\s*\.\s*(slice|split|substring)/))).toEqual([])
+  })
+  it('N8: new-look dates follow the phone’s region, never a fixed one', () => {
+    expect(NEW_LOOK.flatMap(p => where(p, /toLocaleDateString\(\s*['"]/))).toEqual([])
+  })
+  it('N8: a weekday with a day is built from parts (some regions print "19 Thu")', () => {
+    expect(NEW_LOOK.flatMap(p => where(p, /\{\s*weekday:\s*'short',\s*day:\s*'numeric'\s*\}/))).toEqual([])
+  })
+  it('N8: a date label is never trimmed with a regex (other regions order and punctuate it differently)', () => {
+    expect(NEW_LOOK.flatMap(p => where(p, /\.replace\(\/\^\\w\+ \//))).toEqual([])
   })
 })
 
@@ -176,6 +194,6 @@ describe('Data and safety', () => {
       const s = stripComments(read(join(ROOT, f)))
       expect(`${f}: ${/\bW = (?!300\b)\d+/.test(s)}`).toBe(`${f}: true`)
     }
-    for (const f of KNOWN.S2) expect(`${f}: ${/supabase\s*\.\s*from\(/.test(stripComments(read(join(ROOT, f))))}`).toBe(`${f}: true`)
+    for (const f of KNOWN.S2 ?? []) expect(`${f}: ${/supabase\s*\.\s*from\(/.test(stripComments(read(join(ROOT, f))))}`).toBe(`${f}: true`)
   })
 })

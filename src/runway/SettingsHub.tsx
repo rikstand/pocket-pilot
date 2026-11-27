@@ -203,7 +203,7 @@ function PasswordSheet({ email, onClose }: { email: string; onClose: () => void 
         <div><h2 className="rw-sheet-title">Change password</h2><div className="rw-sd">{email}</div></div>
         <button type="button" className="rw-x" aria-label="Close" onClick={onClose}>×</button>
       </div>
-      <form className="rw-card rw-pw" onSubmit={e => { e.preventDefault(); change() }}>
+      <form className="rw-card" onSubmit={e => { e.preventDefault(); change() }}>
         <input type="email" autoComplete="username" value={email} readOnly hidden />
         <label className="rw-flab rw-flab-0">Current password<input className="rw-field" type="password" autoComplete="current-password" value={cur} onChange={e => { setCur(e.target.value); setErr('') }} /></label>
         <label className="rw-flab">New password<input className="rw-field" type="password" autoComplete="new-password" value={pw} onChange={e => setPw(e.target.value)} /></label>

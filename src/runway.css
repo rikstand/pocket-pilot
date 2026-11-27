@@ -1066,3 +1066,93 @@ div.rw-bt-mvr { cursor: default; }
 
 /* No double-tap zoom (rule T3): a quick second tap on a field or button never zooms the page. Pinch still works. */
 html { touch-action: manipulation; }
+
+/* ── Release 8b: Places, How this works, the underlined word ──────────── */
+.rw .rw-term { border: none; background: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer;
+  text-decoration: underline dotted; text-decoration-thickness: 1.5px; text-underline-offset: 3px; text-decoration-color: var(--rw-control-edge); }
+.rw .rw-term:active { background: var(--rw-surface-2); border-radius: 4px; }
+.rw .rw-term-p { font: var(--rw-text-body); color: var(--rw-ink); margin: 6px 0 0; }
+.rw .rw-term-p b { font-weight: 650; }
+.rw .rw-snaps .rw-fits-q, .rw .rw-fits-q { flex: 0 0 auto; width: 22px; height: 22px; min-height: 0; padding: 0; margin-left: 2px; align-self: center; border-radius: 50%; color: var(--rw-muted); background: var(--rw-surface); border-color: var(--rw-control-edge); }
+.rw .rw-page-sub { font: var(--rw-text-body); color: var(--rw-muted); padding: 0 var(--rw-space-4); margin: 2px 0 0; }
+.rw .rw-pl-search { padding: 0 var(--rw-space-3); }
+.rw .rw-pl-cols { display: flex; justify-content: space-between; }
+.rw .rw-pl-usual { color: var(--rw-muted); }
+.rw .rw-pl-open { border: none; background: none; padding: 0; text-align: left; cursor: pointer; flex: 1; min-width: 0; font: inherit; color: inherit; }
+.rw .rw-pl-back { padding: 0; min-height: 0; margin-bottom: 2px; }
+.rw .rw-pl-chart { padding: 10px 8px 6px; }
+.rw .rw-pl-chart .rw-pv-k { padding: 0 4px 4px; }
+.rw .rw-pl-chart svg { width: 100%; height: auto; display: block; }
+.rw .rw-pl-hint0 { margin: 0 0 8px; }
+.rw .rw-pl-wide { flex: 1 1 auto; }
+.rw .rw-pl-acts { margin-top: 10px; }
+.rw .rw-pl-list { margin-top: 10px; }
+.rw .rw-pl-list .rw-tx { flex: 1; }
+.rw .rw-pl-key { display: flex; gap: 14px; justify-content: center; font: var(--rw-text-sub); color: var(--rw-muted); margin-top: 8px; }
+.rw .rw-pl-key span { display: inline-flex; align-items: center; gap: 6px; }
+.rw .rw-pl-key i.bar { width: 14px; height: 5px; border-radius: 3px; background: var(--rw-ink); }
+.rw .rw-pl-key i.tick { width: 2px; height: 11px; background: var(--rw-ink); opacity: .45; }
+.rw .rw-how-body { font: var(--rw-text-body); color: var(--rw-ink); padding: 0 var(--rw-space-3) 4px; }
+.rw .rw-how-again { display: block; margin: 2px 0 6px; padding: 0; min-height: 44px; text-align: left; }
+
+/* How this works: the explainers (300-wide, chart text via the global rule) */
+.rw .rw-hv-box { background: var(--rw-bg); border-radius: var(--rw-radius-md); padding: 10px 8px 6px; margin: 0 var(--rw-space-3) 8px; }
+.rw .rw-hv { width: 100%; height: auto; display: block; overflow: visible; }
+.rw .rw-hv text { fill: var(--rw-muted); font-weight: 500; }
+.rw .rw-hv .rw-hv-b { fill: var(--rw-ink); font-weight: 650; }
+.rw .rw-hv .rw-hv-near { fill: var(--rw-near-floor-text); }
+.rw .rw-hv .rw-hv-under { fill: var(--rw-under-floor); }
+.rw .rw-hv-tick { stroke: var(--rw-faint); stroke-width: 1.5; }
+.rw .rw-hv-dash { stroke-dasharray: 3 3; }
+.rw .rw-hv-floor { stroke: var(--rw-under-floor); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.rw .rw-hv-zero { stroke: var(--rw-under-floor); stroke-width: 1.2; }
+.rw .rw-hv-line { fill: none; stroke: var(--rw-line); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.rw .rw-hv-thin { stroke-width: 2.4; }
+.rw .rw-hv-next { opacity: .6; }
+.rw .rw-hv-dot { fill: var(--rw-line); stroke: var(--rw-bg); stroke-width: 2; }
+.rw .rw-hv-dot2 { fill: var(--rw-ink); }
+.rw .rw-hv-fc { fill: none; stroke: var(--rw-ink); stroke-width: 1.6; stroke-dasharray: 2 2; }
+.rw .rw-hv-pd.ok { fill: var(--rw-line); } .rw .rw-hv-pd.near { fill: var(--rw-near-floor); } .rw .rw-hv-pd.under { fill: var(--rw-under-floor); } .rw .rw-hv-pd.low { fill: var(--rw-ink); }
+.rw .rw-hv-slot { fill: var(--rw-surface-2); }
+.rw .rw-hv-day { fill: var(--rw-ink); opacity: .8; }
+.rw .rw-hv-brk { fill: none; stroke: var(--rw-muted); stroke-width: 1.5; }
+.rw .rw-hv-gap { fill: var(--rw-line); opacity: .3; }
+.rw .rw-hv-card { fill: var(--rw-credit); }
+.rw .rw-hv-track { fill: var(--rw-surface-2); }
+.rw .rw-hv-fill { fill: var(--rw-ink); }
+.rw .rw-hv-knob { fill: var(--rw-surface); stroke: var(--rw-ink); stroke-width: 2; }
+.rw .rw-hv-fx { fill: var(--rw-t-fixed); }
+.rw .rw-hv-est { fill: none; stroke: var(--rw-muted); stroke-width: 1.4; stroke-dasharray: 4 3; }
+.rw .rw-hv-mk { fill: var(--rw-muted); }
+.rw .rw-hv-mk.ring { fill: none; stroke: var(--rw-muted); stroke-width: 1.6; stroke-dasharray: 2.2 1.8; }
+
+.rw .rw-hv-in { opacity: 0; animation: rw-hv-in .4s ease-out var(--d) forwards; }
+.rw .rw-hv-pop { opacity: 0; transform-box: fill-box; transform-origin: center; animation: rw-hv-pop .45s ease-out var(--d) forwards; }
+.rw .rw-hv-draw { stroke-dasharray: 100; stroke-dashoffset: 100; animation: rw-hv-draw 1.2s cubic-bezier(.6,0,.2,1) var(--d) forwards; }
+.rw .rw-hv-grow { transform-box: fill-box; transform-origin: bottom; transform: scaleY(0); animation: rw-hv-grow .6s ease-out var(--d) forwards; }
+.rw .rw-hv-in.rw-hv-out { animation: rw-hv-in .4s ease-out var(--d) forwards, rw-hv-gone .4s ease-in var(--o) forwards; }
+.rw .rw-hv-pop.rw-hv-out { animation: rw-hv-pop .45s ease-out var(--d) forwards, rw-hv-gone .4s ease-in var(--o) forwards; }
+.rw .rw-hv-grow.rw-hv-out { animation: rw-hv-grow .6s ease-out var(--d) forwards, rw-hv-shrink .8s ease-in-out var(--o) forwards; }
+.rw .rw-hv-slide { animation: rw-hv-slide .8s ease-in-out var(--d) forwards; }
+.rw .rw-hv-widen { transform-box: fill-box; transform-origin: left; transform: scaleX(0); animation: rw-hv-widen 2s cubic-bezier(.4,0,.2,1) var(--d) forwards; }
+.rw .rw-hv-thumb { animation: rw-hv-thumb 2s cubic-bezier(.4,0,.2,1) var(--d) forwards; }
+.rw .rw-hv-lower { animation: rw-hv-lower 2s cubic-bezier(.4,0,.2,1) var(--d) forwards; }
+.rw .rw-hv-steps { transform-box: fill-box; transform-origin: left; transform: scaleX(0); animation: rw-hv-steps 2.2s linear var(--d) forwards; }
+@keyframes rw-hv-in { to { opacity: 1 } }
+@keyframes rw-hv-gone { to { opacity: 0 } }
+@keyframes rw-hv-pop { 0% { opacity: 0; transform: scale(.3) } 60% { opacity: 1; transform: scale(1.25) } 100% { opacity: 1; transform: scale(1) } }
+@keyframes rw-hv-draw { to { stroke-dashoffset: 0 } }
+@keyframes rw-hv-grow { to { transform: scaleY(1) } }
+@keyframes rw-hv-shrink { from { transform: scaleY(1) } to { transform: scaleY(0) } }
+@keyframes rw-hv-slide { to { transform: translate(12px, 36px) } }
+@keyframes rw-hv-widen { to { transform: scaleX(1) } }
+@keyframes rw-hv-thumb { to { transform: translateX(150px) } }
+@keyframes rw-hv-lower { to { transform: translateY(22px) } }
+@keyframes rw-hv-steps { 0% { transform: scaleX(0) } 15%, 32% { transform: scaleX(.28) } 45%, 60% { transform: scaleX(.55) } 72%, 86% { transform: scaleX(.8) } 100% { transform: scaleX(1) } }
+@media (prefers-reduced-motion: reduce) {
+  .rw .rw-hv * { animation: none !important; }
+  .rw .rw-hv .rw-hv-in, .rw .rw-hv .rw-hv-pop { opacity: 1; } .rw .rw-hv .rw-hv-draw { stroke-dashoffset: 0; }
+  .rw .rw-hv .rw-hv-out { opacity: 0; } .rw .rw-hv .rw-hv-grow.rw-hv-out { transform: scaleY(0); } .rw .rw-hv .rw-hv-slide { transform: translate(12px, 36px); }
+  .rw .rw-hv .rw-hv-widen, .rw .rw-hv .rw-hv-steps { transform: none; } .rw .rw-hv .rw-hv-thumb { transform: translateX(150px); } .rw .rw-hv .rw-hv-lower { transform: translateY(22px); }
+}
+.rw .rw-pl-err { font: var(--rw-text-sub); color: var(--rw-under-floor); margin-top: 6px; }

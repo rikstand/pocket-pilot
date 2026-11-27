@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Sheet, { reportError } from './Sheet'
 import { parseDate } from '../engine/dates'
+import { dateLocale } from '../lib/dateFormat'
 
 /**
  * Closing the cycle (Journey 8): what the estimates came to, your balance
@@ -28,7 +29,7 @@ interface Props {
   onSubmit: (close: { closingCents: number; enteredCents: number; payIn: boolean; actuals: { expense_id: string; actual_amount_cents: number }[] }) => Promise<void>
 }
 
-const day = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
+const day = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
 const signed = (c: number, money: (c: number) => string) => Math.round(c / 100) === 0 ? money(0) : (c > 0 ? '+' : '') + money(c)
 
 export default function CloseSheet(p: Props) {

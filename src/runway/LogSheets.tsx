@@ -19,6 +19,9 @@ import { useToast } from './toastContext'
 import { LogContext, type LogApi } from './logContext'
 import AddSheet from './AddSheet'
 import { underFloor, overdrawn } from '../engine/floor'
+import PlaceSheet from './PlaceSheet'
+import { closedWindows, placeStats, type Window } from './places'
+import { dateLocale, weekdayDay, dayMonth } from '../lib/dateFormat'
 
 /**
  * Journey 5: one sheet to log spend, behind both + buttons, and a budget's
@@ -28,8 +31,11 @@ import { underFloor, overdrawn } from '../engine/floor'
 
 type View =
   | { kind: 'log'; budgetId?: string; fromPlus: boolean; entry?: any; back?: string }
-  | { kind: 'budget'; budgetId: string }
+  | { kind: 'budget'; budgetId: string; tab?: BudgetTab }
+  | { kind: 'place'; payeeId: string; back: string }
   | { kind: 'add' }
+
+type BudgetTab = 'spend' | 'places' | 'change'
 
 interface Data {
   start: string
@@ -41,6 +47,7 @@ interface Data {
   allEntries: any[]       // every cycle, for which places go where
   payees: any[]
   rows: ForecastResult    // for previews: the same rows the forecast uses
+  closed: Window[]        // the last closed cycles, for each place's history
   history: Record<string, PastCycle[]>
   flags: Record<string, BudgetFlag | null>
 }
@@ -52,8 +59,9 @@ const PREVIEW_PAYS = 12
 
 const todayStr = () => formatDate(new Date())
 const shift = (d: string, n: number) => formatDate(addDays(parseDate(d), n))
-const dayName = (d: string, month = true) => parseDate(d).toLocaleDateString('en-NZ',
-  month ? { weekday: 'short', day: 'numeric', month: 'short' } : { weekday: 'short', day: 'numeric' }).replace(',', '')
+const dayName = (d: string, month = true) => month
+  ? parseDate(d).toLocaleDateString(dateLocale(), { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
+  : weekdayDay(parseDate(d))
 const LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 
 export function LogSheetsProvider({ accountId, userId, children }: {
@@ -86,7 +94,7 @@ export function LogSheetsProvider({ accountId, userId, children }: {
           d => cycleRuleOn(f.incomeRows, d))
         flags[b.id] = budgetFlag(history[b.id], b.baseCents)
       }
-      setData({ rows: f, history, flags,
+      setData({ rows: f, history, flags, closed: closedWindows(f.storedCycles ?? []),
         start: c.startDate, end: c.endDate, closingCents: c.committedClosingBalanceCents, floorCents,
         budgets,
         entries: all.filter((e: any) => e.spent_date >= c.startDate && e.spent_date <= c.endDate),
@@ -118,8 +126,21 @@ export function LogSheetsProvider({ accountId, userId, children }: {
             {view.kind === 'add' ? <AddSheet accountId={accountId} userId={userId} onClose={close} />
               : error ? <div className="rw-sd">{error}</div>
               : !data ? <div className="rw-sd">Loading…</div>
+              : view.kind === 'place'
+                ? (() => {
+                    const p = data.payees.find(x => x.id === view.payeeId)
+                    const fmt = moneyFormatter(activeAccount?.currency_code)
+                    const back = () => setView({ kind: 'budget', budgetId: view.back, tab: 'places' })
+                    return p ? <PlaceSheet key={p.id} payee={p} payees={data.payees}
+                      budgets={data.budgets.map(b => ({ id: b.id, name: b.name }))}
+                      stats={placeStats(p.id, data.allEntries, data.closed, { start: data.start, end: data.end })}
+                      money={c => fmt(c, false)} cents={c => fmt(c, true)}
+                      backTo={data.budgets.find(b => b.id === view.back)?.name ?? 'Budget'} onBack={back} onClose={back}
+                      onChanged={async () => { notifyDataChanged(); await load() }} /> : <div className="rw-sd">That place is gone.</div>
+                  })()
               : view.kind === 'budget'
-                ? <BudgetSheet data={data} budgetId={view.budgetId} onClose={close} accountId={accountId}
+                ? <BudgetSheet key={view.budgetId + (view.tab ?? '')} data={data} budgetId={view.budgetId} initialTab={view.tab} onClose={close} accountId={accountId}
+                    onPlace={payeeId => setView({ kind: 'place', payeeId, back: view.budgetId })}
                     onChanged={async () => { notifyDataChanged(); close() }}
                     onLog={() => setView({ kind: 'log', budgetId: view.budgetId, fromPlus: false, back: view.budgetId })}
                     onEdit={entry => setView({ kind: 'log', budgetId: entry.expense_id, fromPlus: false, entry, back: view.budgetId })} />
@@ -138,11 +159,11 @@ export function LogSheetsProvider({ accountId, userId, children }: {
 }
 
 /* ── a budget's spend this cycle ─────────────────────────────────────── */
-function BudgetSheet({ data, budgetId, accountId, onClose, onLog, onEdit, onChanged }: {
-  data: Data; budgetId: string; accountId: string; onClose: () => void; onLog: () => void
-  onEdit: (entry: any) => void; onChanged: () => void
+function BudgetSheet({ data, budgetId, initialTab, accountId, onClose, onLog, onEdit, onPlace, onChanged }: {
+  data: Data; budgetId: string; initialTab?: BudgetTab; accountId: string; onClose: () => void; onLog: () => void
+  onEdit: (entry: any) => void; onPlace: (payeeId: string) => void; onChanged: () => void
 }) {
-  const [tab, setTab] = useState<'spend' | 'change'>('spend')
+  const [tab, setTab] = useState<BudgetTab>(initialTab ?? 'spend')
   const { activeAccount } = useAccount()
   const fmt = moneyFormatter(activeAccount?.currency_code)
   const money = (c: number) => (c < 0 ? '−' : '') + fmt(Math.abs(c), true)
@@ -170,10 +191,13 @@ function BudgetSheet({ data, budgetId, accountId, onClose, onLog, onEdit, onChan
       </div>
       <div className="rw-seg flush">
         <button type="button" className={tab === 'spend' ? 'on' : ''} onClick={() => setTab('spend')}>Spend</button>
+        <button type="button" className={tab === 'places' ? 'on' : ''} onClick={() => setTab('places')}>Places</button>
         <button type="button" className={tab === 'change' ? 'on' : ''} onClick={() => setTab('change')}>Change</button>
       </div>
 
-      {tab === 'change' && b ? <BudgetChange data={data} budget={b} spentCents={spent} accountId={accountId} onCancel={() => setTab('spend')} onSaved={onChanged} /> : <>
+      {tab === 'places' && <BudgetPlaces data={data} budgetId={budgetId} entries={mine} cents={money} money={c => fmt(c, false)} onPlace={onPlace} onLog={onLog} />}
+
+      {tab === 'places' ? null : tab === 'change' && b ? <BudgetChange data={data} budget={b} spentCents={spent} accountId={accountId} onCancel={() => setTab('spend')} onSaved={onChanged} /> : <>
         {flag && (
           <button type="button" className={`rw-flagban ${flag.dir}`} onClick={() => setTab('change')}>
             <span><b>{flag.dir === 'over' ? '↑' : '↓'} Usually {flag.dir} by {fmt(flag.gapCents, false)}</b></span>
@@ -205,6 +229,47 @@ function BudgetSheet({ data, budgetId, accountId, onClose, onLog, onEdit, onChan
       </>}
     </>
   )
+}
+
+/* ── a budget's places this cycle, each against its usual (Journey 11) ── */
+function BudgetPlaces({ data, budgetId, entries, cents, money, onPlace, onLog }: {
+  data: Data; budgetId: string; entries: any[]; cents: (c: number) => string; money: (c: number) => string
+  onPlace: (payeeId: string) => void; onLog: () => void
+}) {
+  const cur = { start: data.start, end: data.end }
+  // Places whose usual budget is this one, plus any place used for it this cycle.
+  const rows = data.payees
+    .filter(p => p.default_expense_id === budgetId || entries.some(e => e.payee_id === p.id))
+    .map(p => {
+      const s = placeStats(p.id, data.allEntries, data.closed, cur, budgetId)
+      return { p, so: s.soFar, n: s.soFarVisits, usual: p.default_expense_id === budgetId ? s.usual ?? 0 : 0 }
+    })
+    .sort((x, y) => y.so - x.so || y.usual - x.usual || x.p.name.localeCompare(y.p.name))
+  const none = entries.filter(e => !e.payee_id).reduce((s, e) => s + e.amount_cents, 0)
+  return <>
+    {rows.length === 0 && none === 0 && <div className="rw-sd" style={{ padding: '14px 4px' }}>No places for this budget yet. Pick one when you log spend.</div>}
+    <div className="rw-group flush rw-pl-list">
+      {rows.map(({ p, so, n, usual }) => {
+        const mx = Math.max(so, usual, 1)
+        return (
+          <button key={p.id} type="button" className="rw-row" onClick={() => onPlace(p.id)}>
+            <div className="rw-tx">
+              <div className="rw-row-name">{p.name}</div>
+              <div className="rw-sub">{so ? `${cents(so)} · ${n} visit${n === 1 ? '' : 's'}` : 'Not yet this cycle'}{usual ? ` · usually ${money(usual)}` : ''}</div>
+              <div className="rw-pb" aria-hidden="true">
+                <i className={usual && so > usual ? 'ahead' : ''} style={{ width: `${so / mx * 100}%` }} />
+                {usual ? <b style={{ left: `${usual / mx * 100}%` }} /> : null}
+              </div>
+            </div>
+            <span className="rw-chev">›</span>
+          </button>
+        )
+      })}
+      {none > 0 && <div className="rw-row static"><div className="rw-tx"><div className="rw-row-name rw-muted">No place</div><div className="rw-sub">{cents(none)} so far</div></div></div>}
+    </div>
+    {rows.some(r => r.usual) && <div className="rw-pl-key"><span><i className="bar" />so far this cycle</span><span><i className="tick" />usual a cycle</span></div>}
+    <div className="rw-ctas"><button type="button" className="rw-cta" onClick={onLog}>+ Log spend</button></div>
+  </>
 }
 
 /* ── change a budget's amount (budget nudge) ─────────────────────────── */
@@ -245,7 +310,7 @@ function BudgetChange({ data, budget, spentCents, accountId, onCancel, onSaved }
     : []
   const payDates = cycles.slice(0, PREVIEW_PAYS).map((c: any) => shift(c.endDate, 1))
   const st = after.length ? previewStats(now, after, data.floorCents) : null
-  const when = scope === 'once' ? 'this cycle' : fromIdx === 0 ? 'from this pay' : `from ${dayName(starts[fromIdx], true).replace(/^\w+ /, '')}`
+  const when = scope === 'once' ? 'this cycle' : fromIdx === 0 ? 'from this pay' : `from ${dayMonth(parseDate(starts[fromIdx]))}`
 
   const avgChip = flag?.averageCents ?? (history.length
     ? Math.round(history.slice(-4).reduce((s, c) => s + c.spentCents, 0) / Math.min(4, history.length) / 500) * 500 : null)
@@ -353,7 +418,7 @@ function BudgetChange({ data, budget, spentCents, accountId, onCancel, onSaved }
         <div className="rw-chips" style={{ marginTop: 8 }}>
           {starts.map((d: string, k: number) => (
             <button key={d} type="button" className={fromIdx === k ? 'on' : ''} onClick={() => setFromIdx(k)}>
-              {k === 0 ? 'This pay' : `Pay ${dayName(d).replace(/^\w+ /, '')}`}
+              {k === 0 ? 'This pay' : `Pay ${dayMonth(parseDate(d))}`}
             </button>
           ))}
         </div>

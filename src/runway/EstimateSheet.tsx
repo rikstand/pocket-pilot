@@ -11,6 +11,7 @@ import { occurrencesOf, scheduleOn } from '../engine/index'
 import { parseDate } from '../engine/dates'
 import { notifyDataChanged } from '../lib/dataEvents'
 import { useToast } from './toastContext'
+import { dateLocale } from '../lib/dateFormat'
 
 /**
  * Confirm an estimate (release 7): what it really was this cycle, and, if you
@@ -20,7 +21,7 @@ import { useToast } from './toastContext'
  * (expense_overrides); "Also the estimate" adds a dated amount from this
  * cycle. The preview shows only once the amount changes.
  */
-const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+const short = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
 const HOW: Record<string, string> = { daily: 'daily', weekly: 'weekly', fortnightly: 'fortnightly', monthly: 'monthly', annually: 'yearly', once: 'one-off' }
 
 export default function EstimateSheet({ row, rows, cycleIdx, floorCents, accountId, today, money, onClose }: {

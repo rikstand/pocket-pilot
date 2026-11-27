@@ -16,6 +16,8 @@ import { Segmented, DateChips, TextField } from './controls'
 import Preview from './Preview'
 import CardSheet, { type CardMode } from './CardSheet'
 import { KeyDone, KeyLands } from './LegendKeys'
+import { dateLocale } from '../lib/dateFormat'
+import { FitsQ } from './Terms'
 
 /**
  * Journey 2: Plan › Credit in the new look. What's owing, when it's cleared,
@@ -30,10 +32,10 @@ type Mode = 'minimum' | 'extra' | 'spare'
 const HORIZON = 80
 const t0 = () => formatDate(new Date())
 const nextDay = (d: string) => formatDate(addDays(parseDate(d), 1))
-const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
-const day = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
-const monYr = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { month: 'short', year: 'numeric' })
-const monShort = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { month: 'short' })
+const short = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
+const day = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
+const monYr = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { month: 'short', year: 'numeric' })
+const monShort = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { month: 'short' })
 const ord = (n: number) => n + (n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th')
 const dollars = (c: number) => Math.round(c / 100)
 
@@ -448,6 +450,7 @@ function PlanSheet({ rows, k0, card, accountId, floorCents, money, sym, onThisCy
             {chips.map(c => <button key={c.k} type="button" className={!spare && Math.abs(extra - c.v) < 100 ? 'on' : ''}
               onClick={() => { setSpare(false); setAmt(String(dollars(c.v))) }}>{c.k} {money(c.v)}</button>)}
             <button type="button" className={spare ? 'on' : ''} onClick={() => setSpare(true)}>All spare</button>
+            {chips.some(c => c.k === 'Fits') && <FitsQ />}
           </div>
           <div className="rw-ends">
             <button type="button" onClick={() => { setSpare(false); setAmt('0') }}><b>{money(0)}</b>minimum only</button>

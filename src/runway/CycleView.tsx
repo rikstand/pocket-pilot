@@ -3,6 +3,8 @@ import { parseDate, addDays, formatDate } from '../engine/dates'
 import type { Runway } from './runwaySeries'
 import { underFloor, overdrawn } from '../engine/floor'
 import { useDock } from './useDock'
+import { dateLocale, weekdayDay } from '../lib/dateFormat'
+import { Term, termWords } from './Terms'
 
 /**
  * The Cycle screen in the new look (Journey 8): Hero E, the runway, and one
@@ -74,12 +76,11 @@ interface Props {
   money: (cents: number) => string
 }
 
-const day = (d: string, month = false) =>
-  parseDate(d).toLocaleDateString('en-NZ', month
-    ? { weekday: 'short', day: 'numeric', month: 'short' }
-    : { weekday: 'short', day: 'numeric' }).replace(',', '')
+const day = (d: string, month = false) => month
+  ? parseDate(d).toLocaleDateString(dateLocale(), { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
+  : weekdayDay(parseDate(d))
 const nextDay = (d: string) => formatDate(addDays(parseDate(d), 1))
-const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+const short = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
 const LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 
 /* ── type marks: 9px shapes, never icons ── */
@@ -123,6 +124,9 @@ export default function CycleView(p: Props) {
   const level = overdrawn(p.closingCents) ? 'under' : underFloor(p.closingCents, p.floorCents) ? 'near' : 'ok'
   // At the floor by cents shows as $0 spare, not −$0 (25 Nov 2026).
   const heroValue = level === 'under' ? p.closingCents : level === 'ok' ? Math.max(0, spare) : spare
+  // What a tapped word says, in this cycle's own figures (UX fix 18).
+  const figs = { money: p.money, floorCents: p.floorCents, spareCents: p.closingCents - p.floorCents, leftCents: p.closingCents,
+    payDate: p.payDate, spareCard: !!p.cardLine }
   const heroWords = level === 'under' ? 'overdrawn before pay' : level === 'near' ? 'into your floor before pay' : 'spare before pay'
 
   /* ── the list, ordered around today ── */
@@ -238,11 +242,11 @@ export default function CycleView(p: Props) {
       {/* ── hero E ── */}
       <div className="rw-hero-card">
         <div className={`rw-hero-v ${level}`}>{money(heroValue)}</div>
-        <div className="rw-hero-k">{heroWords} · {day(p.payDate)}</div>
+        <div className="rw-hero-k">{termWords(heroWords, figs)} · {day(p.payDate)}</div>
         {p.cardLine && p.cardLine.cents > 0 && (
           <div className="rw-hero-card-line">{money(p.cardLine.cents)} extra to {p.cardLine.name} this cycle</div>
         )}
-        <div className="rw-hero-sub"><span>Before pay {day(p.payDate)} · floor {money(p.floorCents)}</span><b>{money(p.closingCents)}</b></div>
+        <div className="rw-hero-sub"><span><Term k="left" f={figs}>Before pay</Term> {day(p.payDate)} · <Term k="floor" f={figs}>floor</Term> {money(p.floorCents)}</span><b>{money(p.closingCents)}</b></div>
       </div>
 
       {p.catchUp ? (
@@ -459,7 +463,7 @@ function RunwayChart({ runway, todayIdx, ended, floorCents, items, money, onDot 
         <text x={X(n)} y={Y(pts[n]) - 9} fontSize="10" fontWeight="700" textAnchor="end" fill="var(--rw-ink)">{money(pts[n])}</text>
         {scrub != null && (() => {
           const sx = X(scrub + 1), left = scrub > n / 2
-          const label = parseDate(runway.days[scrub]).toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric' }).replace(',', '')
+          const label = weekdayDay(parseDate(runway.days[scrub]))
           return <g pointerEvents="none">
             <line x1={sx} x2={sx} y1={T} y2={B} stroke="var(--rw-ink)" opacity=".3" />
             <circle cx={sx} cy={Y(runway.balances[scrub])} r="4" fill="var(--rw-surface)" stroke="var(--rw-ink)" strokeWidth="2" />

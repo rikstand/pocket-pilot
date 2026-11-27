@@ -1,6 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
 import type { CSSProperties } from 'react'
-import { supabase } from './lib/supabase'
 import {
   getLayBys,
   getBudgetSpendEntries,
@@ -901,10 +900,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
       const freqChanged   = incomeEditFrequency !== incomeEditItem.src.frequency
       const anchorChanged = incomeEditAnchor    !== incomeEditItem.src.anchor_date
       if (freqChanged || anchorChanged) {
-        const { error: e3 } = await supabase.from('income_sources')
-          .update({ frequency: incomeEditFrequency, anchor_date: incomeEditAnchor })
-          .eq('id', incomeEditItem.incomeId)
-        if (e3) throw e3
+        await updateIncomeSource(incomeEditItem.incomeId, { frequency: incomeEditFrequency, anchor_date: incomeEditAnchor })
       }
 
       setIncomeEditItem(null); reload()

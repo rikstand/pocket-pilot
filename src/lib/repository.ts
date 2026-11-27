@@ -141,7 +141,7 @@ export async function addIncomeSource(
 
 export async function updateIncomeSource(
   incomeId: string,
-  fields: { name?: string; is_potential?: boolean; anchor_date?: string }
+  fields: { name?: string; is_potential?: boolean; anchor_date?: string; frequency?: string }
 ) {
   const { error } = await supabase.from('income_sources').update(fields).eq('id', incomeId)
   if (error) throw error
@@ -1769,11 +1769,30 @@ export async function setPayeeArchived(payeeId: string, archived: boolean) {
 
 // Merge one place into another: every entry moves across, then the empty
 // place is archived (not deleted, so nothing that still points at it breaks).
-export async function mergePayee(fromId: string, intoId: string) {
-  if (fromId === intoId) return
-  const { error } = await supabase.from('budget_spend_entries').update({ payee_id: intoId }).eq('payee_id', fromId)
+// Returns the entries it moved, so Undo can move exactly those back.
+export async function mergePayee(fromId: string, intoId: string): Promise<string[]> {
+  if (fromId === intoId) return []
+  const { data, error } = await supabase.from('budget_spend_entries').update({ payee_id: intoId }).eq('payee_id', fromId).select('id')
   if (error) throw error
   await setPayeeArchived(fromId, true)
+  return (data ?? []).map((r: any) => r.id)
+}
+
+// Undo a merge: the moved entries go back and the place is in use again.
+export async function unmergePayee(fromId: string, entryIds: string[]) {
+  if (entryIds.length) {
+    const { error } = await supabase.from('budget_spend_entries').update({ payee_id: fromId }).in('id', entryIds)
+    if (error) throw error
+  }
+  await setPayeeArchived(fromId, false)
+}
+
+// A place's name and its usual budget (shown first when logging to that budget).
+// Two places can't share a name: the database refuses with code 23505.
+export async function updatePayee(payeeId: string, fields: { name?: string; default_expense_id?: string | null }) {
+  const clean = fields.name != null ? { ...fields, name: fields.name.trim() } : fields
+  const { error } = await supabase.from('payees').update(clean).eq('id', payeeId)
+  if (error) throw error
 }
 
 // Delete a place only when nothing was ever spent there. Returns false, and

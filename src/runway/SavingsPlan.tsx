@@ -19,6 +19,8 @@ import { saveDraft } from '../lib/savingsSave'
 import { DateChips } from './controls'
 import { makePlanner, perFor, savingsDip, type Draft } from '../lib/savingsPlan'
 import { overdrawn } from '../engine/floor'
+import { dateLocale } from '../lib/dateFormat'
+import { FitsQ } from './Terms'
 
 /**
  * Plan › Savings (Journey 4, release 6; mock claude/pp-savings-6.html,
@@ -63,7 +65,7 @@ function Body({ rows, accountId, floorCents, fmt, sym }: {
 }) {
   const toast = useToast()
   const money = (c: number) => (c < 0 ? '−' : '') + fmt(Math.abs(c), false)
-  const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+  const short = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
   const [open, setOpen] = useState<{ kind: 'goal' | 'prompt' | 'add' | 'dip'; id?: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const c0 = rows.cycles[0]
@@ -354,7 +356,7 @@ function AddGoalSheet({ accountId, rows, floorCents, sym, money, short, onClose 
             <button type="button" onClick={() => setPick(500)}><b>{money(500)}</b>smallest</button>
             <button type="button" className="r" onClick={() => setPick(hi)}><b>{money(hi)}</b>top of range</button>
           </div>
-          {fitPer != null && <div className="rw-snaps"><button type="button" className={per === fitPer ? 'on' : ''} onClick={() => setPick(fitPer)}>Fits {money(fitPer)}</button></div>}
+          {fitPer != null && <div className="rw-snaps"><button type="button" className={per === fitPer ? 'on' : ''} onClick={() => setPick(fitPer)}>Fits {money(fitPer)}</button><FitsQ /></div>}
           <div className="rw-lab">Saved by</div>
           <DateChips value={fin >= 0 ? P.startOf(fin) : ''} today={P.startOf(1)} min={P.startOf(early ?? 1)} otherMin={P.startOf(1)} label="Saved by"
             payDates={[13, 26].map(x => (early ?? 1) + x).map(P.startOf)}

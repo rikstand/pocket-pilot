@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { parseDate } from '../engine/dates'
 import { KeyDone, KeyLands } from './LegendKeys'
 import { underFloor, overdrawn } from '../engine/floor'
+import { dateLocale } from '../lib/dateFormat'
 
 /**
  * The universal preview: what a change does to each payday. One component
@@ -29,7 +30,7 @@ export function previewStats(nowCents: number[], newCents: number[], floorCents:
   return { lowestCents, lowestIdx, level, worse: level !== 'ok' && lowestCents < nowLow }
 }
 
-const short = (d: string) => parseDate(d).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+const short = (d: string) => parseDate(d).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
 
 export default function Preview({ nowCents, newCents, payDates, floorCents, money, ticks = [], title, done, doneLabel = 'card cleared', third, tilesFirst }: {
   nowCents: number[]
