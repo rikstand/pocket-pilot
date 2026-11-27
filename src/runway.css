@@ -814,8 +814,10 @@ button.rw-row:not(:disabled):active, .rw-row:has(> .rw-row-main:active) { backgr
 /* ═══ Type, taps and edges (refactor/ux-look, 18 Nov 2026) ═══════════ */
 /* No zoom on fields. An iPhone zooms the page in when a field under 16px is
    tapped, and the page stays zoomed after. Every field in the new look is
-   16px or larger at every text size; big amount fields keep their size. */
-.rw :is(.rw-page, .rw-sheet) :is(input:not([type=range]):not([type=checkbox]):not([type=radio]), textarea, select) {
+   16px or larger at every text size; big amount fields keep their size.
+   Any field under .rw, not only pages and sheets: the welcome screen has
+   neither, and its 14px fields zoomed the sign-in and the Cycle after it. */
+.rw :is(input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=hidden]), textarea, select) {
   font-size: max(16px, var(--rw-in, calc(16 * var(--rw-u)))) !important;
 }
 
@@ -1056,3 +1058,8 @@ div.rw-bt-mvr { cursor: default; }
 .rw .rw-wel-form, .rw .rw-flab { text-align: left; }
 .rw .rw-wel-form .rw-lnk, .rw .rw-wel-alt { text-align: center; }
 .rw .rw-group.rw-wel-who { margin-left: 0; margin-right: 0; }
+
+/* Reduced motion (rule A4): a saved row's flash and a sheet's slide-up stop too. */
+@media (prefers-reduced-motion: reduce) {
+  .rw-row.flash, .rw-sheet { animation: none; }
+}
