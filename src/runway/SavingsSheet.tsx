@@ -5,7 +5,7 @@ import { moneyFormatter, currencySymbol } from '../lib/money'
 import { loadForecast, projectFromRows, toEngineExpenses, type ForecastResult } from '../lib/forecast'
 import { occurrencesOf } from '../engine/recurrence'
 import { addDays, formatDate } from '../engine/dates'
-import { savedSoFarCents } from '../lib/savings'
+import { savedSoFarCents, potToday } from '../lib/savings'
 import {
   confirmSavingsContribution, unconfirmSavingsContribution, setSavingsOverride, clearSavingsOverride,
   updateSavingsGoal, releaseWishlistItem, relinkWishlistItem, deleteWishlistItem, restoreWishlistItem,
@@ -91,7 +91,12 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
   const contribution = (rows.savingsContributionRows ?? []).find((x: any) => x.savings_goal_id === goal.id && x.cycle_start === c.startDate)
   const state: 'done' | 'skipped' | 'todo' = contribution ? 'done' : ov && ov.amount_cents === 0 ? 'skipped' : 'todo'
   const l0 = lineOf(k0)
-  const have = savedSoFarCents(goal, rows.savingsContributionRows, rows.savingsOverrideRows)
+  // A pot holds only what went in since its expense last came out (28 Nov 2026).
+  const potNow = useMemo(() => {
+    const exp = isPot ? toEngineExpenses(rows.expenseRows).find(e => e.id === goal.expense_id) : undefined
+    return exp ? potToday(goal, exp, rows.savingsContributionRows, rows.savingsOverrideRows, formatDate(new Date())) : null
+  }, [rows])
+  const have = potNow ? potNow.heldCents : savedSoFarCents(goal, rows.savingsContributionRows, rows.savingsOverrideRows)
   const reached = !isPot && have >= goal.target_cents
   const that = k0 === 0 ? 'This' : 'That'
 
@@ -385,8 +390,8 @@ function Body({ accountId, goal, rows, cycleStart, wishItem, floorCents, onClose
         </div>
         <button type="button" className="rw-row" aria-expanded={openHist} onClick={() => setOpenHist(v => !v)}>
           <div className="rw-tx"><div className="rw-row-name">Savings progress</div>
-            <div className="rw-sub">{money(have)}{isPot ? ' put away' : ` of ${money(goal.target_cents)}`}{missed ? ` · ${missed} missed` : ''}</div>
-            {!isPot && <div className="rw-pb" aria-hidden="true"><i style={{ width: Math.min(100, have / Math.max(1, goal.target_cents) * 100) + '%' }} /></div>}</div>
+            <div className="rw-sub">{money(have)}{isPot ? (potNow?.next ? ` of ${money(potNow.next.cents)} · due ${short(potNow.next.date)}` : ' put away') : ` of ${money(goal.target_cents)}`}{missed ? ` · ${missed} missed` : ''}</div>
+            {(isPot ? !!potNow?.next : true) && <div className="rw-pb" aria-hidden="true"><i style={{ width: Math.min(100, have / Math.max(1, isPot ? potNow!.next!.cents : goal.target_cents) * 100) + '%' }} /></div>}</div>
           <span className={`rw-chev rw-turn${openHist ? ' on' : ''}`}>›</span></button>
         {openHist && <div className="rw-open">
           {past.length === 0 ? <div className="rw-sub">No earlier cycles yet.</div> : <>

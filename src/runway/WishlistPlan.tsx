@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { bnplPayments } from '../lib/bnpl'
 import SheetGuard from './SheetGuard'
 import Sheet, { reportError } from './Sheet'
 import { useAccount } from '../lib/AccountContext'
@@ -58,16 +59,6 @@ function split(totalCents: number, n: number, first: string, freq: Freq): Pay[] 
     date: freq === 'monthly' ? formatDate(addMonths(parseDate(first), i)) : shift(first, (freq === 'weekly' ? 7 : 14) * i),
     cents: i < n - 1 ? each : totalCents - each * (n - 1),
   }))
-}
-
-/** A BNPL plan's payments, from its amounts (one per payment) and missed rows. */
-function paymentsOf(row: any, t: string) {
-  const missed = new Set((row.bnpl_missed_payments ?? []).map((m: any) => m.payment_date))
-  const all = [...(row.expense_amount_versions ?? [])]
-    .filter((v: any) => !row.end_date || v.effective_from <= row.end_date)
-    .sort((a: any, b: any) => a.effective_from.localeCompare(b.effective_from))
-    .map((v: any) => ({ date: v.effective_from as string, cents: v.amount_cents as number, missed: missed.has(v.effective_from) }))
-  return { all, paid: all.filter(p => p.date < t && !p.missed), ahead: all.filter(p => p.date >= t && !p.missed) }
 }
 
 function freqOf(row: any, t: string): Freq {
@@ -145,7 +136,7 @@ function WishlistBody({ rows, items, accountId, userId, floorCents, fmt, sym, op
 
   // Every BNPL plan, from here or from Cycle; a wishlist item points at its expense.
   const plans = rows.expenseRows.filter((r: any) => r.lay_by_id && r.is_active !== false)
-    .map((r: any) => ({ row: r, item: items.find(i => i.committed_expense_id === r.id) ?? null, ...paymentsOf(r, t) }))
+    .map((r: any) => ({ row: r, item: items.find(i => i.committed_expense_id === r.id) ?? null, ...bnplPayments(r, t) }))
   const paying = plans.filter(p => p.ahead.length > 0)
   const goals = rows.savingsGoalRows ?? []
   const goalOf = (i: any) => goals.find((g: any) => g.id === i.savings_goal_id && g.is_active !== false && g.status !== 'cancelled')

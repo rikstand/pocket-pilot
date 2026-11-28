@@ -3,8 +3,8 @@ import SheetGuard from './SheetGuard'
 import Sheet, { reportError } from './Sheet'
 import { useAccount } from '../lib/AccountContext'
 import { moneyFormatter, currencySymbol } from '../lib/money'
-import { loadForecast, projectFromRows, billPromptsFromRows, type ForecastResult } from '../lib/forecast'
-import { savedSoFarCents } from '../lib/savings'
+import { loadForecast, projectFromRows, billPromptsFromRows, toEngineExpenses, type ForecastResult } from '../lib/forecast'
+import { heldToday, potToday } from '../lib/savings'
 import {
   confirmSavingsContribution, unconfirmSavingsContribution, createSavingsGoal, createBillPot, deleteSavingsGoal,
   acceptDip, clearAcceptedDip, setCreditExtraOverride, clearCreditExtraOverride,
@@ -73,7 +73,14 @@ function Body({ rows, accountId, floorCents, fmt, sym }: {
   const lineOf = (g: any) => c0.savingsLines.find(l => l.goalId === g.id)?.amountCents ?? 0
   const isDone = (g: any) => (rows.savingsContributionRows ?? []).some((x: any) => x.savings_goal_id === g.id && x.cycle_start === c0.startDate)
   const isSkipped = (g: any) => (rows.savingsOverrideRows ?? []).some((o: any) => o.savings_goal_id === g.id && o.cycle_start === c0.startDate && o.amount_cents === 0)
-  const have = (g: any) => savedSoFarCents(g, rows.savingsContributionRows, rows.savingsOverrideRows)
+  // What each goal holds today: a pot only since its expense last came out (28 Nov 2026).
+  const engineExpenses = useMemo(() => toEngineExpenses(rows.expenseRows), [rows])
+  const todayD = formatDate(new Date())
+  const have = (g: any) => heldToday(g, engineExpenses, rows.savingsContributionRows, rows.savingsOverrideRows, todayD)
+  const potNext = (g: any) => {
+    const exp = engineExpenses.find(e => e.id === g.expense_id)
+    return exp ? potToday(g, exp, rows.savingsContributionRows, rows.savingsOverrideRows, todayD).next : null
+  }
   const goals = active.filter((g: any) => !g.expense_id), pots = active.filter((g: any) => g.expense_id)
   const dueNow = active.filter((g: any) => lineOf(g) > 0)
   const todo = dueNow.filter((g: any) => !isDone(g))
@@ -113,15 +120,15 @@ function Body({ rows, accountId, floorCents, fmt, sym }: {
   }
 
   const row = (g: any) => {
-    const done = isDone(g), skipped = isSkipped(g), h = have(g), exp = g.expense_id ? rows.expenseRows.find((e: any) => e.id === g.expense_id) : null
+    const done = isDone(g), skipped = isSkipped(g), h = have(g), exp = g.expense_id ? rows.expenseRows.find((e: any) => e.id === g.expense_id) : null, nx = g.expense_id ? potNext(g) : null
     return (
       <button key={g.id} type="button" className="rw-row" onClick={() => setOpen({ kind: 'goal', id: g.id })}>
         <span className="rw-savmark" aria-hidden="true" />
         <div className="rw-tx"><div className="rw-row-name">{g.name ?? exp?.name}</div>
-          <div className="rw-sub">{g.expense_id ? `${money(h)} put away${exp ? ` for ${exp.name}` : ''}` : <>{money(h)} of {money(g.target_cents)} · {g.target_date
+          <div className="rw-sub">{g.expense_id ? (nx ? `${money(h)} of ${money(nx.cents)} · due ${short(nx.date)}` : `${money(h)} put away${exp ? ` for ${exp.name}` : ''}`) : <>{money(h)} of {money(g.target_cents)} · {g.target_date
             ? <>by {short(g.target_date)}{status.get(g.id)?.behind ? <> · <span className="rw-warn">behind</span></> : ''}</>
             : <>no date{status.get(g.id)?.fin ? ` · yours ${short(status.get(g.id)!.fin!)}` : ''}</>}</>}</div>
-          {!g.expense_id && <div className="rw-pb" aria-hidden="true"><i style={{ width: Math.min(100, h / Math.max(1, g.target_cents) * 100) + '%' }} /></div>}</div>
+          {(g.expense_id ? nx : g.target_cents > 0) && <div className="rw-pb" aria-hidden="true"><i style={{ width: Math.min(100, h / Math.max(1, g.expense_id ? nx!.cents : g.target_cents) * 100) + '%' }} /></div>}</div>
         <div className="rw-am">{skipped ? '' : money(lineOf(g))}<small className={done ? 'rw-ok' : ''}>{done ? 'set aside ✓' : skipped ? 'skipped' : lineOf(g) > 0 ? 'this cycle' : 'nothing this cycle'}</small></div>
         <span className="rw-chev">›</span>
       </button>

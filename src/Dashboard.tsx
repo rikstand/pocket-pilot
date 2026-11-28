@@ -30,7 +30,9 @@ import {
 } from './lib/creditSchedule'
 import { loadForecast, projectFromRows, cardWithPlanOn, cycleTickLabel, cycleDateLabel, baseYearOf, baselineChecks, previewBudgetChange, toEngineExpenses, toEngineIncome } from './lib/forecast'
 import type { ForecastResult } from './lib/forecast'
-import { savedSoFarCents } from './lib/savings'
+import { savedSoFarCents, potToday } from './lib/savings'
+import { bnplPayments } from './lib/bnpl'
+import { dayMonth } from './lib/dateFormat'
 import { unstamped } from './lib/savingsPlan'
 import { nthOccurrence, occurrencesOf, scheduleOn } from './engine/recurrence'
 import { budgetAmountForCycle, cycleEndAt, nextCycleFor } from './engine/engine'
@@ -1294,6 +1296,20 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
     return savedSoFarCents(goalRow(goalId), savingsDone, forecastRows?.savingsOverrideRows ?? [])
   }
 
+  /** A goal's or a pot's "$X of $Y" and how far along it is, for its Cycle row. */
+  function progressOf(goal: any): { sub: string; progress: number } | null {
+    if (!goal.expense_id) {
+      const have = savedSoFar(goal.id)
+      return goal.target_cents > 0 ? { sub: `${fmt(have, false)} of ${fmt(goal.target_cents, false)}`, progress: have / goal.target_cents } : null
+    }
+    const row = rawExpenses.find((e: any) => e.id === goal.expense_id)
+    if (!row) return null
+    const exp = toEngineExpenses([row])[0]
+    const { heldCents: have, next } = potToday(goal, exp, savingsDone, forecastRows?.savingsOverrideRows ?? [], today())
+    if (!next || next.cents <= 0) return null
+    return { sub: `${fmt(have, false)} of ${fmt(next.cents, false)} · due ${dayMonth(parseDate(next.date))}`, progress: have / next.cents }
+  }
+
   function isSetAside(goalId: string): boolean {
     return savingsDone.some((c: any) =>
       c.savings_goal_id === goalId && c.cycle_start === activeCycle.startDate)
@@ -2477,7 +2493,6 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
       const ov = isLayby ? null : overrideFor(exp.id, c.startDate)
       const cd = cardFor(x => x.expenseId === exp.id)
       const sorted = isLayby ? [...(exp.expense_amount_versions ?? [])].sort(byOldest) : []
-      const layby = isLayby ? rawLayBys.find((l: any) => l.id === exp.lay_by_id) : null
       occs.forEach((d: string, i: number) => {
         const cents = ov ? spread(ov.amount_cents, occs, i)
           : isLayby ? (sorted.find((v: any) => v.effective_from === d)?.amount_cents ?? 0)
@@ -2490,14 +2505,18 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
         }
         const open = isEstimate && !ov
         let sub = howOften(toEngineExpenses([exp])[0])
+        // BNPL counts payments made, the same as its sheet (28 Nov 2026).
+        let progress: number | undefined
         if (isLayby) {
-          const n = sorted.findIndex((v: any) => v.effective_from === d)
-          sub = `BNPL · ${n >= 0 ? n + 1 : '?'} of ${layby?.payments_total ?? sorted.length}`
+          const { paid, ahead } = bnplPayments(exp, t)
+          const total = paid.length + ahead.length
+          sub = `BNPL · ${paid.length} of ${total} paid · ${fmt(ahead.reduce((a, p) => a + p.cents, 0), false)} left`
+          progress = total ? paid.length / total : undefined
         } else if (isEstimate) sub = ov ? (c.startDate > t ? 'Changed for this cycle' : 'Confirmed') : 'Estimate'
         else if (ov) sub = 'This cycle only'
         items.push({
           key: `exp-${exp.id}-${d}`, date: d, name: exp.name, mark: isLayby ? 'bnpl' : isEstimate ? 'estimate' : 'fixed',
-          amountCents: cents, estimate: open, sub,
+          amountCents: cents, estimate: open, sub, progress,
           needs: open && d < t, needsText: 'not confirmed',
           action: open && (inRows || cd) ? { label: 'Confirm', run: inRows ? () => setRwEst(exp.id) : () => openVar(cd) } : undefined,
           donePill: isEstimate && ov && c.startDate <= t ? '✓' : undefined,
@@ -2519,9 +2538,13 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
         const goal = goalRow(line.goalId)
         if (!goal) continue
         const done = isSetAside(line.goalId)
+        // Anything with a finish line shows how far along it is (28 Nov 2026):
+        // a goal against its target, a pot against its expense's next payment.
+        const bar = progressOf(goal)
         items.push({
           key: `sav-${line.goalId}`, date: c.startDate, name: goal.name, mark: 'savings', amountCents: line.amountCents,
-          sub: goal.expense_id ? 'Set aside before it’s due' : `${fmt(savedSoFar(line.goalId), false)} of ${fmt(goal.target_cents, false)}`,
+          sub: bar?.sub ?? (goal.expense_id ? 'Set aside before it’s due' : `${fmt(savedSoFar(line.goalId), false)} of ${fmt(goal.target_cents, false)}`),
+          progress: bar?.progress,
           needs: !done && c.startDate <= t, needsText: 'not set aside',
           action: done ? undefined : { label: 'Set aside', run: () => toggleSetAside(line.goalId) },
           donePill: done ? 'Set aside ✓' : undefined,
@@ -2610,7 +2633,7 @@ export default function Dashboard({ userId, accountId, variant, onForecast, onCr
     const spareCard = !!rawCredit?.strategy_committed && planModeOf(creditPlanCard) === 'spare'
 
     // By type (release 7): this cycle's items by type, from the same rows as By day.
-    const shortDay = (dt: string) => parseDate(dt).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+    const shortDay = (dt: string) => dayMonth(parseDate(dt))
     const group = (mark: string, type: TypeKey, name: string, onOpen?: () => void): CommittedRow | null => {
       const its = items.filter(i => i.mark === mark && !i.isIn)
       if (!its.length) return null

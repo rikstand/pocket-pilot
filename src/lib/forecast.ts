@@ -26,16 +26,16 @@ import {
   getBudgetSpendEntries, getSavingsGoals, getAllSavingsContributions, getAllSavingsOverrides,
   getAllExpenseOverrides, getCreditCyclePayments, getAllIncomeOverrides, getAcceptedDips,
 } from './repository'
-import { projectCycles, budgetAmountForCycle, billPrompts, occurrencesOf, scheduleOn } from '../engine/index'
+import { projectCycles, budgetAmountForCycle, billPrompts, scheduleOn } from '../engine/index'
 import type { CycleRule, BillPrompt } from '../engine/index'
 import type {
   CycleResult, IncomeSource, Expense, CreditAccount, CreditExtraOverride,
   BudgetSpendEntry, ExpenseOverride, SavingsGoal, CreditPayment, IncomeOverride, ScheduleVersion, CreditPlanVersion,
 } from '../engine/types'
 import { carriedCardBalance, confirmedPaymentsFrom, cycleDaysOf, planModeOf, dueAnchorOf } from './creditSchedule'
-import { formatDate, parseDate, addDays } from '../engine/dates'
+import { formatDate, parseDate } from '../engine/dates'
 import { byNewest, latestVersion, versionForDate } from './versions'
-import { savedSoFarCents } from './savings'
+import { savedSoFarCents, potHeldCents } from './savings'
 
 // Never toISOString() — this app runs at UTC+12 and that has caused real bugs.
 function todayStr() { return formatDate(new Date()) }
@@ -250,15 +250,6 @@ export function toEngineSavings(
         .filter((o: any) => o.savings_goal_id === g.id)
         .map((o: any) => ({ cycleStart: o.cycle_start, amountCents: o.amount_cents }))
 
-      // Each confirmed cycle counts for what went in that cycle: the amount
-      // saved with it, else the override, else the standing amount.
-      const amountOf = (c: any) => {
-        if (c.amount_cents != null) return c.amount_cents
-        const ov = overrides.find(o => o.cycleStart === c.cycle_start)
-        return ov ? ov.amountCents : g.per_cycle_cents
-      }
-      const mine = (contributionRows ?? []).filter((c: any) => c.savings_goal_id === g.id)
-
       if (g.expense_id) {
         // A pot for a bill holds what went in since the bill last came out of
         // it, up to where the forecast starts. The forecast works out each
@@ -266,19 +257,9 @@ export function toEngineSavings(
         // not used.
         const exp = bills?.expenses.find(e => e.id === g.expense_id)
         const from = bills?.projectFrom
-        let held = 0
-        if (exp && from) {
-          const before = formatDate(addDays(parseDate(from), -1))
-          const back = formatDate(addDays(parseDate(from), -3 * 366))
-          const last = occurrencesOf(exp, back, before).pop() ?? ''
-          held = mine
-            .filter((c: any) => c.cycle_start > last && c.cycle_start < from)
-            .reduce((sum: number, c: any) => sum + amountOf(c), 0)
-          // A corrected total made since the bill last came out wins.
-          if (g.adjusted_total_cents != null && g.adjusted_at && g.adjusted_at.slice(0, 10) > last) {
-            held = g.adjusted_total_cents
-          }
-        }
+        // One shared sum (lib/savings): what went in since the bill last came
+        // out, up to where the forecast starts.
+        const held = exp && from ? potHeldCents(g, exp, contributionRows, overrideRows, from) : 0
         return {
           id: g.id, name: g.name, targetCents: 0, perCycleCents: 0,
           startCycleStart: g.start_cycle_start, savedSoFarCents: held, overrides, expenseId: g.expense_id,

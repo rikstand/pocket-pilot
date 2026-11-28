@@ -212,7 +212,7 @@ export function nextCycleFor(
 // Ties on the same date go to the newest written. forecast.ts hands versions
 // over newest-first (lib/versions byNewest), and Array.sort is stable, so a
 // comparator that returns 0 on equal dates keeps that order.
-function getAmountOn(
+export function getAmountOn(
   versions: AmountVersion[],
   fallback: number,
   onDate: string
